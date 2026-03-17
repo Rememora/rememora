@@ -1,0 +1,35 @@
+[package]
+name = "rememora"
+version = "0.1.0"
+edition = "2021"
+description = "Cross-agent memory system for AI coding assistants"
+license = "MIT"
+repository = "https://github.com/rememora/rememora"
+
+[dependencies]
+rusqlite = { version = "0.34", features = ["bundled"] }
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ulid = "1"
+chrono = { version = "0.4", features = ["serde"] }
+dirs = "6"
+anyhow = "1"
+slug = "0.1"
+
+# Embedding backends (optional, feature-gated)
+candle-core = { version = "0.8", optional = true }
+candle-nn = { version = "0.8", optional = true }
+candle-transformers = { version = "0.8", optional = true }
+hf-hub = { version = "0.4", optional = true }
+tokenizers = { version = "0.21", optional = true }
+
+[dev-dependencies]
+assert_cmd = "2"
+predicates = "3"
+tempfile = "3"
+
+[features]
+default = []
+embed-candle = ["candle-core", "candle-nn", "candle-transformers", "hf-hub", "tokenizers"]
+embed-llamacpp = []
