@@ -16,6 +16,7 @@ chrono = { version = "0.4", features = ["serde"] }
 dirs = "6"
 anyhow = "1"
 slug = "0.1"
+ureq = { version = "2", features = ["json"] }
 
 # Embedding backends (optional, feature-gated)
 candle-core = { version = "0.8", optional = true }

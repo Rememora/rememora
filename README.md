@@ -24,18 +24,21 @@ rememora context --project myapp
 - **Tiered loading** — L0 abstracts (~100 tok) → L1 overviews (~500 tok) → L2 full content
 - **Hotness scoring** — frequently accessed + important memories surface first
 - **Full-text search** — BM25 via SQLite FTS5, zero external dependencies
+- **Auto-extract** — LLM-powered memory extraction from session transcripts
 - **Fast** — ~3ms startup, 3.6MB binary, single SQLite database with WAL
 - **Local-first** — everything stays on your machine
 
 ## Install
 
 ```bash
+# Homebrew (macOS & Linux)
+brew install Rememora/tap/rememora
+
 # From source
 cargo install --path .
 
-# Or build release binary
-cargo build --release
-# Binary at target/release/rememora
+# Or download from GitHub Releases
+# https://github.com/Rememora/rememora/releases
 ```
 
 ## Quick Start
@@ -129,10 +132,31 @@ Before ending: `rememora session end <id> --summary "..." --working-state "..."`
 | `rememora project show <name>` | Show project details |
 | `rememora supersede <old-id> --by <new-id>` | Replace outdated memory |
 | `rememora relate <uri-a> <uri-b>` | Link two contexts |
+| `rememora extract` | Extract memories from text via LLM |
 | `rememora status` | Show DB stats |
 | `rememora export --project <name>` | Export as JSON or markdown |
 
 All commands support `--json` for structured output.
+
+## Auto-Extract Memories
+
+Extract memories from session transcripts, notes, or any text using an LLM:
+
+```bash
+# Pipe text and preview what would be extracted
+cat session_log.txt | rememora extract --project myapp
+
+# Extract and save directly
+cat session_log.txt | rememora extract --project myapp --save --agent claude-code
+
+# From a file
+rememora extract --file notes.md --project myapp --save
+
+# JSON output for programmatic use
+rememora extract --file notes.md --project myapp --json
+```
+
+Requires `ANTHROPIC_API_KEY` environment variable. Uses Claude Haiku for fast, cheap extraction.
 
 ## Memory Categories
 
@@ -164,13 +188,13 @@ cargo clippy        # Lint
 
 ## Roadmap
 
+- [x] Auto-extraction of memories from text via LLM
+- [x] Homebrew formula (`brew install Rememora/tap/rememora`)
+- [x] Claude Code hooks for automatic session tracking
 - [ ] Vector search via candle + sqlite-vec (hybrid BM25 + cosine similarity)
 - [ ] Hierarchical retrieval with score propagation
 - [ ] Memory evolution — LLM-based consolidation of old memories
-- [ ] Auto-extraction of memories from session transcripts
-- [ ] Claude Code hooks for automatic context loading/saving
 - [ ] TUI dashboard for browsing memories
-- [ ] Homebrew formula
 
 ## License
 

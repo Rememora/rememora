@@ -2239,6 +2239,7 @@ dependencies = [
  "tempfile",
  "tokenizers",
  "ulid",
+ "ureq",
 ]
 
 [[package]]

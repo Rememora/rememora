@@ -129,6 +129,25 @@ enum Commands {
         reason: String,
     },
 
+    /// Extract memories from text using LLM
+    Extract {
+        /// Project scope
+        #[arg(long)]
+        project: Option<String>,
+
+        /// Source agent
+        #[arg(long)]
+        agent: Option<String>,
+
+        /// Read from file instead of stdin
+        #[arg(long)]
+        file: Option<String>,
+
+        /// Save extracted memories to database
+        #[arg(long)]
+        save: bool,
+    },
+
     /// Show system status
     Status,
 
@@ -354,6 +373,20 @@ fn main() -> Result<()> {
             relation_type,
             reason,
         } => commands::relate::run(&conn, &source, &target, &relation_type, &reason, cli.json),
+
+        Commands::Extract {
+            project,
+            agent,
+            file,
+            save,
+        } => commands::extract::run(
+            &conn,
+            project.as_deref(),
+            agent.as_deref(),
+            file.as_deref(),
+            save,
+            cli.json,
+        ),
 
         Commands::Status => commands::status::run(&conn, cli.json),
 
