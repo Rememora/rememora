@@ -1,7 +1,7 @@
 use anyhow::Result;
 use rusqlite::Connection;
 
-use crate::models::context;
+use rememora::models::context;
 
 pub fn run(conn: &Connection, old_id: &str, new_id: &str, json: bool) -> Result<()> {
     context::supersede(conn, old_id, new_id)?;

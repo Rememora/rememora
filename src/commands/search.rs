@@ -1,8 +1,8 @@
 use anyhow::Result;
 use rusqlite::Connection;
 
-use crate::format;
-use crate::search;
+use rememora::format;
+use rememora::search;
 
 pub struct SearchArgs {
     pub query: String,

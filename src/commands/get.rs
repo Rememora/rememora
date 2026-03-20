@@ -1,8 +1,8 @@
 use anyhow::{bail, Result};
 use rusqlite::Connection;
 
-use crate::format;
-use crate::models::context;
+use rememora::format;
+use rememora::models::context;
 
 pub fn run(conn: &Connection, uri: &str, json: bool) -> Result<()> {
     let ctx = context::get_by_uri(conn, uri)?;

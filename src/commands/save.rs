@@ -1,8 +1,8 @@
 use anyhow::Result;
 use rusqlite::Connection;
 
-use crate::models::context::{self, InsertContext};
-use crate::uri;
+use rememora::models::context::{self, InsertContext};
+use rememora::uri;
 
 pub struct SaveArgs {
     pub text: String,

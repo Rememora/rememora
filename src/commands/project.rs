@@ -1,7 +1,7 @@
 use anyhow::Result;
 use rusqlite::Connection;
 
-use crate::models::project;
+use rememora::models::project;
 
 pub fn add(conn: &Connection, name: &str, path: Option<&str>, description: &str, stack: &[String], json: bool) -> Result<()> {
     let id = project::add(conn, name, path, description, stack)?;

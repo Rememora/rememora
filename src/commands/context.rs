@@ -1,9 +1,9 @@
 use anyhow::Result;
 use rusqlite::Connection;
 
-use crate::format;
-use crate::hierarchy;
-use crate::models::project;
+use rememora::format;
+use rememora::hierarchy;
+use rememora::models::project;
 
 pub fn run(conn: &Connection, project_name: Option<&str>, auto: bool) -> Result<()> {
     let proj = if auto {

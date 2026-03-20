@@ -1,7 +1,7 @@
 use anyhow::Result;
 use rusqlite::Connection;
 
-use crate::models::context;
+use rememora::models::context;
 
 pub fn run(conn: &Connection, project: Option<&str>, format: &str) -> Result<()> {
     let contexts = context::list_by_scope(conn, None, None, project, 10000)?;
@@ -16,7 +16,7 @@ pub fn run(conn: &Connection, project: Option<&str>, format: &str) -> Result<()>
         }
         "md" | "markdown" => {
             for c in &contexts {
-                println!("{}", crate::format::context_record_to_markdown(c));
+                println!("{}", rememora::format::context_record_to_markdown(c));
                 println!("---\n");
             }
         }

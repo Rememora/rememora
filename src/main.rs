@@ -1,15 +1,8 @@
 mod commands;
-mod db;
-mod embed;
-mod format;
-mod hierarchy;
-mod hotness;
-mod models;
-mod search;
-mod uri;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use rememora::db;
 
 #[derive(Parser)]
 #[command(name = "rememora", version, about = "Cross-agent memory system")]
