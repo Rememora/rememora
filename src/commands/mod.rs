@@ -7,5 +7,6 @@ pub mod relate;
 pub mod save;
 pub mod search;
 pub mod session;
+pub mod setup;
 pub mod status;
 pub mod supersede;

@@ -148,6 +148,13 @@ enum Commands {
         save: bool,
     },
 
+    /// Configure detected agents to use rememora
+    Setup {
+        /// Apply changes (without this flag, only shows what would be done)
+        #[arg(long)]
+        apply: bool,
+    },
+
     /// Show system status
     Status,
 
@@ -387,6 +394,8 @@ fn main() -> Result<()> {
             save,
             cli.json,
         ),
+
+        Commands::Setup { apply } => commands::setup::run(apply),
 
         Commands::Status => commands::status::run(&conn, cli.json),
 
