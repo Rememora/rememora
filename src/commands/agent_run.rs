@@ -1,6 +1,13 @@
 use anyhow::{bail, Context, Result};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+
+// GitHub Project board IDs for Rememora/rememora project #3
+const PROJECT_ID: &str = "PVT_kwDOCB405M4BSdN1";
+const STATUS_FIELD_ID: &str = "PVTSSF_lADOCB405M4BSdN1zg__B7M";
+const STATUS_IN_PROGRESS: &str = "47fc9ee4";
+const STATUS_READY_FOR_REVIEW: &str = "7e86c92f";
+const STATUS_READY_FOR_DEV: &str = "eafe2cca";
 
 pub struct AgentRunArgs {
     pub repo: String,
@@ -8,6 +15,7 @@ pub struct AgentRunArgs {
     pub model: Option<String>,
     pub max_budget: Option<f64>,
     pub allow_skip_permissions: bool,
+    pub retries: u32,
 }
 
 pub fn run(args: &AgentRunArgs) -> Result<()> {
@@ -16,14 +24,18 @@ pub fn run(args: &AgentRunArgs) -> Result<()> {
     let issue = fetch_issue(&args.repo, args.issue)?;
     println!("Issue: {}", issue.title);
 
-    // 2. Determine repo local path and branch
+    // 2. Move to In Progress on the project board
+    if let Some(ref item_id) = issue.project_item_id {
+        println!("Moving to In Progress...");
+        move_to_column(item_id, STATUS_IN_PROGRESS).ok();
+    }
+
+    // 3. Set up worktree
     let repo_root = find_repo_root()?;
     let branch = format!("agent/issue-{}", args.issue);
     let worktree_path = std::env::temp_dir().join(format!("rememora-agent-{}", args.issue));
 
-    // 3. Create worktree
     if worktree_path.exists() {
-        println!("Cleaning up existing worktree...");
         Command::new("git")
             .args(["worktree", "remove", "--force"])
             .arg(&worktree_path)
@@ -51,79 +63,124 @@ pub fn run(args: &AgentRunArgs) -> Result<()> {
     let session_id = start_session(args.issue, &issue.title)?;
     println!("Rememora session: {session_id}");
 
-    // 5. Build the prompt
-    let prompt = build_prompt(&issue);
+    // 5. Quality loop: run claude, check quality, retry if needed
+    let mut last_error = String::new();
+    let mut success = false;
 
-    // 6. Run claude CLI
-    println!("Spawning Claude CLI...\n");
-    let claude_result = run_claude(&worktree_path, &prompt, args);
+    for attempt in 1..=args.retries {
+        println!("\n--- Attempt {}/{} ---", attempt, args.retries);
 
-    // 7. Handle result
-    match claude_result {
-        Ok(output) => {
-            println!("\nClaude finished.");
+        // Build prompt (include previous error if retrying)
+        let prompt = if last_error.is_empty() {
+            build_prompt(&issue)
+        } else {
+            build_retry_prompt(&issue, &last_error)
+        };
 
-            // Check if there are changes to commit/push
-            let has_changes = check_has_changes(&worktree_path)?;
-
-            if has_changes {
-                // Push branch
-                println!("Pushing branch {branch}...");
-                let push = Command::new("git")
-                    .args(["push", "origin", &branch, "--force-with-lease"])
-                    .current_dir(&worktree_path)
-                    .output()
-                    .context("Failed to push branch")?;
-
-                if !push.status.success() {
-                    eprintln!(
-                        "Push failed: {}",
-                        String::from_utf8_lossy(&push.stderr)
-                    );
-                } else {
-                    // Create PR
-                    println!("Creating PR...");
-                    create_pr(&args.repo, args.issue, &issue.title, &branch)?;
-                }
-
-                // Relabel issue
-                relabel_issue(&args.repo, args.issue, "agent-ready", "in-review").ok();
-            } else {
-                println!("No changes produced by the agent.");
+        // Run claude
+        println!("Spawning Claude CLI...");
+        match run_claude(&worktree_path, &prompt, args) {
+            Ok(_output) => {
+                println!("Claude finished. Running quality checks...");
             }
-
-            // End session
-            let summary = if has_changes {
-                format!("Worked on issue #{}. Created PR with changes.", args.issue)
-            } else {
-                format!(
-                    "Worked on issue #{} but no changes were produced.",
-                    args.issue
-                )
-            };
-
-            end_session(&session_id, &summary)?;
-
-            // Print claude output summary
-            if !output.is_empty() {
-                let lines: Vec<&str> = output.lines().collect();
-                let tail: Vec<&&str> = lines.iter().rev().take(20).collect();
-                println!("\n--- Agent output (last 20 lines) ---");
-                for line in tail.into_iter().rev() {
-                    println!("{line}");
-                }
+            Err(e) => {
+                last_error = format!("Claude CLI failed: {e}");
+                eprintln!("{last_error}");
+                continue;
             }
         }
-        Err(e) => {
-            eprintln!("Claude CLI failed: {e}");
-            end_session(
-                &session_id,
-                &format!("Failed on issue #{}: {e}", args.issue),
-            )?;
+
+        // Quality gate
+        match run_quality_checks(&worktree_path) {
+            Ok(quality) => {
+                if quality.all_pass() {
+                    println!("All quality checks passed!");
+                    success = true;
+                    break;
+                } else {
+                    last_error = quality.format_failures();
+                    eprintln!("Quality checks failed:\n{last_error}");
+                }
+            }
+            Err(e) => {
+                last_error = format!("Quality check error: {e}");
+                eprintln!("{last_error}");
+            }
         }
     }
 
-    // 8. Cleanup worktree
+    // 6. Handle outcome
+    if success && check_has_changes(&worktree_path)? {
+        // Push and create PR
+        println!("Pushing branch {branch}...");
+        let push = Command::new("git")
+            .args(["push", "origin", &branch, "--force-with-lease"])
+            .current_dir(&worktree_path)
+            .output()
+            .context("Failed to push branch")?;
+
+        if !push.status.success() {
+            eprintln!(
+                "Push failed: {}",
+                String::from_utf8_lossy(&push.stderr)
+            );
+        } else {
+            println!("Creating PR...");
+            create_pr(&args.repo, args.issue, &issue.title, &branch)?;
+
+            // Move to Ready-For-Review
+            if let Some(ref item_id) = issue.project_item_id {
+                println!("Moving to Ready-For-Review...");
+                move_to_column(item_id, STATUS_READY_FOR_REVIEW).ok();
+            }
+        }
+
+        end_session(
+            &session_id,
+            &format!("Implemented issue #{}. PR created.", args.issue),
+        )?;
+    } else if !success {
+        eprintln!(
+            "Failed after {} attempts. Moving back to Ready-For-Dev.",
+            args.retries
+        );
+
+        // Comment on the issue with failure details
+        add_issue_comment(
+            &args.repo,
+            args.issue,
+            &format!(
+                "Agent failed after {} attempts.\n\nLast error:\n```\n{}\n```",
+                args.retries, last_error
+            ),
+        )
+        .ok();
+
+        // Move back to Ready-For-Dev
+        if let Some(ref item_id) = issue.project_item_id {
+            move_to_column(item_id, STATUS_READY_FOR_DEV).ok();
+        }
+
+        end_session(
+            &session_id,
+            &format!("Failed on issue #{}: {}", args.issue, last_error),
+        )?;
+    } else {
+        println!("No changes produced by the agent.");
+        end_session(
+            &session_id,
+            &format!(
+                "No changes produced for issue #{}.",
+                args.issue
+            ),
+        )?;
+
+        if let Some(ref item_id) = issue.project_item_id {
+            move_to_column(item_id, STATUS_READY_FOR_DEV).ok();
+        }
+    }
+
+    // 7. Cleanup worktree
     println!("Cleaning up worktree...");
     Command::new("git")
         .args(["worktree", "remove", "--force"])
@@ -135,15 +192,49 @@ pub fn run(args: &AgentRunArgs) -> Result<()> {
     Ok(())
 }
 
-// --- helpers ---
+// --- Data types ---
 
-struct Issue {
-    title: String,
-    body: String,
-    labels: Vec<String>,
+pub struct Issue {
+    pub title: String,
+    pub body: String,
+    pub labels: Vec<String>,
+    pub project_item_id: Option<String>,
 }
 
-fn fetch_issue(repo: &str, number: u64) -> Result<Issue> {
+struct QualityResult {
+    tests_pass: bool,
+    tests_output: String,
+    clippy_pass: bool,
+    clippy_output: String,
+    has_commits: bool,
+}
+
+impl QualityResult {
+    fn all_pass(&self) -> bool {
+        self.tests_pass && self.clippy_pass && self.has_commits
+    }
+
+    fn format_failures(&self) -> String {
+        let mut out = String::new();
+        if !self.has_commits {
+            out.push_str("No commits found — you must commit your changes.\n");
+        }
+        if !self.tests_pass {
+            out.push_str(&format!("cargo test FAILED:\n{}\n", self.tests_output));
+        }
+        if !self.clippy_pass {
+            out.push_str(&format!(
+                "cargo clippy FAILED:\n{}\n",
+                self.clippy_output
+            ));
+        }
+        out
+    }
+}
+
+// --- Helpers ---
+
+pub fn fetch_issue(repo: &str, number: u64) -> Result<Issue> {
     let output = Command::new("gh")
         .args([
             "issue",
@@ -167,6 +258,8 @@ fn fetch_issue(repo: &str, number: u64) -> Result<Issue> {
     let v: serde_json::Value =
         serde_json::from_slice(&output.stdout).context("Failed to parse issue JSON")?;
 
+    let project_item_id = find_project_item_id(repo, number).ok();
+
     Ok(Issue {
         title: v["title"].as_str().unwrap_or("").to_string(),
         body: v["body"].as_str().unwrap_or("").to_string(),
@@ -178,7 +271,73 @@ fn fetch_issue(repo: &str, number: u64) -> Result<Issue> {
                     .collect()
             })
             .unwrap_or_default(),
+        project_item_id,
     })
+}
+
+pub fn find_project_item_id(repo: &str, issue_number: u64) -> Result<String> {
+    let owner = repo.split('/').next().unwrap_or("Rememora");
+
+    let output = Command::new("gh")
+        .args([
+            "project",
+            "item-list",
+            "3",
+            "--owner",
+            owner,
+            "--format",
+            "json",
+        ])
+        .output()
+        .context("Failed to list project items")?;
+
+    if !output.status.success() {
+        bail!("gh project item-list failed");
+    }
+
+    let data: serde_json::Value =
+        serde_json::from_slice(&output.stdout).context("Failed to parse project items")?;
+
+    let items = data["items"].as_array().context("No items array")?;
+
+    for item in items {
+        if let Some(num) = item["content"]["number"].as_u64() {
+            if num == issue_number {
+                if let Some(id) = item["id"].as_str() {
+                    return Ok(id.to_string());
+                }
+            }
+        }
+    }
+
+    bail!("Issue #{issue_number} not found in project board")
+}
+
+pub fn move_to_column(item_id: &str, status_option_id: &str) -> Result<()> {
+    let output = Command::new("gh")
+        .args([
+            "project",
+            "item-edit",
+            "--id",
+            item_id,
+            "--field-id",
+            STATUS_FIELD_ID,
+            "--project-id",
+            PROJECT_ID,
+            "--single-select-option-id",
+            status_option_id,
+        ])
+        .output()
+        .context("Failed to update project item status")?;
+
+    if !output.status.success() {
+        bail!(
+            "gh project item-edit failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    Ok(())
 }
 
 fn find_repo_root() -> Result<PathBuf> {
@@ -214,7 +373,7 @@ fn build_prompt(issue: &Issue) -> String {
 1. Read the relevant files in the codebase to understand the current state
 2. Implement the changes described in the issue
 3. Run `cargo test` to verify your changes don't break anything
-4. Run `cargo clippy` to check for warnings
+4. Run `cargo clippy -- -D warnings` to check for warnings
 5. If tests pass, commit your changes with a descriptive message referencing the issue
 6. If tests fail, fix the issues and try again
 
@@ -224,7 +383,24 @@ Keep your changes focused on what the issue asks for. Do not refactor unrelated 
     )
 }
 
-fn run_claude(worktree: &PathBuf, prompt: &str, args: &AgentRunArgs) -> Result<String> {
+fn build_retry_prompt(issue: &Issue, last_error: &str) -> String {
+    let base = build_prompt(issue);
+    format!(
+        r#"{base}
+
+## Previous attempt failed
+
+The previous attempt did not pass quality checks. Here is the error:
+
+```
+{last_error}
+```
+
+Fix these issues. Make sure `cargo test` passes and `cargo clippy -- -D warnings` is clean before committing."#
+    )
+}
+
+fn run_claude(worktree: &Path, prompt: &str, args: &AgentRunArgs) -> Result<String> {
     let mut cmd = Command::new("claude");
     cmd.arg("-p").arg(prompt);
     cmd.arg("--output-format").arg("text");
@@ -241,7 +417,6 @@ fn run_claude(worktree: &PathBuf, prompt: &str, args: &AgentRunArgs) -> Result<S
     if args.allow_skip_permissions {
         cmd.arg("--dangerously-skip-permissions");
     } else {
-        // Allow common dev tools without prompting
         cmd.arg("--allowedTools")
             .arg("Bash(cargo:*) Bash(git:*) Bash(rememora:*) Read Edit Write Glob Grep");
     }
@@ -256,25 +431,58 @@ fn run_claude(worktree: &PathBuf, prompt: &str, args: &AgentRunArgs) -> Result<S
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
-fn check_has_changes(worktree: &PathBuf) -> Result<bool> {
-    let output = Command::new("git")
-        .args(["status", "--porcelain"])
+fn run_quality_checks(worktree: &Path) -> Result<QualityResult> {
+    // Check for commits
+    let log = Command::new("git")
+        .args(["log", "HEAD", "--not", "--remotes", "--oneline"])
         .current_dir(worktree)
         .output()
-        .context("Failed to check git status")?;
+        .context("Failed to check git log")?;
+    let has_commits = !String::from_utf8_lossy(&log.stdout).trim().is_empty();
 
-    let status = String::from_utf8_lossy(&output.stdout);
+    // cargo test
+    let test_out = Command::new("cargo")
+        .args(["test"])
+        .current_dir(worktree)
+        .output()
+        .context("Failed to run cargo test")?;
+    let tests_pass = test_out.status.success();
+    let tests_output = format!(
+        "{}{}",
+        String::from_utf8_lossy(&test_out.stdout),
+        String::from_utf8_lossy(&test_out.stderr)
+    );
 
-    // Also check if there are commits ahead of the base
+    // cargo clippy
+    let clippy_out = Command::new("cargo")
+        .args(["clippy", "--", "-D", "warnings"])
+        .current_dir(worktree)
+        .output()
+        .context("Failed to run cargo clippy")?;
+    let clippy_pass = clippy_out.status.success();
+    let clippy_output = format!(
+        "{}{}",
+        String::from_utf8_lossy(&clippy_out.stdout),
+        String::from_utf8_lossy(&clippy_out.stderr)
+    );
+
+    Ok(QualityResult {
+        tests_pass,
+        tests_output,
+        clippy_pass,
+        clippy_output,
+        has_commits,
+    })
+}
+
+fn check_has_changes(worktree: &Path) -> Result<bool> {
     let log = Command::new("git")
         .args(["log", "HEAD", "--not", "--remotes", "--oneline"])
         .current_dir(worktree)
         .output()
         .context("Failed to check git log")?;
 
-    let commits = String::from_utf8_lossy(&log.stdout);
-
-    Ok(!status.trim().is_empty() || !commits.trim().is_empty())
+    Ok(!String::from_utf8_lossy(&log.stdout).trim().is_empty())
 }
 
 fn start_session(issue: u64, title: &str) -> Result<String> {
@@ -336,20 +544,18 @@ fn create_pr(repo: &str, issue: u64, title: &str, branch: &str) -> Result<()> {
     Ok(())
 }
 
-fn relabel_issue(repo: &str, issue: u64, remove: &str, add: &str) -> Result<()> {
+fn add_issue_comment(repo: &str, issue: u64, body: &str) -> Result<()> {
     Command::new("gh")
         .args([
             "issue",
-            "edit",
+            "comment",
             &issue.to_string(),
             "--repo",
             repo,
-            "--remove-label",
-            remove,
-            "--add-label",
-            add,
+            "--body",
+            body,
         ])
         .output()
-        .context("Failed to relabel issue")?;
+        .context("Failed to add issue comment")?;
     Ok(())
 }
