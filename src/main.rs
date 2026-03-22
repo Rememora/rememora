@@ -155,6 +155,60 @@ enum Commands {
         apply: bool,
     },
 
+    /// Run Claude CLI on a specific GitHub issue
+    AgentRun {
+        /// GitHub repo (owner/name)
+        #[arg(long)]
+        repo: String,
+
+        /// Issue number
+        #[arg(long)]
+        issue: u64,
+
+        /// Model to use
+        #[arg(long)]
+        model: Option<String>,
+
+        /// Max budget in USD
+        #[arg(long)]
+        max_budget: Option<f64>,
+
+        /// Skip all permission checks (use in sandboxed environments only)
+        #[arg(long)]
+        dangerously_skip_permissions: bool,
+    },
+
+    /// Watch for labeled issues and auto-dispatch to Claude CLI
+    AgentLoop {
+        /// GitHub repo (owner/name)
+        #[arg(long)]
+        repo: String,
+
+        /// Label to watch for
+        #[arg(long, default_value = "agent-ready")]
+        label: String,
+
+        /// Poll interval in seconds
+        #[arg(long, default_value = "300")]
+        poll: u64,
+
+        /// Model to use
+        #[arg(long)]
+        model: Option<String>,
+
+        /// Max budget in USD per issue
+        #[arg(long)]
+        max_budget: Option<f64>,
+
+        /// Skip all permission checks (use in sandboxed environments only)
+        #[arg(long)]
+        dangerously_skip_permissions: bool,
+
+        /// Run once and exit (don't loop)
+        #[arg(long)]
+        once: bool,
+    },
+
     /// Show system status
     Status,
 
@@ -396,6 +450,38 @@ fn main() -> Result<()> {
         ),
 
         Commands::Setup { apply } => commands::setup::run(apply),
+
+        Commands::AgentRun {
+            repo,
+            issue,
+            model,
+            max_budget,
+            dangerously_skip_permissions,
+        } => commands::agent_run::run(&commands::agent_run::AgentRunArgs {
+            repo,
+            issue,
+            model,
+            max_budget,
+            allow_skip_permissions: dangerously_skip_permissions,
+        }),
+
+        Commands::AgentLoop {
+            repo,
+            label,
+            poll,
+            model,
+            max_budget,
+            dangerously_skip_permissions,
+            once,
+        } => commands::agent_loop::run(&commands::agent_loop::AgentLoopArgs {
+            repo,
+            label,
+            poll_secs: poll,
+            model,
+            max_budget,
+            allow_skip_permissions: dangerously_skip_permissions,
+            once,
+        }),
 
         Commands::Status => commands::status::run(&conn, cli.json),
 
