@@ -15,6 +15,7 @@ ulid = "1"
 chrono = { version = "0.4", features = ["serde"] }
 dirs = "6"
 anyhow = "1"
+cliclack = "0.5"
 slug = "0.1"
 ureq = { version = "2", features = ["json"] }
 
