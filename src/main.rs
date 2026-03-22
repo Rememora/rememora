@@ -173,20 +173,20 @@ enum Commands {
         #[arg(long)]
         max_budget: Option<f64>,
 
+        /// Max retry attempts for quality gate
+        #[arg(long, default_value = "3")]
+        retries: u32,
+
         /// Skip all permission checks (use in sandboxed environments only)
         #[arg(long)]
         dangerously_skip_permissions: bool,
     },
 
-    /// Watch for labeled issues and auto-dispatch to Claude CLI
+    /// Watch project board for Ready-For-Dev issues and auto-dispatch to Claude CLI
     AgentLoop {
         /// GitHub repo (owner/name)
         #[arg(long)]
         repo: String,
-
-        /// Label to watch for
-        #[arg(long, default_value = "agent-ready")]
-        label: String,
 
         /// Poll interval in seconds
         #[arg(long, default_value = "300")]
@@ -199,6 +199,10 @@ enum Commands {
         /// Max budget in USD per issue
         #[arg(long)]
         max_budget: Option<f64>,
+
+        /// Max retry attempts per issue for quality gate
+        #[arg(long, default_value = "3")]
+        retries: u32,
 
         /// Skip all permission checks (use in sandboxed environments only)
         #[arg(long)]
@@ -456,6 +460,7 @@ fn main() -> Result<()> {
             issue,
             model,
             max_budget,
+            retries,
             dangerously_skip_permissions,
         } => commands::agent_run::run(&commands::agent_run::AgentRunArgs {
             repo,
@@ -463,24 +468,25 @@ fn main() -> Result<()> {
             model,
             max_budget,
             allow_skip_permissions: dangerously_skip_permissions,
+            retries,
         }),
 
         Commands::AgentLoop {
             repo,
-            label,
             poll,
             model,
             max_budget,
+            retries,
             dangerously_skip_permissions,
             once,
         } => commands::agent_loop::run(&commands::agent_loop::AgentLoopArgs {
             repo,
-            label,
             poll_secs: poll,
             model,
             max_budget,
             allow_skip_permissions: dangerously_skip_permissions,
             once,
+            retries,
         }),
 
         Commands::Status => commands::status::run(&conn, cli.json),
