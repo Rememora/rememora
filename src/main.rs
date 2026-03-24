@@ -213,6 +213,17 @@ enum Commands {
         once: bool,
     },
 
+    /// Evaluate DB compliance metrics (session, memory, transfer rates)
+    Eval {
+        /// Filter by project
+        #[arg(long)]
+        project: Option<String>,
+
+        /// Time window in days
+        #[arg(long, default_value = "30")]
+        days: u32,
+    },
+
     /// Show system status
     Status,
 
@@ -488,6 +499,12 @@ fn main() -> Result<()> {
             once,
             retries,
         }),
+
+        Commands::Eval { project, days } => commands::eval::run(
+            &conn,
+            &commands::eval::EvalArgs { project, days },
+            cli.json,
+        ),
 
         Commands::Status => commands::status::run(&conn, cli.json),
 
