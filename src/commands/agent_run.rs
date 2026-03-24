@@ -66,6 +66,9 @@ pub fn run(args: &AgentRunArgs) -> Result<()> {
     // 5. Quality loop: run claude, check quality, retry if needed
     let mut last_error = String::new();
     let mut success = false;
+    let mut attempt_log: Vec<AttemptRecord> = Vec::new();
+    let mut final_quality: Option<QualityResult> = None;
+    let mut final_claude_output = String::new();
 
     for attempt in 1..=args.retries {
         println!("\n--- Attempt {}/{} ---", attempt, args.retries);
@@ -79,38 +82,69 @@ pub fn run(args: &AgentRunArgs) -> Result<()> {
 
         // Run claude
         println!("Spawning Claude CLI...");
-        match run_claude(&worktree_path, &prompt, args) {
-            Ok(_output) => {
+        let claude_output = match run_claude(&worktree_path, &prompt, args) {
+            Ok(output) => {
                 println!("Claude finished. Running quality checks...");
+                output
             }
             Err(e) => {
                 last_error = format!("Claude CLI failed: {e}");
                 eprintln!("{last_error}");
+                attempt_log.push(AttemptRecord {
+                    attempt,
+                    error: Some(last_error.clone()),
+                });
                 continue;
             }
-        }
+        };
 
         // Quality gate
         match run_quality_checks(&worktree_path) {
             Ok(quality) => {
                 if quality.all_pass() {
                     println!("All quality checks passed!");
+                    attempt_log.push(AttemptRecord {
+                        attempt,
+                        error: None,
+                    });
+                    final_claude_output = claude_output;
+                    final_quality = Some(quality);
                     success = true;
                     break;
                 } else {
                     last_error = quality.format_failures();
                     eprintln!("Quality checks failed:\n{last_error}");
+                    attempt_log.push(AttemptRecord {
+                        attempt,
+                        error: Some(last_error.clone()),
+                    });
                 }
             }
             Err(e) => {
                 last_error = format!("Quality check error: {e}");
                 eprintln!("{last_error}");
+                attempt_log.push(AttemptRecord {
+                    attempt,
+                    error: Some(last_error.clone()),
+                });
             }
         }
     }
 
     // 6. Handle outcome
     if success && check_has_changes(&worktree_path)? {
+        // Get commit log for the PR body
+        let commits = get_commit_log(&worktree_path);
+
+        // Build rich PR body
+        let pr_body = build_pr_body(
+            args.issue,
+            &final_claude_output,
+            final_quality.as_ref(),
+            &attempt_log,
+            &commits,
+        );
+
         // Push and create PR
         println!("Pushing branch {branch}...");
         let push = Command::new("git")
@@ -126,7 +160,7 @@ pub fn run(args: &AgentRunArgs) -> Result<()> {
             );
         } else {
             println!("Creating PR...");
-            create_pr(&args.repo, args.issue, &issue.title, &branch)?;
+            create_pr(&args.repo, args.issue, &issue.title, &branch, &pr_body)?;
 
             // Move to Ready-For-Review
             if let Some(ref item_id) = issue.project_item_id {
@@ -230,6 +264,12 @@ impl QualityResult {
         }
         out
     }
+
+}
+
+struct AttemptRecord {
+    attempt: u32,
+    error: Option<String>,
 }
 
 // --- Helpers ---
@@ -511,9 +551,100 @@ fn end_session(id: &str, summary: &str) -> Result<()> {
     Ok(())
 }
 
-fn create_pr(repo: &str, issue: u64, title: &str, branch: &str) -> Result<()> {
+fn build_pr_body(
+    issue: u64,
+    claude_output: &str,
+    quality: Option<&QualityResult>,
+    attempts: &[AttemptRecord],
+    commits: &str,
+) -> String {
+    let mut body = String::new();
+
+    // Summary from Claude's output (last meaningful lines)
+    let agent_summary = extract_agent_summary(claude_output);
+    if !agent_summary.is_empty() {
+        body.push_str("## What was done\n\n");
+        body.push_str(&agent_summary);
+        body.push_str("\n\n");
+    }
+
+    // Commits
+    if !commits.trim().is_empty() {
+        body.push_str("## Commits\n\n```\n");
+        body.push_str(commits.trim());
+        body.push_str("\n```\n\n");
+    }
+
+    // Quality metrics
+    body.push_str("## Quality checks\n\n");
+    if let Some(q) = quality {
+        let test_icon = if q.tests_pass { "pass" } else { "FAIL" };
+        let clippy_icon = if q.clippy_pass { "pass" } else { "FAIL" };
+
+        // Extract test count
+        let test_count: u32 = q
+            .tests_output
+            .lines()
+            .filter(|l| l.contains("test result:"))
+            .filter_map(|l| {
+                l.split("passed").next().and_then(|s| {
+                    s.split_whitespace()
+                        .last()
+                        .and_then(|n| n.parse::<u32>().ok())
+                })
+            })
+            .sum();
+
+        body.push_str("| Check | Status |\n|-------|--------|\n");
+        body.push_str(&format!("| cargo test | {test_icon} ({test_count} passed) |\n"));
+        body.push_str(&format!("| cargo clippy | {clippy_icon} |\n\n"));
+    }
+
+    // Attempt history
+    let total = attempts.len();
+    if total > 1 {
+        body.push_str(&format!("## Attempts ({total})\n\n"));
+        for rec in attempts {
+            let status = if rec.error.is_some() { "failed" } else { "passed" };
+            body.push_str(&format!("**Attempt {}**: {}\n", rec.attempt, status));
+            if let Some(ref err) = rec.error {
+                // Truncate long errors
+                let truncated: String = err.lines().take(15).collect::<Vec<_>>().join("\n");
+                body.push_str(&format!("<details><summary>Error</summary>\n\n```\n{truncated}\n```\n</details>\n\n"));
+            }
+        }
+    } else {
+        body.push_str("Completed on first attempt.\n\n");
+    }
+
+    body.push_str(&format!("---\nCloses #{issue}\n"));
+    body
+}
+
+fn extract_agent_summary(output: &str) -> String {
+    let lines: Vec<&str> = output
+        .lines()
+        .rev()
+        .filter(|l| !l.trim().is_empty())
+        .take(30)
+        .collect();
+
+    let mut result: Vec<&str> = lines;
+    result.reverse();
+    result.join("\n")
+}
+
+fn get_commit_log(worktree: &Path) -> String {
+    Command::new("git")
+        .args(["log", "HEAD", "--not", "--remotes", "--oneline"])
+        .current_dir(worktree)
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .unwrap_or_default()
+}
+
+fn create_pr(repo: &str, issue: u64, title: &str, branch: &str, pr_body: &str) -> Result<()> {
     let pr_title = format!("#{issue}: {title}");
-    let pr_body = format!("Automated implementation for #{issue}.\n\nCloses #{issue}");
 
     let output = Command::new("gh")
         .args([
@@ -524,7 +655,7 @@ fn create_pr(repo: &str, issue: u64, title: &str, branch: &str) -> Result<()> {
             "--title",
             &pr_title,
             "--body",
-            &pr_body,
+            pr_body,
             "--head",
             branch,
         ])
