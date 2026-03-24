@@ -79,7 +79,6 @@ When handing off to another agent:
 
 struct AgentConfig {
     name: &'static str,
-    binary: &'static str,
     config_path: PathBuf,
     snippet: &'static str,
     inject_mode: InjectMode,
@@ -105,7 +104,6 @@ fn detect_agents() -> Vec<AgentConfig> {
     if binary_exists("claude") {
         agents.push(AgentConfig {
             name: "Claude Code",
-            binary: "claude",
             config_path: home().join(".claude").join("CLAUDE.md"),
             snippet: CLAUDE_CODE_SNIPPET,
             inject_mode: InjectMode::AppendMarkdown,
@@ -116,7 +114,6 @@ fn detect_agents() -> Vec<AgentConfig> {
     if binary_exists("codex") {
         agents.push(AgentConfig {
             name: "Codex",
-            binary: "codex",
             config_path: home().join(".codex").join("instructions.md"),
             snippet: CODEX_SNIPPET,
             inject_mode: InjectMode::TomlSystemPrompt,
@@ -127,7 +124,6 @@ fn detect_agents() -> Vec<AgentConfig> {
     if binary_exists("gemini") {
         agents.push(AgentConfig {
             name: "Gemini CLI",
-            binary: "gemini",
             config_path: home().join(".gemini").join("GEMINI.md"),
             snippet: GEMINI_SNIPPET,
             inject_mode: InjectMode::GeminiMd,
@@ -155,16 +151,32 @@ fn already_configured(path: &PathBuf) -> bool {
     }
 }
 
+fn tilde_path(path: &std::path::Path) -> String {
+    if let Some(home) = dirs::home_dir() {
+        if let Ok(suffix) = path.strip_prefix(&home) {
+            return format!("~/{}", suffix.display());
+        }
+    }
+    path.display().to_string()
+}
+
 pub fn run(apply: bool) -> Result<()> {
+    cliclack::intro("rememora setup")?;
+
+    let spinner = cliclack::spinner();
+    spinner.start("Scanning for AI agents...");
+
     let agents = detect_agents();
 
     if agents.is_empty() {
-        println!("No supported agents detected.");
-        println!("Rememora works with: Claude Code (claude), Codex (codex), Gemini CLI (gemini)");
+        spinner.stop("No agents found");
+        cliclack::log::warning(
+            "No supported agents detected.\n\
+             Rememora works with: Claude Code (claude), Codex (codex), Gemini CLI (gemini)",
+        )?;
+        cliclack::outro("Nothing to configure.")?;
         return Ok(());
     }
-
-    println!("Detected agents:\n");
 
     let mut actions: Vec<(&AgentConfig, Action)> = Vec::new();
 
@@ -176,22 +188,34 @@ pub fn run(apply: bool) -> Result<()> {
         } else {
             Action::WillCreate
         };
-
-        let status = match &action {
-            Action::AlreadyConfigured => "already configured",
-            Action::WillAppend => "will append rememora instructions",
-            Action::WillCreate => "will create config file",
-        };
-
-        println!(
-            "  {} ({})\n    Config: {}\n    Status: {}\n",
-            agent.name,
-            agent.binary,
-            agent.config_path.display(),
-            status,
-        );
-
         actions.push((agent, action));
+    }
+
+    spinner.stop("Scanning for AI agents...");
+
+    // Display agent status lines
+    for (agent, action) in &actions {
+        let path = tilde_path(&agent.config_path);
+        match action {
+            Action::AlreadyConfigured => {
+                cliclack::log::success(format!(
+                    "{:<13} {} — already configured",
+                    agent.name, path,
+                ))?;
+            }
+            Action::WillAppend => {
+                cliclack::log::info(format!(
+                    "{:<13} {} — will append",
+                    agent.name, path,
+                ))?;
+            }
+            Action::WillCreate => {
+                cliclack::log::info(format!(
+                    "{:<13} {} — will create",
+                    agent.name, path,
+                ))?;
+            }
+        }
     }
 
     let pending: Vec<_> = actions
@@ -200,13 +224,27 @@ pub fn run(apply: bool) -> Result<()> {
         .collect();
 
     if pending.is_empty() {
-        println!("All agents already configured. Nothing to do.");
+        cliclack::outro("All agents already configured.")?;
         return Ok(());
     }
 
-    if !apply {
-        println!("Run `rememora setup --apply` to apply these changes.");
-        println!("Existing files will be backed up with .bak extension.");
+    // Determine whether to proceed
+    let should_apply = if apply {
+        // --apply flag: non-interactive CI mode
+        true
+    } else {
+        // Interactive: ask the user
+        let count = pending.len();
+        let prompt = format!(
+            "Configure {} agent{}?",
+            count,
+            if count == 1 { "" } else { "s" }
+        );
+        cliclack::confirm(prompt).interact()?
+    };
+
+    if !should_apply {
+        cliclack::outro("Setup cancelled.")?;
         return Ok(());
     }
 
@@ -225,7 +263,6 @@ pub fn run(apply: bool) -> Result<()> {
         if agent.config_path.exists() {
             let backup = agent.config_path.with_extension("md.bak");
             std::fs::copy(&agent.config_path, &backup)?;
-            println!("  Backed up {} -> {}", agent.config_path.display(), backup.display());
         }
 
         match agent.inject_mode {
@@ -250,10 +287,10 @@ pub fn run(apply: bool) -> Result<()> {
             }
         }
 
-        println!("  Configured {} at {}", agent.name, agent.config_path.display());
+        cliclack::log::success(format!("Configured {}", agent.name))?;
     }
 
-    println!("\nSetup complete. Your agents will now use rememora for persistent memory.");
+    cliclack::outro("All agents configured.")?;
 
     Ok(())
 }
