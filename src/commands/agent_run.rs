@@ -59,6 +59,9 @@ pub fn run(args: &AgentRunArgs) -> Result<()> {
         );
     }
 
+    // 3b. Configure git signing in the worktree
+    configure_git_signing(&worktree_path)?;
+
     // 4. Start rememora session
     let session_id = start_session(args.issue, &issue.title)?;
     println!("Rememora session: {session_id}");
@@ -375,6 +378,31 @@ pub fn move_to_column(item_id: &str, status_option_id: &str) -> Result<()> {
             "gh project item-edit failed: {}",
             String::from_utf8_lossy(&output.stderr)
         );
+    }
+
+    Ok(())
+}
+
+fn configure_git_signing(worktree: &Path) -> Result<()> {
+    let configs = [
+        ("user.email", "ovi@rememora.ai"),
+        ("user.name", "Ovi"),
+        ("commit.gpgsign", "true"),
+    ];
+
+    for (key, value) in configs {
+        let out = Command::new("git")
+            .args(["config", "--local", key, value])
+            .current_dir(worktree)
+            .output()
+            .with_context(|| format!("Failed to set git config {key}"))?;
+
+        if !out.status.success() {
+            bail!(
+                "git config {key} failed: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
     }
 
     Ok(())
