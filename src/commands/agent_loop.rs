@@ -28,12 +28,20 @@ pub fn run(args: &AgentLoopArgs) -> Result<()> {
     let owner = args.repo.split('/').next().unwrap_or("Rememora");
 
     loop {
-        // 1. Process Cherry-Picked → Done (merged PRs)
+        // 1. Process Cherry-Picked: merge open PRs, then move to Done
         let cherry_picked = find_items_by_status(owner, "Cherry-Picked")?;
         for (item_id, number, title) in &cherry_picked {
             if is_pr_merged(&args.repo, *number) {
-                println!("Issue #{number} ({title}) — PR merged, moving to Done");
+                println!("Issue #{number} ({title}) — already merged, moving to Done");
                 agent_run::move_to_column(item_id, STATUS_DONE).ok();
+            } else if let Some(pr_number) = find_open_pr_for_issue(&args.repo, *number) {
+                println!("Issue #{number} ({title}) — merging PR #{pr_number}...");
+                if merge_pr(&args.repo, pr_number) {
+                    println!("  Merged. Moving to Done.");
+                    agent_run::move_to_column(item_id, STATUS_DONE).ok();
+                } else {
+                    eprintln!("  Merge failed for PR #{pr_number}.");
+                }
             }
         }
 
@@ -123,6 +131,62 @@ fn find_items_by_status(owner: &str, status: &str) -> Result<Vec<(String, u64, S
             Some((item_id, number, title))
         })
         .collect())
+}
+
+fn find_open_pr_for_issue(repo: &str, issue_number: u64) -> Option<u64> {
+    let output = Command::new("gh")
+        .args([
+            "pr",
+            "list",
+            "--repo",
+            repo,
+            "--head",
+            &format!("agent/issue-{issue_number}"),
+            "--state",
+            "open",
+            "--json",
+            "number",
+            "--limit",
+            "1",
+        ])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let items: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).ok()?;
+    items.first().and_then(|item| item["number"].as_u64())
+}
+
+fn merge_pr(repo: &str, pr_number: u64) -> bool {
+    let output = Command::new("gh")
+        .args([
+            "pr",
+            "merge",
+            &pr_number.to_string(),
+            "--repo",
+            repo,
+            "--merge",
+        ])
+        .output();
+
+    match output {
+        Ok(out) => {
+            if !out.status.success() {
+                eprintln!(
+                    "  gh pr merge failed: {}",
+                    String::from_utf8_lossy(&out.stderr)
+                );
+            }
+            out.status.success()
+        }
+        Err(e) => {
+            eprintln!("  Failed to run gh pr merge: {e}");
+            false
+        }
+    }
 }
 
 fn is_pr_merged(repo: &str, issue_number: u64) -> bool {
