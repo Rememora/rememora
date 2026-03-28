@@ -38,6 +38,12 @@ fn test_migrations_create_tables() {
         .query_row("SELECT COUNT(*) FROM contexts_fts", [], |r| r.get(0))
         .unwrap();
     assert_eq!(count, 0);
+
+    // Verify context_embeddings table exists (migration 002)
+    let count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM context_embeddings", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(count, 0);
 }
 
 #[test]
@@ -49,5 +55,5 @@ fn test_migrations_idempotent() {
     let count: i64 = conn
         .query_row("SELECT COUNT(*) FROM _migrations", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(count, 1);
+    assert_eq!(count, 2);
 }
