@@ -1,4 +1,4 @@
-import type { ToolCall } from "./providers/types.js";
+import type { ToolCall } from "./runners/types.js";
 import type { Scenario, ToolExpectation } from "./scenarios.js";
 
 /** Result of scoring a single expectation. */
@@ -12,14 +12,11 @@ export interface ExpectationResult {
 /** Result of scoring a full scenario. */
 export interface ScenarioResult {
   scenario: Pick<Scenario, "id" | "name" | "description">;
-  model: string;
-  provider: string;
+  cli: string;
   passed: boolean;
   score: number;
   expectationResults: ExpectationResult[];
   latencyMs: number;
-  inputTokens?: number;
-  outputTokens?: number;
 }
 
 /**
@@ -31,12 +28,9 @@ export interface ScenarioResult {
  */
 export function scoreScenario(
   scenario: Scenario,
-  model: string,
-  provider: string,
+  cli: string,
   toolCalls: ToolCall[],
   latencyMs: number,
-  inputTokens?: number,
-  outputTokens?: number,
 ): ScenarioResult {
   const expectationResults: ExpectationResult[] = scenario.expectations.map(
     (expectation) => {
@@ -90,14 +84,11 @@ export function scoreScenario(
       name: scenario.name,
       description: scenario.description,
     },
-    model,
-    provider,
+    cli,
     passed: score === 1,
     score,
     expectationResults,
     latencyMs,
-    inputTokens,
-    outputTokens,
   };
 }
 
@@ -111,13 +102,7 @@ function extractCommand(input: Record<string, unknown>): string | undefined {
 export function printResult(result: ScenarioResult): void {
   const status = result.passed ? "\x1b[32mPASS\x1b[0m" : "\x1b[31mFAIL\x1b[0m";
   console.log(`\n  ${status}  ${result.scenario.name} (${result.scenario.id})`);
-  console.log(`         Model: ${result.model} | Latency: ${Math.round(result.latencyMs)}ms`);
-
-  if (result.inputTokens !== undefined) {
-    console.log(
-      `         Tokens: ${result.inputTokens} in / ${result.outputTokens ?? "?"} out`,
-    );
-  }
+  console.log(`         CLI: ${result.cli} | Latency: ${Math.round(result.latencyMs)}ms`);
 
   for (const er of result.expectationResults) {
     const icon = er.passed ? "\x1b[32m✓\x1b[0m" : "\x1b[31m✗\x1b[0m";

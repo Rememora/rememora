@@ -2,11 +2,12 @@ import { existsSync, mkdirSync, writeFileSync, readdirSync, readFileSync } from 
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
+import { tmpdir } from "node:os";
 
-import type { Provider } from "./providers/types.js";
-import { AnthropicProvider } from "./providers/anthropic.js";
-import { OpenAIProvider } from "./providers/openai.js";
-import { GoogleProvider } from "./providers/google.js";
+import type { CliRunner } from "./runners/types.js";
+import { commandsToToolCalls } from "./runners/types.js";
+import { ClaudeCodeRunner } from "./runners/claude-code.js";
+import { CodexRunner } from "./runners/codex.js";
 import { SCENARIOS } from "./scenarios.js";
 import {
   scoreScenario,
@@ -18,33 +19,25 @@ import {
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const RESULTS_DIR = join(__dirname, "..", "results");
 
-function getProvider(name: string): Provider {
-  switch (name) {
-    case "anthropic":
-      return new AnthropicProvider();
-    case "openai":
-      return new OpenAIProvider();
-    case "google":
-      return new GoogleProvider();
-    default:
-      throw new Error(
-        `Unknown provider: ${name}. Must be one of: anthropic, openai, google`,
-      );
+const ALL_RUNNERS: CliRunner[] = [
+  new ClaudeCodeRunner(),
+  new CodexRunner(),
+];
+
+function getRunner(name: string): CliRunner {
+  const runner = ALL_RUNNERS.find((r) => r.name === name);
+  if (!runner) {
+    const names = ALL_RUNNERS.map((r) => r.name).join(", ");
+    throw new Error(`Unknown CLI: ${name}. Must be one of: ${names}, all`);
   }
+  return runner;
 }
 
-/** Infer provider from model name if not explicitly set. */
-function inferProvider(model: string): string {
-  if (model.startsWith("claude") || model.startsWith("claude-")) return "anthropic";
-  if (model.startsWith("gpt-") || model.startsWith("o1") || model.startsWith("o3")) return "openai";
-  if (model.startsWith("gemini")) return "google";
-  throw new Error(
-    `Cannot infer provider for model '${model}'. Use --provider to specify.`,
-  );
-}
-
-async function runEval(model: string, providerName: string, scenarioFilter?: string): Promise<void> {
-  const provider = getProvider(providerName);
+async function runEval(
+  runner: CliRunner,
+  scenarioFilter?: string,
+  timeoutMs = 120_000,
+): Promise<ScenarioResult[]> {
   const scenarios = scenarioFilter
     ? SCENARIOS.filter((s) => s.id === scenarioFilter)
     : SCENARIOS;
@@ -54,29 +47,35 @@ async function runEval(model: string, providerName: string, scenarioFilter?: str
     process.exit(1);
   }
 
+  // Check CLI availability
+  const isAvailable = await runner.available();
+  if (!isAvailable) {
+    console.error(`CLI '${runner.name}' not found on PATH. Is it installed?`);
+    process.exit(1);
+  }
+
   console.log(`\n  Rememora Eval Benchmark`);
-  console.log(`  Model: ${model} | Provider: ${providerName}`);
+  console.log(`  CLI: ${runner.name}`);
   console.log(`  Scenarios: ${scenarios.length}`);
+  console.log(`  Timeout: ${timeoutMs}ms per scenario`);
   console.log("─".repeat(60));
 
   const results: ScenarioResult[] = [];
 
   for (const scenario of scenarios) {
     try {
-      const completion = await provider.complete(
-        model,
-        scenario.systemPrompt,
-        scenario.userMessage,
-      );
+      const runResult = await runner.run(scenario.userMessage, {
+        cwd: tmpdir(),
+        env: {},
+        timeoutMs,
+      });
 
+      const toolCalls = commandsToToolCalls(runResult.commands);
       const result = scoreScenario(
         scenario,
-        model,
-        providerName,
-        completion.toolCalls,
-        completion.latencyMs,
-        completion.inputTokens,
-        completion.outputTokens,
+        runner.name,
+        toolCalls,
+        runResult.latencyMs,
       );
 
       results.push(result);
@@ -85,8 +84,7 @@ async function runEval(model: string, providerName: string, scenarioFilter?: str
       console.error(`\n  \x1b[31mERROR\x1b[0m  ${scenario.name}: ${err}`);
       results.push({
         scenario: { id: scenario.id, name: scenario.name, description: scenario.description },
-        model,
-        provider: providerName,
+        cli: runner.name,
         passed: false,
         score: 0,
         expectationResults: [],
@@ -103,12 +101,11 @@ async function runEval(model: string, providerName: string, scenarioFilter?: str
   }
 
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const filename = `${providerName}_${model.replace(/[/.]/g, "-")}_${timestamp}.json`;
+  const filename = `${runner.name}_${timestamp}.json`;
   const outPath = join(RESULTS_DIR, filename);
 
   const output = {
-    model,
-    provider: providerName,
+    cli: runner.name,
     timestamp: new Date().toISOString(),
     summary: {
       total: results.length,
@@ -121,7 +118,6 @@ async function runEval(model: string, providerName: string, scenarioFilter?: str
     },
     results: results.map((r) => ({
       ...r,
-      // Strip raw regex from serialized output
       expectationResults: r.expectationResults.map((er) => ({
         passed: er.passed,
         description: er.expectation.description,
@@ -135,6 +131,8 @@ async function runEval(model: string, providerName: string, scenarioFilter?: str
 
   writeFileSync(outPath, JSON.stringify(output, null, 2) + "\n");
   console.log(`\n  Results written to: ${outPath}`);
+
+  return results;
 }
 
 function runCompare(): void {
@@ -152,35 +150,35 @@ function runCompare(): void {
     process.exit(1);
   }
 
-  console.log(`\n  Rememora Eval — Model Comparison`);
-  console.log("─".repeat(72));
+  console.log(`\n  Rememora Eval — CLI Comparison`);
+  console.log("─".repeat(60));
   console.log(
-    `  ${"Model".padEnd(30)} ${"Provider".padEnd(12)} ${"Score".padEnd(10)} ${"Pass".padEnd(8)} Latency`,
+    `  ${"CLI".padEnd(20)} ${"Score".padEnd(10)} ${"Pass".padEnd(8)} Latency`,
   );
-  console.log("─".repeat(72));
+  console.log("─".repeat(60));
 
   for (const file of files) {
     const data = JSON.parse(readFileSync(join(RESULTS_DIR, file), "utf-8"));
-    const { model, provider, summary } = data;
+    const { cli, summary } = data;
     const scoreStr = `${(summary.averageScore * 100).toFixed(1)}%`;
     const passStr = `${summary.passed}/${summary.total}`;
     const latencyStr = `${Math.round(summary.totalLatencyMs)}ms`;
 
     console.log(
-      `  ${model.padEnd(30)} ${provider.padEnd(12)} ${scoreStr.padEnd(10)} ${passStr.padEnd(8)} ${latencyStr}`,
+      `  ${(cli as string).padEnd(20)} ${scoreStr.padEnd(10)} ${passStr.padEnd(8)} ${latencyStr}`,
     );
   }
 
-  console.log("─".repeat(72));
+  console.log("─".repeat(60));
 }
 
 async function main(): Promise<void> {
   const { values } = parseArgs({
     options: {
-      model: { type: "string", short: "m" },
-      provider: { type: "string", short: "p" },
+      cli: { type: "string", short: "c" },
       scenario: { type: "string", short: "s" },
-      compare: { type: "boolean", short: "c", default: false },
+      timeout: { type: "string", short: "t" },
+      compare: { type: "boolean", default: false },
     },
     strict: true,
   });
@@ -190,21 +188,34 @@ async function main(): Promise<void> {
     return;
   }
 
-  if (!values.model) {
+  if (!values.cli) {
+    const cliNames = ALL_RUNNERS.map((r) => r.name).join(", ");
     console.error(
-      "Usage: pnpm --prefix bench run eval -- --model <model> [--provider <provider>] [--scenario <id>]",
+      "Usage: pnpm --prefix bench run eval -- --cli <cli> [--scenario <id>] [--timeout <ms>]",
     );
     console.error("       pnpm --prefix bench run eval -- --compare");
-    console.error("\nModels: claude-haiku-4-5-20251001, gpt-4o-mini, gemini-2.5-pro, ...");
-    console.error("Providers: anthropic, openai, google (auto-inferred from model name)");
+    console.error(`\nCLIs: ${cliNames}, all`);
     console.error(
       `Scenarios: ${SCENARIOS.map((s) => s.id).join(", ")}`,
     );
     process.exit(1);
   }
 
-  const providerName = values.provider ?? inferProvider(values.model);
-  await runEval(values.model, providerName, values.scenario);
+  const timeoutMs = values.timeout ? parseInt(values.timeout, 10) : 120_000;
+
+  if (values.cli === "all") {
+    for (const runner of ALL_RUNNERS) {
+      const isAvailable = await runner.available();
+      if (isAvailable) {
+        await runEval(runner, values.scenario, timeoutMs);
+      } else {
+        console.log(`\n  Skipping ${runner.name} (not found on PATH)`);
+      }
+    }
+  } else {
+    const runner = getRunner(values.cli);
+    await runEval(runner, values.scenario, timeoutMs);
+  }
 }
 
 main().catch((err) => {

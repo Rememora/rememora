@@ -60,6 +60,9 @@ fn migrate(conn: &Connection) -> Result<()> {
 }
 
 pub fn default_db_path() -> std::path::PathBuf {
+    if let Ok(p) = std::env::var("REMEMORA_DB") {
+        return std::path::PathBuf::from(p);
+    }
     let mut path = dirs::home_dir().expect("Could not determine home directory");
     path.push(".rememora");
     path.push("rememora.db");
