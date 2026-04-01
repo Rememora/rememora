@@ -1,6 +1,9 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { randomBytes } from "node:crypto";
 
 import { loadTaskSequence, loadCondition } from "./task-sequence.js";
 import type {
@@ -11,6 +14,9 @@ import type {
 } from "./task-sequence.js";
 import { extractRemoraCalls } from "./behavioral-logger.js";
 import type { BehaviorSummary } from "./behavioral-logger.js";
+import { loadInstructionText } from "./long-run.js";
+import { compareConditions } from "./compare-conditions.js";
+import type { ComparisonReport, ConditionSummary } from "./compare-conditions.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const BENCH_DIR = join(__dirname, "..");
@@ -83,7 +89,7 @@ describe("loadCondition", () => {
     const cond = loadCondition(join(BENCH_DIR, "conditions/full-hybrid.json"));
     expect(cond.id).toBe("full-hybrid");
     expect(cond.instructionMode).toBe("full-hybrid");
-    expect(cond.preIndexed).toBe(true);
+    expect(cond.preIndexed).toBe(false);
   });
 
   it("throws on invalid instructionMode", () => {
@@ -379,5 +385,319 @@ describe("LongRunEvalRow platform compatibility", () => {
     expect(row.metadata.experiment).toBe("express-api-buildup_full-hybrid");
     expect(row.metadata.condition).toBe("full-hybrid");
     expect(row.metadata.task_index).toBe(4);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Instruction-mode-eval task sequence
+// ---------------------------------------------------------------------------
+
+describe("instruction-mode-eval task sequence", () => {
+  const seq = loadTaskSequence(
+    join(BENCH_DIR, "tasks/instruction-mode-eval.json"),
+  );
+
+  it("loads with correct id and project", () => {
+    expect(seq.id).toBe("instruction-mode-eval");
+    expect(seq.project).toBe("express-api");
+  });
+
+  it("has 8 tasks", () => {
+    expect(seq.tasks).toHaveLength(8);
+  });
+
+  it("every task has id, description, userMessage, and groundTruth", () => {
+    for (const task of seq.tasks) {
+      expect(task.id).toBeTruthy();
+      expect(task.description).toBeTruthy();
+      expect(task.userMessage).toBeTruthy();
+      expect(task.groundTruth).toBeTruthy();
+    }
+  });
+
+  it("no task userMessage mentions rememora, save to memory, or search memory", () => {
+    const forbidden = [
+      /\brememora\b/i,
+      /\bsave\s+(this\s+)?to\s+memory\b/i,
+      /\bsearch\s+memory\b/i,
+      /\brecall\b/i,
+      /\blook\s*up\s+in\s+memory\b/i,
+      /\bremember\s+this\b/i,
+    ];
+    for (const task of seq.tasks) {
+      for (const pattern of forbidden) {
+        expect(
+          pattern.test(task.userMessage),
+          `Task "${task.id}" userMessage matches forbidden pattern ${pattern}: "${task.userMessage.slice(0, 80)}..."`,
+        ).toBe(false);
+      }
+    }
+  });
+
+  it("later tasks have dependsOn referencing earlier task IDs", () => {
+    const taskIds = new Set(seq.tasks.map((t) => t.id));
+    for (const task of seq.tasks) {
+      if (task.dependsOn) {
+        for (const dep of task.dependsOn) {
+          expect(
+            taskIds.has(dep),
+            `Task "${task.id}" depends on unknown task "${dep}"`,
+          ).toBe(true);
+        }
+      }
+    }
+  });
+
+  it("first task has no dependencies", () => {
+    expect(seq.tasks[0].dependsOn).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// New condition configs
+// ---------------------------------------------------------------------------
+
+describe("new condition configs", () => {
+  it("loads behavioral-triggers.json", () => {
+    const cond = loadCondition(
+      join(BENCH_DIR, "conditions/behavioral-triggers.json"),
+    );
+    expect(cond.id).toBe("behavioral-triggers");
+    expect(cond.instructionMode).toBe("behavioral-triggers");
+    expect(cond.agent).toBe("claude-code");
+    expect(cond.preIndexed).toBe(false);
+  });
+
+  it("loads hooks-only.json", () => {
+    const cond = loadCondition(
+      join(BENCH_DIR, "conditions/hooks-only.json"),
+    );
+    expect(cond.id).toBe("hooks-only");
+    expect(cond.instructionMode).toBe("hooks-only");
+    expect(cond.agent).toBe("claude-code");
+  });
+
+  it("all 5 conditions load successfully", () => {
+    const modes = [
+      "none",
+      "reference-card",
+      "behavioral-triggers",
+      "hooks-only",
+      "full-hybrid",
+    ];
+    for (const mode of modes) {
+      const cond = loadCondition(
+        join(BENCH_DIR, `conditions/${mode}.json`),
+      );
+      expect(cond.instructionMode).toBe(mode);
+      expect(cond.agent).toBe("claude-code");
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Instruction text loader
+// ---------------------------------------------------------------------------
+
+describe("loadInstructionText", () => {
+  it("returns empty string for 'none' mode", () => {
+    const text = loadInstructionText("none");
+    expect(text.trim()).toBe("");
+  });
+
+  it("returns non-empty text for 'reference-card' mode", () => {
+    const text = loadInstructionText("reference-card");
+    expect(text.length).toBeGreaterThan(100);
+    expect(text).toContain("Rememora");
+    expect(text).toContain("On session start");
+  });
+
+  it("returns non-empty text for 'behavioral-triggers' mode", () => {
+    const text = loadInstructionText("behavioral-triggers");
+    expect(text.length).toBeGreaterThan(100);
+    expect(text).toContain("When to SEARCH");
+    expect(text).toContain("When to SAVE");
+  });
+
+  it("returns non-empty text for 'hooks-only' mode", () => {
+    const text = loadInstructionText("hooks-only");
+    expect(text.length).toBeGreaterThan(50);
+    expect(text).toContain("gone forever");
+    // hooks-only should be shorter than behavioral-triggers
+    const btText = loadInstructionText("behavioral-triggers");
+    expect(text.length).toBeLessThan(btText.length);
+  });
+
+  it("returns non-empty text for 'full-hybrid' mode", () => {
+    const text = loadInstructionText("full-hybrid");
+    expect(text.length).toBeGreaterThan(100);
+    expect(text).toContain("CRITICAL");
+    expect(text).toContain("When to SEARCH");
+    expect(text).toContain("When to SAVE");
+    // full-hybrid should be the longest
+    const btText = loadInstructionText("behavioral-triggers");
+    expect(text.length).toBeGreaterThan(btText.length);
+  });
+
+  it("returns empty string for unknown mode", () => {
+    const text = loadInstructionText("nonexistent-mode");
+    expect(text).toBe("");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Comparison report
+// ---------------------------------------------------------------------------
+
+describe("compareConditions", () => {
+  const tmpDir = join(
+    tmpdir(),
+    `rememora-compare-test-${randomBytes(4).toString("hex")}`,
+  );
+
+  const TS1 = "2026-04-01T12:00:00.000Z";
+  const TS2 = "2026-04-01T13:00:00.000Z";
+
+  function makeRow(
+    condition: string,
+    taskId: string,
+    taskIndex: number,
+    autonomousSaves: number,
+    autonomousSearches: number,
+    kbStart: number,
+    kbEnd: number,
+    timestamp: string,
+  ): LongRunEvalRow {
+    return {
+      id: `test-seq/${condition}/${taskId}/${timestamp}`,
+      input: {
+        task: `Task ${taskId}`,
+        task_id: taskId,
+        task_index: taskIndex,
+        sequence_id: "test-seq",
+        kb_size: kbStart,
+        mode: condition as LongRunEvalRow["input"]["mode"],
+      },
+      output: {
+        commands: [],
+        saves: Array(autonomousSaves).fill("rememora save ..."),
+        searches: Array(autonomousSearches).fill("rememora search ..."),
+      },
+      expected: { ground_truth: "test" },
+      scores: {
+        task_completion: 1,
+        task_quality: 0,
+        autonomous_saves: autonomousSaves,
+        autonomous_searches: autonomousSearches,
+        tokens_consumed: 0,
+        kb_size_at_start: kbStart,
+        kb_size_at_end: kbEnd,
+      },
+      metadata: {
+        experiment: `test-seq_${condition}`,
+        condition,
+        task_index: taskIndex,
+        sequence_id: "test-seq",
+        cli: "claude-code",
+        latency_ms: 1000,
+        timestamp,
+      },
+    };
+  }
+
+  beforeAll(() => {
+    mkdirSync(tmpDir, { recursive: true });
+
+    // Condition A: 2 runs, 2 tasks each
+    const condARows = [
+      makeRow("cond-a", "t1", 0, 2, 1, 0, 2, TS1),
+      makeRow("cond-a", "t2", 1, 1, 2, 2, 3, TS1),
+      makeRow("cond-a", "t1", 0, 3, 0, 0, 3, TS2),
+      makeRow("cond-a", "t2", 1, 0, 1, 3, 3, TS2),
+    ];
+    writeFileSync(
+      join(tmpDir, `longrun_test-seq_cond-a_run1.jsonl`),
+      condARows.slice(0, 2).map((r) => JSON.stringify(r)).join("\n") + "\n",
+    );
+    writeFileSync(
+      join(tmpDir, `longrun_test-seq_cond-a_run2.jsonl`),
+      condARows.slice(2).map((r) => JSON.stringify(r)).join("\n") + "\n",
+    );
+
+    // Condition B: 1 run, 2 tasks
+    const condBRows = [
+      makeRow("cond-b", "t1", 0, 0, 0, 0, 0, TS1),
+      makeRow("cond-b", "t2", 1, 0, 0, 0, 0, TS1),
+    ];
+    writeFileSync(
+      join(tmpDir, `longrun_test-seq_cond-b_run1.jsonl`),
+      condBRows.map((r) => JSON.stringify(r)).join("\n") + "\n",
+    );
+  });
+
+  afterAll(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("groups results by condition", () => {
+    const report = compareConditions("test-seq", tmpDir);
+    expect(report.conditions).toHaveLength(2);
+    expect(report.conditions.map((c) => c.condition).sort()).toEqual([
+      "cond-a",
+      "cond-b",
+    ]);
+  });
+
+  it("counts runs correctly", () => {
+    const report = compareConditions("test-seq", tmpDir);
+    const condA = report.conditions.find((c) => c.condition === "cond-a")!;
+    const condB = report.conditions.find((c) => c.condition === "cond-b")!;
+    expect(condA.runCount).toBe(2);
+    expect(condB.runCount).toBe(1);
+  });
+
+  it("sums autonomous saves and searches", () => {
+    const report = compareConditions("test-seq", tmpDir);
+    const condA = report.conditions.find((c) => c.condition === "cond-a")!;
+    expect(condA.autonomousSaves).toBe(6);
+    expect(condA.autonomousSearches).toBe(4);
+  });
+
+  it("calculates task completion rate", () => {
+    const report = compareConditions("test-seq", tmpDir);
+    const condA = report.conditions.find((c) => c.condition === "cond-a")!;
+    expect(condA.taskCompletionRate).toBe(1);
+    expect(condA.totalTasks).toBe(4);
+    expect(condA.tasksCompleted).toBe(4);
+  });
+
+  it("calculates average KB growth per task", () => {
+    const report = compareConditions("test-seq", tmpDir);
+    const condA = report.conditions.find((c) => c.condition === "cond-a")!;
+    expect(condA.avgKbGrowthPerTask).toBe(1.5);
+
+    const condB = report.conditions.find((c) => c.condition === "cond-b")!;
+    expect(condB.avgKbGrowthPerTask).toBe(0);
+  });
+
+  it("condition with no rememora usage shows zeros", () => {
+    const report = compareConditions("test-seq", tmpDir);
+    const condB = report.conditions.find((c) => c.condition === "cond-b")!;
+    expect(condB.autonomousSaves).toBe(0);
+    expect(condB.autonomousSearches).toBe(0);
+    expect(condB.promptedSaves).toBe(0);
+    expect(condB.promptedSearches).toBe(0);
+  });
+
+  it("throws on missing sequence", () => {
+    expect(() => compareConditions("nonexistent-seq", tmpDir)).toThrow(
+      /No result files found/,
+    );
+  });
+
+  it("report has generatedAt timestamp", () => {
+    const report = compareConditions("test-seq", tmpDir);
+    expect(report.generatedAt).toBeTruthy();
+    expect(() => new Date(report.generatedAt)).not.toThrow();
   });
 });
