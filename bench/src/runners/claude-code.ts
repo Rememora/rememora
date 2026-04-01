@@ -54,17 +54,25 @@ export class ClaudeCodeRunner implements CliRunner {
   async run(prompt: string, options: RunOptions): Promise<RunResult> {
     const start = performance.now();
 
+    // Use externally provided instruction text, or fall back to the built-in default.
+    const systemPrompt = options.instructionText ?? REMEMORA_SYSTEM_PROMPT;
+
+    // Build CLI args — only append system prompt if non-empty (the "none" condition).
+    const args = [
+      "-p", prompt,
+      "--output-format", "json",
+      "--allowedTools", "Bash(rememora:*)",
+      "--max-turns", "5",
+    ];
+    if (systemPrompt.trim().length > 0) {
+      args.push("--append-system-prompt", systemPrompt);
+    }
+
     const result = await new Promise<{ stdout: string; stderr: string; exitCode: number }>(
       (resolve) => {
         execFile(
           "claude",
-          [
-            "-p", prompt,
-            "--output-format", "json",
-            "--append-system-prompt", REMEMORA_SYSTEM_PROMPT,
-            "--allowedTools", "Bash(rememora:*)",
-            "--max-turns", "5",
-          ],
+          args,
           {
             cwd: options.cwd,
             env: { ...process.env, ...options.env },
