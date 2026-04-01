@@ -1,0 +1,62 @@
+{
+  "id": "instruction-mode-eval",
+  "project": "express-api",
+  "description": "An 8-task sequence for comparing instruction modes. Tasks present natural opportunities for autonomous saving and searching without ever explicitly mentioning rememora, memory, or recall. Measures whether the agent autonomously preserves decisions, bugs, and patterns and retrieves them when relevant.",
+  "tasks": [
+    {
+      "id": "setup-project",
+      "description": "Set up a new Express API with TypeScript, choosing PostgreSQL for ACID transactions needed by payments.",
+      "userMessage": "Set up a new Express API project with TypeScript. We're going with PostgreSQL because we need ACID guarantees for the payment processing we'll build later. Use Prisma as the ORM. Create the directory structure: src/routes, src/middleware, src/models. Initialize a basic server that listens on port 3000.",
+      "groundTruth": "Agent should autonomously save a decision about PostgreSQL + Prisma with the ACID/payments rationale. This is a foundational architectural choice that downstream tasks depend on."
+    },
+    {
+      "id": "add-auth",
+      "description": "Add JWT auth middleware using RS256 with rotating keys for the payment endpoints.",
+      "userMessage": "Add JWT authentication middleware in src/middleware/auth.ts. We need RS256 with rotating keys — the security team requires asymmetric signing since this will protect the payment endpoints. The middleware should verify tokens, extract the user payload, and attach it to the request object. Export a requireAuth function that can be used as Express middleware.",
+      "groundTruth": "Agent should autonomously save a decision about RS256 + rotating keys with the security rationale. Bonus: agent searches for prior project context before implementing.",
+      "dependsOn": ["setup-project"]
+    },
+    {
+      "id": "users-crud",
+      "description": "Create a /users CRUD endpoint connected to the database with auth protection.",
+      "userMessage": "Create a /users CRUD endpoint in src/routes/users.ts. It needs GET (list/single), POST (create), PUT (update), and DELETE operations. Connect it to the PostgreSQL database through Prisma. Protected routes should use the auth middleware. Include proper error handling and input validation with Zod.",
+      "groundTruth": "Agent should autonomously search for prior decisions about the database (PostgreSQL/Prisma) and auth middleware (RS256). Implementation should reflect those earlier choices without needing to be reminded.",
+      "dependsOn": ["setup-project", "add-auth"]
+    },
+    {
+      "id": "fix-auth-bug",
+      "description": "Fix a bug where the auth middleware silently swallows TokenExpiredError instead of returning 401.",
+      "userMessage": "There's a bug in the auth middleware — when a JWT token has expired, the middleware catches the error but doesn't return a 401 response. It just calls next() without the user payload, which causes confusing 500 errors downstream. The issue is in the try/catch block in src/middleware/auth.ts. Fix it so TokenExpiredError returns a clear 401 with an appropriate error message.",
+      "groundTruth": "Agent should autonomously save a case about the silent JWT expiration bug — this is a non-trivial debugging insight. Bonus: agent searches for prior auth middleware context before fixing.",
+      "dependsOn": ["add-auth"]
+    },
+    {
+      "id": "add-rate-limiting",
+      "description": "Add rate limiting with a sliding window algorithm — 100 requests per minute per IP.",
+      "userMessage": "Add rate limiting middleware in src/middleware/rate-limiter.ts. Use a sliding window algorithm — 100 requests per minute per IP. Store the window state in memory using a Map with IP keys and timestamped request arrays. Apply it globally before auth. Return 429 Too Many Requests with a Retry-After header when the limit is exceeded.",
+      "groundTruth": "Agent should autonomously save a pattern about the sliding window rate limiting approach. This is a reusable pattern with specific implementation details worth preserving.",
+      "dependsOn": ["setup-project"]
+    },
+    {
+      "id": "payments-endpoint",
+      "description": "Create the /payments endpoint — the critical path that ties together all prior decisions.",
+      "userMessage": "Create a /payments endpoint in src/routes/payments.ts. This is the critical path we've been building toward. It needs to handle payment creation with proper ACID transactions, validate payment amounts, check that the user is authenticated, and return appropriate status codes. Include idempotency key support to prevent double charges.",
+      "groundTruth": "Agent should autonomously search for ALL prior decisions: PostgreSQL/ACID, RS256 auth, and the auth bug fix. The implementation should use Prisma transactions, the auth middleware, and handle token expiration gracefully. This is the key task for measuring search behavior.",
+      "dependsOn": ["setup-project", "add-auth", "fix-auth-bug"]
+    },
+    {
+      "id": "fix-rate-limiter-tests",
+      "description": "Fix the rate limiter causing false positives in tests due to persistent sliding window state.",
+      "userMessage": "The rate limiter is causing test failures — tests that run sequentially are hitting the rate limit because the sliding window state from previous tests persists in memory. Tests for the payments endpoint intermittently fail with 429 even though each test should start clean. Fix this so tests can run reliably without rate limit interference.",
+      "groundTruth": "Agent should autonomously search for the rate limiting pattern to understand the sliding window implementation, then save a case about the test isolation issue. The fix should involve making the rate limiter's state resettable or injectable for testing.",
+      "dependsOn": ["add-rate-limiting", "payments-endpoint"]
+    },
+    {
+      "id": "health-check",
+      "description": "Add a health check endpoint that reports database and auth service connectivity.",
+      "userMessage": "Add a /health endpoint in src/routes/health.ts that reports the status of the system's dependencies. It should check that the PostgreSQL database is reachable via Prisma and that the auth service's public key endpoint is responding. Return a JSON object with overall status and individual component statuses. This endpoint should not require authentication.",
+      "groundTruth": "Agent should autonomously search for entity knowledge about the database setup (PostgreSQL/Prisma) and auth service (RS256 key endpoint) to know what to health-check. Implementation should reference the specific technologies and configurations from earlier decisions.",
+      "dependsOn": ["setup-project", "add-auth"]
+    }
+  ]
+}
