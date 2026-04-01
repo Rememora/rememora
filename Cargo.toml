@@ -25,6 +25,7 @@ candle-nn = { version = "0.8", optional = true }
 candle-transformers = { version = "0.8", optional = true }
 hf-hub = { version = "0.4", optional = true }
 tokenizers = { version = "0.21", optional = true }
+sqlite-vec = { version = "0.1", optional = true }
 
 [dev-dependencies]
 assert_cmd = "2"
@@ -33,5 +34,6 @@ tempfile = "3"
 
 [features]
 default = []
-embed-candle = ["candle-core", "candle-nn", "candle-transformers", "hf-hub", "tokenizers"]
+embed-candle = ["candle-core", "candle-nn", "candle-transformers", "hf-hub", "tokenizers", "sqlite-vec"]
 embed-llamacpp = []
+metal = ["embed-candle", "candle-core/metal"]

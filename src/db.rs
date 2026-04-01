@@ -3,8 +3,32 @@ use rusqlite::Connection;
 use std::path::Path;
 
 const MIGRATION_001: &str = include_str!("migrations/001_initial.sql");
+const MIGRATION_002: &str = include_str!("migrations/002_embeddings.sql");
+
+/// Register sqlite-vec extension before opening connections.
+/// Must be called before any Connection::open calls.
+///
+/// The transmute follows the sqlite-vec crate's own test pattern — there is no
+/// safe wrapper. See: https://docs.rs/sqlite-vec/latest/sqlite_vec/
+#[cfg(feature = "embed-candle")]
+fn register_vec_extension() {
+    use std::sync::Once;
+    static INIT: Once = Once::new();
+    INIT.call_once(|| unsafe {
+        // Clippy wants a type annotation but the target type is an opaque
+        // sqlite3 callback. This is the canonical pattern from the sqlite-vec
+        // crate's own tests — suppress the lint.
+        #[allow(clippy::missing_transmute_annotations)]
+        rusqlite::ffi::sqlite3_auto_extension(Some(std::mem::transmute(
+            sqlite_vec::sqlite3_vec_init as *const (),
+        )));
+    });
+}
 
 pub fn open(path: &Path) -> Result<Connection> {
+    #[cfg(feature = "embed-candle")]
+    register_vec_extension();
+
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("Failed to create directory: {}", parent.display()))?;
@@ -16,6 +40,9 @@ pub fn open(path: &Path) -> Result<Connection> {
 }
 
 pub fn open_memory() -> Result<Connection> {
+    #[cfg(feature = "embed-candle")]
+    register_vec_extension();
+
     let conn = Connection::open_in_memory()?;
     configure(&conn)?;
     migrate(&conn)?;
@@ -42,17 +69,42 @@ fn migrate(conn: &Connection) -> Result<()> {
         );",
     )?;
 
-    let applied: bool = conn.query_row(
+    let applied_001: bool = conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM _migrations WHERE name = '001_initial')",
         [],
         |row| row.get(0),
     )?;
 
-    if !applied {
+    if !applied_001 {
         conn.execute_batch(MIGRATION_001)?;
         conn.execute(
             "INSERT INTO _migrations (name, applied_at) VALUES ('001_initial', datetime('now'))",
             [],
+        )?;
+    }
+
+    let applied_002: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM _migrations WHERE name = '002_embeddings')",
+        [],
+        |row| row.get(0),
+    )?;
+
+    if !applied_002 {
+        conn.execute_batch(MIGRATION_002)?;
+        conn.execute(
+            "INSERT INTO _migrations (name, applied_at) VALUES ('002_embeddings', datetime('now'))",
+            [],
+        )?;
+    }
+
+    // Create sqlite-vec virtual table when feature is enabled
+    #[cfg(feature = "embed-candle")]
+    {
+        conn.execute_batch(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS vec_contexts USING vec0(
+                context_id TEXT PRIMARY KEY,
+                embedding float[384] distance_metric=cosine
+            );",
         )?;
     }
 
