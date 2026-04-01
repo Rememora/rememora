@@ -2,3 +2,8 @@
 *.db
 *.db-wal
 *.db-shm
+
+# Bench
+bench/node_modules/
+bench/dist/
+bench/results/*.json
