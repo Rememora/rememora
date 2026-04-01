@@ -23,6 +23,8 @@ export interface RunOptions {
   env: Record<string, string>;
   /** Timeout in milliseconds. */
   timeoutMs: number;
+  /** Optional instruction text to pass as the system prompt. Overrides the runner's built-in default. */
+  instructionText?: string;
 }
 
 /** Interface that each CLI runner implements. */

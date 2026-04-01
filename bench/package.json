@@ -10,6 +10,7 @@
     "eval:long": "tsx src/run-long.ts",
     "eval:matrix": "tsx src/run-long.ts --matrix",
     "compare": "tsx src/run.ts --compare",
+    "compare:conditions": "tsx src/compare-conditions.ts",
     "test:eval": "vitest run"
   },
   "devDependencies": {

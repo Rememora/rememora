@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync, unlinkSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
@@ -19,6 +19,7 @@ import { extractRemoraCalls } from "./behavioral-logger.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const RESULTS_DIR = join(__dirname, "..", "results");
+const INSTRUCTIONS_DIR = join(__dirname, "..", "instructions");
 
 // ---------------------------------------------------------------------------
 // Runner registry (mirrors run.ts)
@@ -36,6 +37,26 @@ function getRunner(name: string): CliRunner {
     throw new Error(`Unknown CLI: ${name}. Must be one of: ${names}`);
   }
   return runner;
+}
+
+// ---------------------------------------------------------------------------
+// Instruction text loader
+// ---------------------------------------------------------------------------
+
+/**
+ * Load instruction text for a given instruction mode.
+ *
+ * Resolves `<mode>.txt` from `bench/instructions/`. Returns an empty string
+ * for the "none" mode or if no file is found.
+ */
+export function loadInstructionText(mode: string): string {
+  const filePath = join(INSTRUCTIONS_DIR, `${mode}.txt`);
+  try {
+    return readFileSync(filePath, "utf-8");
+  } catch {
+    // No instruction file — treat as empty (equivalent to "none" mode)
+    return "";
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -108,6 +129,9 @@ export async function runLongRun(
   const runner = getRunner(condition.agent);
   const timestamp = new Date().toISOString();
 
+  // Load instruction text for this condition's mode
+  const instructionText = loadInstructionText(condition.instructionMode);
+
   // Check CLI availability
   const isAvailable = await runner.available();
   if (!isAvailable) {
@@ -161,6 +185,7 @@ export async function runLongRun(
         cwd: tmpdir(),
         env,
         timeoutMs,
+        instructionText,
       });
 
       const commands = runResult.commands.map((c) => c.command);
