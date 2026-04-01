@@ -196,6 +196,10 @@ cargo clippy        # Lint
 - [ ] Memory evolution — LLM-based consolidation of old memories
 - [ ] TUI dashboard for browsing memories
 
+## Insights
+
+Non-obvious gotchas and design decisions discovered while building rememora: **[Engineering Insights](docs/insights.md)**
+
 ## License
 
 MIT
