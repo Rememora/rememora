@@ -30,6 +30,18 @@ function parseStructuredOutput(raw: string): CapturedCommand[] {
   }
 }
 
+const REMEMORA_SYSTEM_PROMPT = `You have access to the \`rememora\` CLI for persistent cross-agent memory. Always use it when asked to save, search, or manage memories and sessions.
+
+Key commands:
+- \`rememora context --auto\` — load prior context for the current project
+- \`rememora session start --agent <agent> --project <name> --intent "..."\` — start a session
+- \`rememora session end <id> --summary "..." [--status transferred]\` — end a session
+- \`rememora save "..." --category <category> --project <name>\` — save a memory
+  Categories: preference, entity, decision, event, case, pattern
+- \`rememora search "query" --project <name>\` — search memories
+
+When the user asks you to "save to memory", "remember this", or "look something up in memory", use the rememora CLI — do not just respond conversationally.`;
+
 export class ClaudeCodeRunner implements CliRunner {
   name = "claude-code";
 
@@ -49,6 +61,7 @@ export class ClaudeCodeRunner implements CliRunner {
           [
             "-p", prompt,
             "--output-format", "json",
+            "--append-system-prompt", REMEMORA_SYSTEM_PROMPT,
             "--allowedTools", "Bash(rememora:*)",
             "--max-turns", "5",
           ],
