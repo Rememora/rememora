@@ -1,8 +1,9 @@
-import { existsSync, mkdirSync, writeFileSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync, readdirSync, readFileSync, unlinkSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { tmpdir } from "node:os";
+import { randomBytes } from "node:crypto";
 
 import type { CliRunner } from "./runners/types.js";
 import { commandsToToolCalls } from "./runners/types.js";
@@ -13,6 +14,7 @@ import {
   scoreScenario,
   printResult,
   printSummary,
+  toJSONLRows,
   type ScenarioResult,
 } from "./scorer.js";
 
@@ -54,10 +56,14 @@ async function runEval(
     process.exit(1);
   }
 
+  // Create an isolated temp DB so eval runs don't pollute real data
+  const tempDb = join(tmpdir(), `rememora-bench-${randomBytes(4).toString("hex")}.db`);
+
   console.log(`\n  Rememora Eval Benchmark`);
   console.log(`  CLI: ${runner.name}`);
   console.log(`  Scenarios: ${scenarios.length}`);
   console.log(`  Timeout: ${timeoutMs}ms per scenario`);
+  console.log(`  DB: ${tempDb} (isolated)`);
   console.log("─".repeat(60));
 
   const results: ScenarioResult[] = [];
@@ -66,7 +72,7 @@ async function runEval(
     try {
       const runResult = await runner.run(scenario.userMessage, {
         cwd: tmpdir(),
-        env: {},
+        env: { REMEMORA_DB: tempDb },
         timeoutMs,
       });
 
@@ -130,9 +136,59 @@ async function runEval(
   };
 
   writeFileSync(outPath, JSON.stringify(output, null, 2) + "\n");
-  console.log(`\n  Results written to: ${outPath}`);
+
+  // Always write JSONL (standard eval format for platform export)
+  const jsonlPath = outPath.replace(/\.json$/, ".jsonl");
+  const jsonlRows = toJSONLRows(results, new Date().toISOString());
+  const jsonlContent = jsonlRows.map((row) => JSON.stringify(row)).join("\n") + "\n";
+  writeFileSync(jsonlPath, jsonlContent);
+
+  console.log(`\n  Results: ${outPath}`);
+  console.log(`  JSONL:   ${jsonlPath}`);
+
+  // Clean up temp DB
+  try { unlinkSync(tempDb); } catch { /* already gone */ }
+  try { unlinkSync(`${tempDb}-wal`); } catch { /* WAL file */ }
+  try { unlinkSync(`${tempDb}-shm`); } catch { /* SHM file */ }
 
   return results;
+}
+
+/** Format results as a markdown table. */
+function formatMarkdown(results: ScenarioResult[], cli: string): string {
+  const lines: string[] = [];
+  lines.push(`## Rememora Eval — ${cli}\n`);
+
+  const total = results.length;
+  const passed = results.filter((r) => r.passed).length;
+  const avgScore = total > 0 ? results.reduce((sum, r) => sum + r.score, 0) / total : 0;
+  const totalLatency = results.reduce((sum, r) => sum + r.latencyMs, 0);
+
+  lines.push(`| Scenario | Result | Score | Latency |`);
+  lines.push(`|----------|--------|-------|---------|`);
+
+  for (const r of results) {
+    const icon = r.passed ? "PASS" : "FAIL";
+    const score = `${(r.score * 100).toFixed(0)}%`;
+    const latency = `${(r.latencyMs / 1000).toFixed(1)}s`;
+    lines.push(`| ${r.scenario.name} | ${icon} | ${score} | ${latency} |`);
+  }
+
+  lines.push("");
+  lines.push(`**Summary:** ${passed}/${total} passed, ${(avgScore * 100).toFixed(1)}% avg score, ${(totalLatency / 1000).toFixed(1)}s total`);
+
+  return lines.join("\n");
+}
+
+function printFormattedOutput(results: ScenarioResult[], cli: string, format: string): void {
+  if (format === "markdown") {
+    console.log("\n" + formatMarkdown(results, cli));
+  } else if (format === "jsonl") {
+    const rows = toJSONLRows(results, new Date().toISOString());
+    for (const row of rows) {
+      console.log(JSON.stringify(row));
+    }
+  }
 }
 
 function runCompare(): void {
@@ -173,11 +229,16 @@ function runCompare(): void {
 }
 
 async function main(): Promise<void> {
+  // Strip leading "--" that pnpm passes through as a delimiter
+  const args = process.argv.slice(2).filter((a) => a !== "--");
+
   const { values } = parseArgs({
+    args,
     options: {
       cli: { type: "string", short: "c" },
       scenario: { type: "string", short: "s" },
       timeout: { type: "string", short: "t" },
+      format: { type: "string", short: "f" },
       compare: { type: "boolean", default: false },
     },
     strict: true,
@@ -203,18 +264,22 @@ async function main(): Promise<void> {
 
   const timeoutMs = values.timeout ? parseInt(values.timeout, 10) : 120_000;
 
+  const outputFormat = values.format ?? "console";
+
   if (values.cli === "all") {
     for (const runner of ALL_RUNNERS) {
       const isAvailable = await runner.available();
       if (isAvailable) {
-        await runEval(runner, values.scenario, timeoutMs);
+        const results = await runEval(runner, values.scenario, timeoutMs);
+        printFormattedOutput(results, runner.name, outputFormat);
       } else {
         console.log(`\n  Skipping ${runner.name} (not found on PATH)`);
       }
     }
   } else {
     const runner = getRunner(values.cli);
-    await runEval(runner, values.scenario, timeoutMs);
+    const results = await runEval(runner, values.scenario, timeoutMs);
+    printFormattedOutput(results, runner.name, outputFormat);
   }
 }
 

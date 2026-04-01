@@ -113,6 +113,79 @@ export function printResult(result: ScenarioResult): void {
   }
 }
 
+/**
+ * Universal eval row for JSONL export.
+ *
+ * Follows the Braintrust interchange shape (input/output/expected/scores/metadata)
+ * which maps to every major eval platform with thin adapters:
+ *   - AI Foundry:  flatten input.query→query, output.commands→response, expected→ground_truth
+ *   - Langfuse:    expected→expectedOutput, scores→separate Score objects per trace
+ *   - LangSmith:   input→inputs, expected→outputs (dataset), scores→Feedback objects
+ *   - OpenAI Evals: input.query→[{role:"user",content}], expected→ideal
+ */
+export interface EvalRow {
+  id: string;
+  input: {
+    query: string;
+    scenario_id: string;
+    scenario_name: string;
+  };
+  output: {
+    commands: string[];
+    tool_calls: { name: string; command: string }[];
+  };
+  expected: {
+    descriptions: string[];
+    patterns: string[];
+  };
+  scores: Record<string, number>;
+  metadata: {
+    cli: string;
+    latency_ms: number;
+    timestamp: string;
+  };
+}
+
+/** Convert results to universal JSONL rows for platform export. */
+export function toJSONLRows(results: ScenarioResult[], timestamp: string): EvalRow[] {
+  return results.map((r) => ({
+    id: `${r.cli}/${r.scenario.id}/${timestamp}`,
+    input: {
+      query: r.scenario.description,
+      scenario_id: r.scenario.id,
+      scenario_name: r.scenario.name,
+    },
+    output: {
+      commands: r.expectationResults
+        .filter((er) => er.matchedToolCall)
+        .map((er) => extractCommand(er.matchedToolCall!.input) ?? ""),
+      tool_calls: r.expectationResults
+        .filter((er) => er.matchedToolCall)
+        .map((er) => ({
+          name: er.matchedToolCall!.name,
+          command: extractCommand(er.matchedToolCall!.input) ?? "",
+        })),
+    },
+    expected: {
+      descriptions: r.expectationResults.map((er) => er.expectation.description),
+      patterns: r.expectationResults.map((er) =>
+        er.expectation.commandPatterns.map((p) => p.source).join(" && "),
+      ),
+    },
+    scores: {
+      accuracy: r.score,
+      pass: r.passed ? 1 : 0,
+      expectations_met: r.expectationResults.filter((er) => er.passed).length,
+      expectations_total: r.expectationResults.length,
+    },
+    metadata: {
+      cli: r.cli,
+      latency_ms: Math.round(r.latencyMs),
+      timestamp,
+    },
+  }));
+}
+
 /** Print a summary table of all results. */
 export function printSummary(results: ScenarioResult[]): void {
   const total = results.length;
