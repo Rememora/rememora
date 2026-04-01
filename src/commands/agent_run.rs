@@ -59,6 +59,9 @@ pub fn run(args: &AgentRunArgs) -> Result<()> {
         );
     }
 
+    // 3b. Propagate git signing config from parent repo into worktree
+    configure_git_signing(&repo_root, &worktree_path)?;
+
     // 4. Start rememora session
     let session_id = start_session(args.issue, &issue.title)?;
     println!("Rememora session: {session_id}");
@@ -375,6 +378,45 @@ pub fn move_to_column(item_id: &str, status_option_id: &str) -> Result<()> {
             "gh project item-edit failed: {}",
             String::from_utf8_lossy(&output.stderr)
         );
+    }
+
+    Ok(())
+}
+
+fn configure_git_signing(repo_root: &Path, worktree: &Path) -> Result<()> {
+    // Keys to propagate from the parent repo into the worktree.
+    // `git config --get` resolves the full cascade (system → global → local),
+    // so we get whatever identity the user configured for *this* repo.
+    let keys = ["user.email", "user.name", "commit.gpgsign", "gpg.format"];
+
+    for key in keys {
+        let read = Command::new("git")
+            .args(["config", "--get", key])
+            .current_dir(repo_root)
+            .output()
+            .with_context(|| format!("Failed to read git config {key}"))?;
+
+        if !read.status.success() {
+            continue; // not set — skip rather than forcing a default
+        }
+
+        let value = String::from_utf8_lossy(&read.stdout).trim().to_string();
+        if value.is_empty() {
+            continue;
+        }
+
+        let write = Command::new("git")
+            .args(["config", "--local", key, &value])
+            .current_dir(worktree)
+            .output()
+            .with_context(|| format!("Failed to set git config {key} in worktree"))?;
+
+        if !write.status.success() {
+            bail!(
+                "git config {key} failed in worktree: {}",
+                String::from_utf8_lossy(&write.stderr)
+            );
+        }
     }
 
     Ok(())
