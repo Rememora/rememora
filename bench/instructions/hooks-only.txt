@@ -1,0 +1,7 @@
+## Rememora — Cross-Agent Persistent Memory
+
+Your context will be lost when this session ends. Anything not saved to rememora is gone forever.
+You are not the only agent on this project.
+
+Use `rememora save "..." --category <cat> --project <name>` to save knowledge.
+Use `rememora search "query" --project <name>` to recall knowledge.
