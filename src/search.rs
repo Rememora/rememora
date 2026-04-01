@@ -123,11 +123,16 @@ pub fn store_embedding(
         rusqlite::params![context_id, blob, embedding.len() as i64, model_name, now],
     )?;
 
-    // Also insert into sqlite-vec virtual table when feature is enabled
+    // Also insert into sqlite-vec virtual table when feature is enabled.
+    // vec0 doesn't support INSERT OR REPLACE, so delete first if exists.
     #[cfg(feature = "embed-candle")]
     {
         conn.execute(
-            "INSERT OR REPLACE INTO vec_contexts (context_id, embedding) VALUES (?1, ?2)",
+            "DELETE FROM vec_contexts WHERE context_id = ?1",
+            rusqlite::params![context_id],
+        )?;
+        conn.execute(
+            "INSERT INTO vec_contexts (context_id, embedding) VALUES (?1, ?2)",
             rusqlite::params![context_id, blob],
         )?;
     }

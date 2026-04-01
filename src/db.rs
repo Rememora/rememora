@@ -7,12 +7,21 @@ const MIGRATION_002: &str = include_str!("migrations/002_embeddings.sql");
 
 /// Register sqlite-vec extension before opening connections.
 /// Must be called before any Connection::open calls.
+///
+/// The transmute follows the sqlite-vec crate's own test pattern — there is no
+/// safe wrapper. See: https://docs.rs/sqlite-vec/latest/sqlite_vec/
 #[cfg(feature = "embed-candle")]
 fn register_vec_extension() {
     use std::sync::Once;
     static INIT: Once = Once::new();
-    INIT.call_once(|| {
-        unsafe { sqlite_vec::sqlite3_vec_init() };
+    INIT.call_once(|| unsafe {
+        // Clippy wants a type annotation but the target type is an opaque
+        // sqlite3 callback. This is the canonical pattern from the sqlite-vec
+        // crate's own tests — suppress the lint.
+        #[allow(clippy::missing_transmute_annotations)]
+        rusqlite::ffi::sqlite3_auto_extension(Some(std::mem::transmute(
+            sqlite_vec::sqlite3_vec_init as *const (),
+        )));
     });
 }
 
