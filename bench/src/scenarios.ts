@@ -67,7 +67,7 @@ export const SCENARIOS: Scenario[] = [
     description:
       "When a problem is solved, the agent should save it as a case memory",
     userMessage:
-      "I just fixed a tricky bug in acme-api where the auth middleware was failing silently because the JWT_SECRET env var had a trailing newline from the .env file. Save this problem and solution to memory so we remember it.",
+      "I just fixed a tricky bug in acme-api where the auth middleware was failing silently because the JWT_SECRET env var had a trailing newline from the .env file. Save this problem and its solution to our persistent memory as a case so other agents can learn from it.",
     expectations: [
       {
         toolName: "bash",
@@ -83,7 +83,7 @@ export const SCENARIOS: Scenario[] = [
     description:
       "When asked to recall information, the agent should search rememora",
     userMessage:
-      "I remember we made a decision about which database to use for acme-api a while back. Can you look that up in memory?",
+      "I remember we made a decision about which database to use for acme-api a while back. Search our persistent memory for that decision.",
     expectations: [
       {
         toolName: "bash",
