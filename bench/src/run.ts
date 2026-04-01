@@ -17,6 +17,8 @@ import {
   toJSONLRows,
   type ScenarioResult,
 } from "./scorer.js";
+import { loadTaskSequence, loadCondition } from "./task-sequence.js";
+import { runLongRun, runMatrix } from "./long-run.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const RESULTS_DIR = join(__dirname, "..", "results");
@@ -240,6 +242,11 @@ async function main(): Promise<void> {
       timeout: { type: "string", short: "t" },
       format: { type: "string", short: "f" },
       compare: { type: "boolean", default: false },
+      mode: { type: "string", short: "m" },
+      sequence: { type: "string" },
+      condition: { type: "string" },
+      conditions: { type: "string" },
+      "keep-db": { type: "boolean", default: false },
     },
     strict: true,
   });
@@ -249,12 +256,61 @@ async function main(): Promise<void> {
     return;
   }
 
+  // Long-run mode: delegate to long-run infrastructure
+  if (values.mode === "long" || values.mode === "matrix") {
+    if (!values.sequence) {
+      console.error("--mode long|matrix requires --sequence <path>");
+      process.exit(1);
+    }
+
+    const benchDir = join(__dirname, "..");
+    const sequencePath = values.sequence.startsWith("/")
+      ? values.sequence
+      : join(benchDir, values.sequence);
+
+    const sequence = loadTaskSequence(sequencePath);
+    const timeoutMs = values.timeout ? parseInt(values.timeout, 10) : 120_000;
+
+    if (values.mode === "matrix" || values.conditions) {
+      const readdirSync = (await import("node:fs")).readdirSync;
+      const conditionsDir = values.conditions ?? join(benchDir, "conditions");
+      const conditionsPath = conditionsDir.startsWith("/")
+        ? conditionsDir
+        : join(benchDir, conditionsDir);
+
+      const conditionFiles = readdirSync(conditionsPath)
+        .filter((f: string) => f.endsWith(".json"))
+        .sort();
+      const conditionsList = conditionFiles.map((f: string) =>
+        loadCondition(join(conditionsPath, f)),
+      );
+
+      await runMatrix(sequence, conditionsList, { timeoutMs, keepDb: values["keep-db"] });
+    } else if (values.condition) {
+      const conditionPath = values.condition.startsWith("/")
+        ? values.condition
+        : join(benchDir, values.condition);
+      const condition = loadCondition(conditionPath);
+      await runLongRun(sequence, condition, { timeoutMs, keepDb: values["keep-db"] });
+    } else {
+      console.error("--mode long requires --condition <path> or --conditions <dir>");
+      process.exit(1);
+    }
+    return;
+  }
+
   if (!values.cli) {
     const cliNames = ALL_RUNNERS.map((r) => r.name).join(", ");
     console.error(
       "Usage: pnpm --prefix bench run eval -- --cli <cli> [--scenario <id>] [--timeout <ms>]",
     );
     console.error("       pnpm --prefix bench run eval -- --compare");
+    console.error(
+      "       pnpm --prefix bench run eval -- --mode long --sequence <path> --condition <path>",
+    );
+    console.error(
+      "       pnpm --prefix bench run eval -- --mode matrix --sequence <path> --conditions <dir>",
+    );
     console.error(`\nCLIs: ${cliNames}, all`);
     console.error(
       `Scenarios: ${SCENARIOS.map((s) => s.id).join(", ")}`,

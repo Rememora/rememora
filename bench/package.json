@@ -7,6 +7,8 @@
   "scripts": {
     "build": "tsc",
     "eval": "tsx src/run.ts",
+    "eval:long": "tsx src/run-long.ts",
+    "eval:matrix": "tsx src/run-long.ts --matrix",
     "compare": "tsx src/run.ts --compare",
     "test:eval": "vitest run"
   },
