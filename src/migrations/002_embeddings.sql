@@ -8,5 +8,3 @@ CREATE TABLE IF NOT EXISTS context_embeddings (
     model_name  TEXT NOT NULL,
     created_at  TEXT NOT NULL
 );
-
-CREATE INDEX IF NOT EXISTS idx_embed_ctx ON context_embeddings(context_id);

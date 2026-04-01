@@ -36,4 +36,4 @@ tempfile = "3"
 default = []
 embed-candle = ["candle-core", "candle-nn", "candle-transformers", "hf-hub", "tokenizers", "sqlite-vec"]
 embed-llamacpp = []
-metal = ["candle-core/metal"]
+metal = ["embed-candle", "candle-core/metal"]

@@ -11,10 +11,8 @@ const MIGRATION_002: &str = include_str!("migrations/002_embeddings.sql");
 fn register_vec_extension() {
     use std::sync::Once;
     static INIT: Once = Once::new();
-    INIT.call_once(|| unsafe {
-        rusqlite::ffi::sqlite3_auto_extension(Some(std::mem::transmute(
-            sqlite_vec::sqlite3_vec_init as *const (),
-        )));
+    INIT.call_once(|| {
+        unsafe { sqlite_vec::sqlite3_vec_init() };
     });
 }
 
@@ -96,7 +94,7 @@ fn migrate(conn: &Connection) -> Result<()> {
         conn.execute_batch(
             "CREATE VIRTUAL TABLE IF NOT EXISTS vec_contexts USING vec0(
                 context_id TEXT PRIMARY KEY,
-                embedding float[384]
+                embedding float[384] distance_metric=cosine
             );",
         )?;
     }

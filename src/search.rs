@@ -156,6 +156,16 @@ pub fn hybrid_search(
     #[cfg(feature = "embed-candle")]
     if let Some(qe) = query_embedding {
         let vec_results = vector_search(conn, qe, project, category, fuse_pool)?;
+        // Bump active_count for vector-only results not already bumped by BM25 search
+        let bm25_ids: std::collections::HashSet<&str> = bm25_results
+            .iter()
+            .map(|r| r.context.id.as_str())
+            .collect();
+        for result in &vec_results {
+            if !bm25_ids.contains(result.context.id.as_str()) {
+                context::bump_active_count(conn, &result.context.id)?;
+            }
+        }
         return reciprocal_rank_fusion(bm25_results, vec_results, limit);
     }
 
@@ -164,6 +174,11 @@ pub fn hybrid_search(
 }
 
 /// Vector-only search using sqlite-vec cosine distance.
+///
+/// Uses a CTE to isolate the KNN MATCH query from post-filters on the
+/// `contexts` table — sqlite-vec's query planner requires MATCH to be the
+/// sole constraint on the virtual table. Over-fetches (limit * 5) to
+/// compensate for rows filtered out by project/category/superseded checks.
 #[cfg(feature = "embed-candle")]
 fn vector_search(
     conn: &Connection,
@@ -177,22 +192,27 @@ fn vector_search(
         .flat_map(|f| f.to_le_bytes())
         .collect();
 
-    // sqlite-vec returns results ordered by distance (ascending = most similar)
+    // Over-fetch from the vector index, then filter in the outer query
+    let k = limit * 5;
+
     let mut sql = String::from(
-        "SELECT c.id, c.uri, c.parent_uri, c.context_type, c.category, c.name,
-                c.abstract, c.overview, c.content, c.tags, c.source_agent,
-                c.source_session, c.importance, c.active_count, c.created_at,
-                c.updated_at, c.superseded_by, v.distance
-         FROM vec_contexts v
-         JOIN contexts c ON c.id = v.context_id
-         WHERE v.embedding MATCH ?1
-         AND k = ?2
-         AND c.superseded_by IS NULL",
+        "WITH knn AS (
+            SELECT context_id, distance
+            FROM vec_contexts
+            WHERE embedding MATCH ?1 AND k = ?2
+        )
+        SELECT c.id, c.uri, c.parent_uri, c.context_type, c.category, c.name,
+               c.abstract, c.overview, c.content, c.tags, c.source_agent,
+               c.source_session, c.importance, c.active_count, c.created_at,
+               c.updated_at, c.superseded_by, knn.distance
+        FROM knn
+        JOIN contexts c ON c.id = knn.context_id
+        WHERE c.superseded_by IS NULL",
     );
 
     let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
     param_values.push(Box::new(blob));
-    param_values.push(Box::new(limit as i64));
+    param_values.push(Box::new(k as i64));
     let mut param_idx = 3;
 
     if let Some(proj) = project {
@@ -211,6 +231,8 @@ fn vector_search(
     }
 
     let _ = param_idx;
+    sql.push_str(" ORDER BY knn.distance ASC");
+    sql.push_str(&format!(" LIMIT {limit}"));
 
     let mut stmt = conn.prepare(&sql)?;
     let params_ref: Vec<&dyn rusqlite::types::ToSql> =
@@ -219,7 +241,7 @@ fn vector_search(
     let rows = stmt
         .query_map(params_ref.as_slice(), |row| {
             let distance: f64 = row.get(17)?;
-            // Convert distance to similarity score (lower distance = higher similarity)
+            // Cosine distance: 0 = identical, 2 = opposite → similarity = 1 - distance
             let similarity = 1.0 - distance;
             Ok(SearchResult {
                 context: ContextRecord {
