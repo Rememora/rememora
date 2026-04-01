@@ -76,6 +76,20 @@ pub fn get_latest_for_project(conn: &Connection, project: &str) -> Result<Option
     Ok(result)
 }
 
+pub fn get_active_for_project(conn: &Connection, project: &str) -> Result<Option<SessionRecord>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, agent, project, cwd, started_at, ended_at, summary, intent, working_state, message_count, token_estimate, parent_session, status
+         FROM sessions WHERE project = ?1 AND status = 'active'
+         ORDER BY started_at DESC LIMIT 1",
+    )?;
+
+    let result = stmt
+        .query_row(params![project], row_to_session)
+        .optional()?;
+
+    Ok(result)
+}
+
 pub fn list(conn: &Connection, project: Option<&str>, limit: usize) -> Result<Vec<SessionRecord>> {
     let (sql, param_values): (String, Vec<Box<dyn rusqlite::types::ToSql>>) = if let Some(proj) = project {
         (
