@@ -80,6 +80,56 @@ fn test_list_sessions() {
 }
 
 #[test]
+fn test_get_active_for_project() {
+    let conn = common::create_test_db();
+
+    // Create an active session and an ended session
+    let id1 = session::start(&conn, "claude-code", Some("myapp"), None, "first", None).unwrap();
+    session::end(&conn, &id1, "Done", None, None).unwrap();
+
+    std::thread::sleep(std::time::Duration::from_millis(10));
+    let id2 = session::start(&conn, "codex", Some("myapp"), None, "second", None).unwrap();
+
+    // Should find the active session (id2), not the ended one (id1)
+    let active = session::get_active_for_project(&conn, "myapp").unwrap().unwrap();
+    assert_eq!(active.id, id2);
+    assert_eq!(active.status, "active");
+    assert_eq!(active.intent, "second");
+}
+
+#[test]
+fn test_get_active_for_project_none_when_all_ended() {
+    let conn = common::create_test_db();
+
+    let id = session::start(&conn, "claude-code", Some("myapp"), None, "work", None).unwrap();
+    session::end(&conn, &id, "Done", None, None).unwrap();
+
+    let active = session::get_active_for_project(&conn, "myapp").unwrap();
+    assert!(active.is_none());
+}
+
+#[test]
+fn test_get_active_for_project_none_when_no_sessions() {
+    let conn = common::create_test_db();
+
+    let active = session::get_active_for_project(&conn, "nonexistent").unwrap();
+    assert!(active.is_none());
+}
+
+#[test]
+fn test_get_active_for_project_returns_most_recent() {
+    let conn = common::create_test_db();
+
+    // Two active sessions for the same project — should return most recent
+    session::start(&conn, "claude-code", Some("myapp"), None, "first active", None).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(10));
+    let id2 = session::start(&conn, "codex", Some("myapp"), None, "second active", None).unwrap();
+
+    let active = session::get_active_for_project(&conn, "myapp").unwrap().unwrap();
+    assert_eq!(active.id, id2);
+}
+
+#[test]
 fn test_parent_session_chain() {
     let conn = common::create_test_db();
 

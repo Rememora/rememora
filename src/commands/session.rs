@@ -2,6 +2,7 @@ use anyhow::Result;
 use rusqlite::Connection;
 
 use rememora::format;
+use rememora::models::project;
 use rememora::models::session;
 
 pub fn start(conn: &Connection, agent: &str, project: Option<&str>, intent: &str, parent: Option<&str>, json: bool) -> Result<()> {
@@ -39,6 +40,106 @@ pub fn resume(conn: &Connection, project: &str) -> Result<()> {
         None => println!("No sessions found for project: {project}"),
     }
     Ok(())
+}
+
+pub fn end_active(
+    conn: &Connection,
+    project: Option<&str>,
+    summary: Option<&str>,
+    working_state: Option<&str>,
+    auto_summary: bool,
+    json: bool,
+) -> Result<()> {
+    // Resolve project: explicit flag or auto-detect from CWD
+    let resolved_project = if let Some(p) = project {
+        Some(p.to_string())
+    } else {
+        let cwd = std::env::current_dir()?;
+        project::detect_from_cwd(conn, cwd.to_str().unwrap_or(""))?
+    };
+
+    let project_name = match resolved_project {
+        Some(p) => p,
+        None => {
+            // No project detected — no-op for hook safety
+            if json {
+                println!(
+                    "{}",
+                    serde_json::json!({"status": "no-op", "reason": "no project detected"})
+                );
+            }
+            return Ok(());
+        }
+    };
+
+    // Find the most recent active session for this project
+    let active = session::get_active_for_project(conn, &project_name)?;
+
+    let sess = match active {
+        Some(s) => s,
+        None => {
+            // No active session — no-op for hook safety
+            if json {
+                println!(
+                    "{}",
+                    serde_json::json!({"status": "no-op", "reason": "no active session"})
+                );
+            }
+            return Ok(());
+        }
+    };
+
+    // Build summary text
+    let final_summary = if let Some(s) = summary {
+        s.to_string()
+    } else if auto_summary {
+        // Generate from session metadata
+        let duration = compute_duration(&sess.started_at);
+        if sess.intent.is_empty() {
+            format!("Session ended automatically. Duration: {duration}")
+        } else {
+            format!(
+                "Session ended automatically. Intent: {}. Duration: {duration}",
+                sess.intent
+            )
+        }
+    } else {
+        String::new()
+    };
+
+    session::end(conn, &sess.id, &final_summary, working_state, None)?;
+
+    if json {
+        println!(
+            "{}",
+            serde_json::json!({"status": "ok", "id": sess.id, "project": project_name})
+        );
+    } else {
+        println!("Session ended: {}", sess.id);
+    }
+
+    Ok(())
+}
+
+/// Compute a human-readable duration string from a start timestamp to now.
+fn compute_duration(started_at: &str) -> String {
+    let start = chrono::DateTime::parse_from_rfc3339(started_at);
+    match start {
+        Ok(start_time) => {
+            let elapsed = chrono::Utc::now().signed_duration_since(start_time);
+            let total_secs = elapsed.num_seconds();
+            if total_secs < 60 {
+                format!("{total_secs}s")
+            } else if total_secs < 3600 {
+                format!("{}m", total_secs / 60)
+            } else {
+                let hours = total_secs / 3600;
+                let mins = (total_secs % 3600) / 60;
+                format!("{hours}h {mins}m")
+            }
+        }
+        Err(_) => "unknown".to_string(),
+    }
 }
 
 pub fn list(conn: &Connection, project: Option<&str>, limit: usize, json: bool) -> Result<()> {

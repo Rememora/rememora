@@ -278,6 +278,25 @@ enum SessionAction {
         status: Option<String>,
     },
 
+    /// End the active session for the current project (hook-friendly)
+    EndActive {
+        /// Project name (auto-detected from CWD if omitted)
+        #[arg(long)]
+        project: Option<String>,
+
+        /// Summary of what was accomplished
+        #[arg(long)]
+        summary: Option<String>,
+
+        /// Current working state (blockers, next steps)
+        #[arg(long)]
+        working_state: Option<String>,
+
+        /// Auto-generate summary from session metadata
+        #[arg(long)]
+        auto_summary: bool,
+    },
+
     /// Resume from latest session for a project
     Resume {
         /// Project name
@@ -410,6 +429,19 @@ fn main() -> Result<()> {
                 &summary,
                 working_state.as_deref(),
                 status.as_deref(),
+                cli.json,
+            ),
+            SessionAction::EndActive {
+                project,
+                summary,
+                working_state,
+                auto_summary,
+            } => commands::session::end_active(
+                &conn,
+                project.as_deref(),
+                summary.as_deref(),
+                working_state.as_deref(),
+                auto_summary,
                 cli.json,
             ),
             SessionAction::Resume { project } => commands::session::resume(&conn, &project),
