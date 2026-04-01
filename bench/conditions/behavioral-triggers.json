@@ -1,6 +1,6 @@
 {
-  "id": "full-hybrid",
-  "instructionMode": "full-hybrid",
+  "id": "behavioral-triggers",
+  "instructionMode": "behavioral-triggers",
   "categoriesEnabled": ["preference", "entity", "decision", "event", "case", "pattern"],
   "preIndexed": false,
   "agent": "claude-code"
