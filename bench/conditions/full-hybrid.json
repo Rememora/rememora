@@ -1,0 +1,7 @@
+{
+  "id": "full-hybrid",
+  "instructionMode": "full-hybrid",
+  "categoriesEnabled": ["preference", "entity", "decision", "event", "case", "pattern"],
+  "preIndexed": true,
+  "agent": "claude-code"
+}

@@ -1,0 +1,7 @@
+{
+  "id": "reference-card",
+  "instructionMode": "reference-card",
+  "categoriesEnabled": ["preference", "entity", "decision", "event", "case", "pattern"],
+  "preIndexed": false,
+  "agent": "claude-code"
+}

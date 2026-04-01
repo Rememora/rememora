@@ -1,0 +1,41 @@
+{
+  "id": "express-api-buildup",
+  "project": "express-api",
+  "description": "A 5-task sequence simulating progressive development of an Express REST API. Each task builds on decisions and knowledge from prior tasks, testing whether persistent memory helps the agent maintain continuity.",
+  "tasks": [
+    {
+      "id": "init-project",
+      "description": "Initialize an Express API project with TypeScript and decide on a database.",
+      "userMessage": "Set up a new Express API project with TypeScript. We need to decide on a database — we're choosing PostgreSQL with Prisma ORM because we need ACID transactions for payment processing. Initialize the project structure with src/routes, src/middleware, and src/models directories. Save the architectural decision about PostgreSQL + Prisma to memory.",
+      "groundTruth": "Agent should create project structure and save a decision memory about PostgreSQL + Prisma choice with the ACID/payments rationale."
+    },
+    {
+      "id": "add-auth-middleware",
+      "description": "Add JWT authentication middleware based on a prior decision.",
+      "userMessage": "Add JWT authentication middleware to the Express API. We decided to use RS256 algorithm with rotating keys instead of HS256 because our security team requires asymmetric signing for the payment endpoints. Implement the middleware in src/middleware/auth.ts. Remember to save this security decision.",
+      "groundTruth": "Agent should implement auth middleware and save the RS256 decision. Bonus if it references the prior PostgreSQL decision when thinking about the payment system.",
+      "dependsOn": ["init-project"]
+    },
+    {
+      "id": "add-users-endpoint",
+      "description": "Create a users CRUD endpoint that uses the auth middleware.",
+      "userMessage": "Create a /users CRUD endpoint in src/routes/users.ts. It should use the auth middleware we built earlier and connect to the PostgreSQL database via Prisma. Include proper error handling and input validation.",
+      "groundTruth": "Agent should recall the auth middleware and PostgreSQL/Prisma decisions from memory without being reminded of the specifics. Should search memory for prior context.",
+      "dependsOn": ["init-project", "add-auth-middleware"]
+    },
+    {
+      "id": "fix-auth-bug",
+      "description": "Fix a bug in the auth middleware and save the debugging case.",
+      "userMessage": "There's a bug — the auth middleware is failing silently when the JWT token has expired instead of returning a 401. The issue was that the try/catch block was swallowing the TokenExpiredError. Fix it in src/middleware/auth.ts and save this debugging case to memory so other developers don't hit the same issue.",
+      "groundTruth": "Agent should fix the bug and save a case memory about the silent JWT expiration failure. Should reference the auth middleware it built in task 2.",
+      "dependsOn": ["add-auth-middleware"]
+    },
+    {
+      "id": "add-payments-endpoint",
+      "description": "Create a payments endpoint that ties together all prior decisions.",
+      "userMessage": "Create a /payments endpoint in src/routes/payments.ts. This is the critical path we've been building toward. It needs to handle payment processing with proper ACID transactions. Look up our prior architectural decisions and the auth bug fix before starting implementation.",
+      "groundTruth": "Agent should search memory and retrieve: (1) PostgreSQL + Prisma for ACID, (2) RS256 auth for payment endpoints, (3) the JWT expiration bug fix. Implementation should reflect all accumulated knowledge.",
+      "dependsOn": ["init-project", "add-auth-middleware", "fix-auth-bug"]
+    }
+  ]
+}
