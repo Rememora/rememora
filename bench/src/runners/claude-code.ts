@@ -58,11 +58,13 @@ export class ClaudeCodeRunner implements CliRunner {
     const systemPrompt = options.instructionText ?? REMEMORA_SYSTEM_PROMPT;
 
     // Build CLI args — only append system prompt if non-empty (the "none" condition).
+    // Tool access must be broad enough for the agent to do real coding work.
+    // Rememora calls happen naturally via Bash when the agent decides to save/search.
     const args = [
       "-p", prompt,
       "--output-format", "json",
-      "--allowedTools", "Bash(rememora:*)",
-      "--max-turns", "5",
+      "--allowedTools", "Bash,Read,Write,Edit,Glob,Grep",
+      "--max-turns", "25",
     ];
     if (systemPrompt.trim().length > 0) {
       args.push("--append-system-prompt", systemPrompt);

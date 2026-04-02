@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, rmSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
@@ -57,6 +57,64 @@ export function loadInstructionText(mode: string): string {
     // No instruction file — treat as empty (equivalent to "none" mode)
     return "";
   }
+}
+
+// ---------------------------------------------------------------------------
+// Project fixture — creates a minimal project for the agent to work in
+// ---------------------------------------------------------------------------
+
+/** Create a temporary project directory with basic structure so the agent has a real codebase. */
+function createProjectFixture(sequenceProject: string): string {
+  const dir = join(tmpdir(), `rememora-eval-${sequenceProject}-${randomBytes(4).toString("hex")}`);
+  mkdirSync(join(dir, "src", "routes"), { recursive: true });
+  mkdirSync(join(dir, "src", "middleware"), { recursive: true });
+  mkdirSync(join(dir, "src", "models"), { recursive: true });
+  mkdirSync(join(dir, "tests"), { recursive: true });
+
+  writeFileSync(join(dir, "package.json"), JSON.stringify({
+    name: sequenceProject,
+    version: "1.0.0",
+    scripts: { start: "tsx src/index.ts", test: "vitest run" },
+    dependencies: { express: "^4.18.0", "@prisma/client": "^5.0.0" },
+    devDependencies: { typescript: "^5.0.0", tsx: "^4.0.0", vitest: "^1.0.0", "@types/express": "^4.17.0" },
+  }, null, 2));
+
+  writeFileSync(join(dir, "tsconfig.json"), JSON.stringify({
+    compilerOptions: { target: "ES2022", module: "Node16", outDir: "dist", strict: true },
+    include: ["src/**/*.ts"],
+  }, null, 2));
+
+  writeFileSync(join(dir, "src", "index.ts"),
+`import express from "express";
+
+const app = express();
+app.use(express.json());
+
+// Routes will be added here
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(\`Server on port \${PORT}\`));
+
+export default app;
+`);
+
+  // Init git so the agent has a working repo context
+  try {
+    execFileSync("git", ["init"], { cwd: dir, timeout: 5_000, stdio: "ignore" });
+    execFileSync("git", ["add", "."], { cwd: dir, timeout: 5_000, stdio: "ignore" });
+    execFileSync("git", ["commit", "-m", "Initial project setup", "--no-gpg-sign"], { cwd: dir, timeout: 5_000, stdio: "ignore" });
+  } catch {
+    // git init is optional — some environments may not have git
+  }
+
+  return dir;
+}
+
+/** Clean up a project fixture directory. */
+function cleanupFixture(dir: string): void {
+  try {
+    rmSync(dir, { recursive: true, force: true });
+  } catch { /* already gone */ }
 }
 
 // ---------------------------------------------------------------------------
@@ -146,6 +204,9 @@ export async function runLongRun(
       `rememora-longrun-${sequence.id}-${randomBytes(4).toString("hex")}.db`,
     );
 
+  // Create a project fixture so the agent has a real codebase to work in
+  const projectDir = createProjectFixture(sequence.project);
+
   const log = options.quiet ? () => {} : console.log.bind(console);
 
   log(`\n  Rememora Long-Run Eval`);
@@ -153,6 +214,7 @@ export async function runLongRun(
   log(`  Condition: ${condition.id} (mode: ${condition.instructionMode})`);
   log(`  CLI: ${runner.name}`);
   log(`  DB: ${dbPath} (persistent across tasks)`);
+  log(`  Project: ${projectDir}`);
   log("─".repeat(60));
 
   const rows: LongRunEvalRow[] = [];
@@ -182,7 +244,7 @@ export async function runLongRun(
 
     try {
       const runResult = await runner.run(task.userMessage, {
-        cwd: tmpdir(),
+        cwd: projectDir,
         env,
         timeoutMs,
         instructionText,
@@ -335,6 +397,11 @@ export async function runLongRun(
   writeFileSync(jsonlPath, jsonlContent);
 
   log(`\n  JSONL: ${jsonlPath}`);
+
+  // Clean up project fixture
+  if (!options.keepDb) {
+    cleanupFixture(projectDir);
+  }
 
   // Clean up DB unless requested to keep
   if (!options.keepDb && !options.dbPath) {
