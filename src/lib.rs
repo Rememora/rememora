@@ -1,5 +1,6 @@
 pub mod db;
 pub mod embed;
+pub mod evolve;
 pub mod format;
 pub mod hierarchy;
 pub mod hotness;

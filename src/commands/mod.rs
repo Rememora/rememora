@@ -2,6 +2,7 @@ pub mod agent_loop;
 pub mod agent_run;
 pub mod context;
 pub mod eval;
+pub mod evolve;
 pub mod export;
 pub mod extract;
 pub mod get;
