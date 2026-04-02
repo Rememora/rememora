@@ -213,6 +213,25 @@ enum Commands {
         once: bool,
     },
 
+    /// Consolidate similar/redundant memories using LLM
+    Evolve {
+        /// Project scope (required)
+        #[arg(long)]
+        project: Option<String>,
+
+        /// Show proposed changes without modifying the database
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Minimum similarity threshold for clustering (0.0-1.0)
+        #[arg(long, default_value = "0.3")]
+        min_similarity: f64,
+
+        /// Maximum number of clusters to process per run
+        #[arg(long, default_value = "50")]
+        max_batch: usize,
+    },
+
     /// Evaluate DB compliance metrics (session, memory, transfer rates)
     Eval {
         /// Filter by project
@@ -531,6 +550,20 @@ fn main() -> Result<()> {
             once,
             retries,
         }),
+
+        Commands::Evolve {
+            project,
+            dry_run,
+            min_similarity,
+            max_batch,
+        } => commands::evolve::run(
+            &conn,
+            project.as_deref(),
+            dry_run,
+            min_similarity,
+            max_batch,
+            cli.json,
+        ),
 
         Commands::Eval { project, days } => commands::eval::run(
             &conn,
