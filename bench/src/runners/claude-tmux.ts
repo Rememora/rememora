@@ -119,15 +119,33 @@ function parseTerminalOutput(raw: string): CapturedCommand[] {
   const commands: CapturedCommand[] = [];
   const seen = new Set<string>();
 
+  // Claude Code TUI shows tool calls as:
+  //   ⏺ Bash(rememora save "..." --category decision ...)
+  //   ⎿  <output>
+  // Also match raw command lines:
+  //   $ rememora save "..."
+  //   rememora save "..."
+  const REMEMORA_SUBCOMMANDS = "save|search|context|session|project|get|status|export|extract|relate|supersede|setup|evolve";
+
   for (const line of raw.split("\n")) {
     // Strip ANSI escape codes
     const clean = line.replace(/\x1b\[[0-9;]*m/g, "").trim();
 
-    // Look for rememora CLI invocations
-    // They appear as: $ rememora save "..." or just rememora save "..."
-    const match = clean.match(/(?:^|\$\s*)(rememora\s+(?:save|search|context|session|project|get|status|export|extract|relate|supersede|setup|evolve)\b[^\n]*)/);
-    if (match) {
-      const cmd = match[1].trim();
+    // Match: ⏺ Bash(rememora save "..." ...)
+    const bashToolMatch = clean.match(new RegExp(`Bash\\((rememora\\s+(?:${REMEMORA_SUBCOMMANDS})\\b[^)]*)`));
+    if (bashToolMatch) {
+      const cmd = bashToolMatch[1].trim();
+      if (!seen.has(cmd)) {
+        seen.add(cmd);
+        commands.push({ command: cmd, source: "structured" });
+      }
+      continue;
+    }
+
+    // Match: $ rememora save "..." or bare rememora save "..."
+    const rawMatch = clean.match(new RegExp(`(?:^|\\$\\s*)(rememora\\s+(?:${REMEMORA_SUBCOMMANDS})\\b[^\\n]*)`));
+    if (rawMatch) {
+      const cmd = rawMatch[1].trim();
       if (!seen.has(cmd)) {
         seen.add(cmd);
         commands.push({ command: cmd, source: "structured" });
