@@ -57,51 +57,46 @@ function tmuxKill(session: string): void {
 // ---------------------------------------------------------------------------
 
 /**
- * Claude Code shows a `>` prompt when ready for input.
- * After responding, it shows another `>`.
- * We detect this by looking for a line matching the prompt pattern
- * at the bottom of the pane.
+ * Claude Code shows a `❯` prompt when ready for input.
+ * The prompt appears in the middle of the TUI (not the very last line)
+ * because the status bar sits below it. We scan the last N lines for
+ * a line that starts with `❯` or `>`.
  */
+function paneHasPrompt(capture: string): boolean {
+  const lines = capture.split("\n");
+  // Scan the last 15 lines — the prompt is above the status bar
+  const tail = lines.slice(-15);
+  for (const line of tail) {
+    const stripped = line.replace(/\x1b\[[0-9;]*m/g, "").trim();
+    if (/^[>❯]\s*$/.test(stripped)) return true;
+  }
+  return false;
+}
+
 function waitForPrompt(
   session: string,
   timeoutMs: number,
   afterText?: string,
 ): { output: string; timedOut: boolean } {
   const start = Date.now();
-  const pollIntervalMs = 2_000;
+  const pollIntervalMs = 3_000;
   let lastCapture = "";
 
   while (Date.now() - start < timeoutMs) {
     const capture = tmuxCapture(session, 1000);
-    const lines = capture.split("\n");
+    const hasPrompt = paneHasPrompt(capture);
 
-    // Find the last non-empty line
-    let lastLine = "";
-    for (let i = lines.length - 1; i >= 0; i--) {
-      const stripped = lines[i].replace(/\x1b\[[0-9;]*m/g, "").trim();
-      if (stripped.length > 0) {
-        lastLine = stripped;
-        break;
-      }
-    }
-
-    // Claude's prompt is typically ">" or "> " at the start of the last line
-    // It can also look like "❯" or contain the path
-    const isPrompt = /^[>❯]\s*$/.test(lastLine) || /^[>❯]/.test(lastLine);
-
-    // If we have afterText, make sure the capture contains content AFTER it
-    // (so we don't match the prompt from before we sent our message)
-    if (isPrompt && afterText) {
+    if (hasPrompt && afterText) {
+      // Make sure the capture contains content AFTER our sent text
       const afterIdx = capture.lastIndexOf(afterText);
       if (afterIdx >= 0) {
         const contentAfter = capture.slice(afterIdx + afterText.length);
-        // There should be substantial content between our message and the new prompt
         const stripped = contentAfter.replace(/\x1b\[[0-9;]*m/g, "").trim();
-        if (stripped.length > 10) {
+        if (stripped.length > 20) {
           return { output: capture, timedOut: false };
         }
       }
-    } else if (isPrompt && !afterText) {
+    } else if (hasPrompt && !afterText) {
       return { output: capture, timedOut: false };
     }
 
@@ -200,40 +195,33 @@ export class ClaudeTmuxRunner implements CliRunner {
     tmuxSendEnter(sessionName);
 
     // Wait for Claude to be ready, handling the trust dialog if it appears
-    const startupDeadline = Date.now() + 90_000;
+    const startupDeadline = Date.now() + 120_000;
     while (Date.now() < startupDeadline) {
-      execSync("sleep 3");
+      execSync("sleep 4");
       const pane = tmuxCapture(sessionName, 50);
 
       // Handle trust dialog: "Yes, I trust this folder"
       if (pane.includes("trust this folder") || pane.includes("Enter to confirm")) {
         execSync(`tmux send-keys -t ${sessionName} Enter`, { timeout: 5_000 });
-        execSync("sleep 3");
+        execSync("sleep 5");
         continue;
       }
 
       // Handle any other yes/no prompts during startup
       if (pane.includes("(y/n)") || pane.includes("[Y/n]")) {
         execSync(`tmux send-keys -t ${sessionName} y Enter`, { timeout: 5_000 });
-        execSync("sleep 2");
+        execSync("sleep 3");
         continue;
       }
 
-      // Check if Claude's input prompt is ready
-      const lines = pane.split("\n");
-      for (let i = lines.length - 1; i >= 0; i--) {
-        const stripped = lines[i].replace(/\x1b\[[0-9;]*m/g, "").trim();
-        if (stripped.length > 0) {
-          if (/^[>❯]/.test(stripped)) {
-            return sessionName; // Ready for input
-          }
-          break;
-        }
+      // Check if Claude's ❯ prompt is visible (it sits above the status bar)
+      if (paneHasPrompt(pane)) {
+        return sessionName; // Ready for input
       }
     }
 
     tmuxKill(sessionName);
-    throw new Error("Claude did not start within 90s");
+    throw new Error("Claude did not start within 120s");
 
     return sessionName;
   }
