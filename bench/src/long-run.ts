@@ -5,10 +5,11 @@ import { tmpdir } from "node:os";
 import { randomBytes } from "node:crypto";
 import { execFileSync } from "node:child_process";
 
-import type { CliRunner } from "./runners/types.js";
+import type { CliRunner, RunResult } from "./runners/types.js";
 import { commandsToToolCalls } from "./runners/types.js";
 import { ClaudeCodeRunner } from "./runners/claude-code.js";
 import { CodexRunner } from "./runners/codex.js";
+import { ClaudeTmuxRunner } from "./runners/claude-tmux.js";
 import type {
   TaskSequence,
   ExperimentCondition,
@@ -22,11 +23,12 @@ const RESULTS_DIR = join(__dirname, "..", "results");
 const INSTRUCTIONS_DIR = join(__dirname, "..", "instructions");
 
 // ---------------------------------------------------------------------------
-// Runner registry (mirrors run.ts)
+// Runner registry
 // ---------------------------------------------------------------------------
 
 const ALL_RUNNERS: CliRunner[] = [
   new ClaudeCodeRunner(),
+  new ClaudeTmuxRunner(),
   new CodexRunner(),
 ];
 
@@ -226,6 +228,27 @@ export async function runLongRun(
 
   const kbSizeStart = getKbSize(dbPath);
 
+  // Build shared options for all tasks
+  const env: Record<string, string> = { REMEMORA_DB: dbPath };
+  const runOptions: import("./runners/types.js").RunOptions = {
+    cwd: projectDir,
+    env,
+    timeoutMs,
+    instructionText,
+  };
+
+  // For tmux runner: start a persistent session and reuse it across tasks.
+  // This gives the model session continuity — the key difference from -p mode.
+  const isTmux = runner instanceof ClaudeTmuxRunner;
+  const tmuxRunner = isTmux ? (runner as ClaudeTmuxRunner) : null;
+  let tmuxSession: string | null = null;
+
+  if (tmuxRunner) {
+    log(`  Starting persistent Claude session via tmux...`);
+    tmuxSession = tmuxRunner.startSession(runOptions);
+    log(`  tmux session: ${tmuxSession}`);
+  }
+
   for (let i = 0; i < sequence.tasks.length; i++) {
     const task = sequence.tasks[i];
     const kbSizeAtStart = getKbSize(dbPath);
@@ -233,22 +256,28 @@ export async function runLongRun(
     log(`\n  Task ${i + 1}/${sequence.tasks.length}: ${task.id}`);
     log(`  ${task.description}`);
 
-    // Build environment — the persistent DB is the critical piece
-    const env: Record<string, string> = {
-      REMEMORA_DB: dbPath,
-    };
-
-    // For "none" condition, we could unset REMEMORA_DB, but it's cleaner
-    // to just not include rememora instructions. The agent may or may not
-    // use rememora depending on its own configuration.
-
     try {
-      const runResult = await runner.run(task.userMessage, {
-        cwd: projectDir,
-        env,
-        timeoutMs,
-        instructionText,
-      });
+      // Tmux: send prompt to the existing session
+      // Non-tmux: spawn a new process per task (original behavior)
+      const runResult = tmuxRunner && tmuxSession
+        ? await (async () => {
+            const { output, latencyMs } = await tmuxRunner.sendPrompt(
+              tmuxSession!,
+              task.userMessage,
+              timeoutMs,
+            );
+            // Parse rememora commands from terminal output
+            const { parseTerminalCommands } = await import("./runners/claude-tmux.js");
+            const commands = parseTerminalCommands(output);
+            return {
+              cli: runner.name,
+              commands,
+              rawOutput: output,
+              exitCode: 0,
+              latencyMs,
+            } satisfies RunResult;
+          })()
+        : await runner.run(task.userMessage, runOptions);
 
       const commands = runResult.commands.map((c) => c.command);
       const behavior = extractRemoraCalls(
@@ -366,6 +395,12 @@ export async function runLongRun(
         },
       });
     }
+  }
+
+  // Clean up tmux session
+  if (tmuxRunner && tmuxSession) {
+    log(`\n  Ending tmux session: ${tmuxSession}`);
+    tmuxRunner.endSession(tmuxSession);
   }
 
   const kbSizeEnd = getKbSize(dbPath);
