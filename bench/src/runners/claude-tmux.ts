@@ -162,10 +162,11 @@ export class ClaudeTmuxRunner implements CliRunner {
   startSession(options: RunOptions): string {
     const sessionName = `rememora-eval-${randomBytes(4).toString("hex")}`;
 
-    // Build claude command with optional system prompt
-    const parts = ["claude"];
+    // Build claude command with optional system prompt.
+    // --dangerously-skip-permissions avoids interactive permission prompts
+    // that block the eval. This is safe in eval context (temp fixture dir).
+    const parts = ["claude", "--dangerously-skip-permissions"];
     if (options.instructionText && options.instructionText.trim().length > 0) {
-      // Write instruction text to a temp file to avoid shell escaping
       const instrFile = join("/tmp", `rememora-instr-${randomBytes(4).toString("hex")}.txt`);
       writeFileSync(instrFile, options.instructionText);
       parts.push("--append-system-prompt-file", instrFile);
@@ -237,29 +238,31 @@ export class ClaudeTmuxRunner implements CliRunner {
     const start = performance.now();
 
     // Capture pane before sending so we can diff
-    const before = tmuxCapture(sessionName, 1000);
+    const beforeLines = tmuxCapture(sessionName, 1000).split("\n").length;
 
     // Send the prompt
     tmuxSendKeys(sessionName, prompt);
     tmuxSendEnter(sessionName);
 
     // Wait for Claude to finish and show prompt again
-    // Use a snippet of the prompt as the "after" marker
     const marker = prompt.slice(0, 80);
     const { output, timedOut } = waitForPrompt(sessionName, timeoutMs, marker);
 
     const latencyMs = performance.now() - start;
 
     if (timedOut) {
-      // Send Escape to cancel any in-progress generation, then capture what we have
-      execSync(`tmux send-keys -t ${sessionName} Escape`, { timeout: 5_000 });
-      execSync("sleep 2");
+      // Send Escape to cancel, then grab whatever we have
+      try {
+        execSync(`tmux send-keys -t ${sessionName} Escape`, { timeout: 5_000 });
+      } catch { /* session may be gone */ }
+      execSync("sleep 3");
     }
 
-    // Get the new content (diff from before)
-    const newContent = output.slice(before.length > 100 ? output.indexOf(marker) : 0);
+    // Always capture the full pane as fallback
+    const finalCapture = tmuxCapture(sessionName, 2000);
+    const result = output.length > finalCapture.length ? output : finalCapture;
 
-    return { output: newContent || output, latencyMs };
+    return { output: result, latencyMs };
   }
 
   /**
