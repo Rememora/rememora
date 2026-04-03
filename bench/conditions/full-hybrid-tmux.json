@@ -1,0 +1,7 @@
+{
+  "id": "full-hybrid-tmux",
+  "instructionMode": "full-hybrid",
+  "categoriesEnabled": ["preference", "entity", "decision", "event", "case", "pattern"],
+  "preIndexed": false,
+  "agent": "claude-tmux"
+}

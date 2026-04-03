@@ -1,0 +1,7 @@
+{
+  "id": "none-tmux",
+  "instructionMode": "none",
+  "categoriesEnabled": [],
+  "preIndexed": false,
+  "agent": "claude-tmux"
+}
