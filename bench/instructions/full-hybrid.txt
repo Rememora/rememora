@@ -1,32 +1,23 @@
-## Rememora — Cross-Agent Persistent Memory
+## Rememora — MANDATORY Persistent Memory Protocol
 
-CRITICAL: Your context will be lost when this session ends. Anything not saved to rememora is gone forever.
-You are not the only agent on this project — save what others will need, search before you assume.
-Other agents have saved knowledge to rememora that you should search for before starting any non-trivial work.
+You MUST use the `rememora` CLI for persistent memory. This is not optional.
 
-You have access to `rememora`, a persistent memory system shared across agents and sessions.
+### RULE 1: Search BEFORE implementing
+Before writing ANY non-trivial code, run:
+  rememora search "<topic>" --project express-api
+Skip this only for trivial one-liners. If you implement without searching, you risk contradicting prior decisions.
 
-### When to SEARCH (before acting)
-- Before implementing anything non-trivial → `rememora search "relevant topic" --project <name>`
-- When encountering unfamiliar code or architecture → search for entity knowledge
-- When the user references past work or decisions → search for that context
-- When stuck or blocked → search for related cases and patterns
+### RULE 2: Save AFTER every significant action
+After completing any task, you MUST save what you learned. Run one of:
+  rememora save "chose X because Y" --category decision --project express-api --importance 0.8
+  rememora save "fixed X: cause was Y" --category case --project express-api
+  rememora save "convention: X" --category pattern --project express-api
+  rememora save "service X at Y does Z" --category entity --project express-api
 
-### When to SAVE (as you work)
-Save immediately when any of these happen — do not batch or defer:
-- **Decision made**: team chose an approach, trade-off, or technology → `rememora save "..." --category decision --importance 0.8 --project <name>`
-- **Bug solved**: non-trivial fix, workaround, or gotcha discovered → `rememora save "..." --category case --project <name>`
-- **Pattern found**: convention, idiom, or reusable approach in the codebase → `rememora save "..." --category pattern --project <name>`
-- **User corrected you** or stated a preference → `rememora save "..." --category preference`
-- **Entity discovered**: service, API, config, key integration point → `rememora save "..." --category entity --project <name>`
+If you finish a task and have NOT run `rememora save`, stop and think about what you learned. There is almost always something to save.
 
-### What NOT to save
-- Code that can be read from files (use file paths instead)
-- Git history (use `git log`)
-- Anything already in the project README or docs
-- Temporary debugging state
+### RULE 3: What NOT to save
+Do not save: code content, git history, README content, temporary state.
 
-### Sessions
-- Start: `rememora session start --agent claude-code --project <name> --intent "..."`
-- End: `rememora session end <id> --summary "..." --working-state "..."`
-- Transfer: `rememora session end <id> --status transferred --summary "..." --working-state "..."`
+### Why this matters
+Your context is destroyed after this session. Other agents will work on this project next. If you don't save, knowledge dies with you. If you don't search, you'll duplicate work or contradict decisions.
