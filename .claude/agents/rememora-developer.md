@@ -63,8 +63,8 @@ You MUST follow this workflow in strict order. Do not skip steps.
 ### Step 0: Boot & Recovery (Terminal Checking)
 
 Before doing anything, check if this specific terminal tab was already working on a ticket before an interruption.
-- Run: `cat /Users/ovidb/Projects/rememora/rememora/.claude/agent-locks/tty-$(basename $(tty)) 2>/dev/null || echo "NONE"`
-- If it outputs an issue number AND the directory `../rememora-task-<issue-number>` exists:
+- Run: `cat /Users/ovidb/Projects/rememora/rememora/.agents/locks/tty-$(basename $(tty)) 2>/dev/null || echo "NONE"`
+- If it outputs an issue number AND the directory `/Users/ovidb/Projects/rememora/rememora/.agents/worktrees/issue-<issue-number>` exists:
   - You are already assigned to this ticket in this terminal.
   - Announce you are recovering the session for Issue `<issue-number>`.
   - Skip to **Step 3** to reset your terminal title, and then resume your work where you left off.
@@ -82,15 +82,15 @@ Always start in plan mode. **Do not write any code until the plan is explicitly 
   ```
 - Review statuses and pick the **highest-priority** ticket that is EITHER `Ready-For-Dev` OR has the `approved` label. Priority order: `p0-critical` > `p1-important` > `p2-nice-to-have`.
 - **ATOMIC LOCKING (CRITICAL):** Claim the ticket before proceeding.
-  - Run: `mkdir -p /Users/ovidb/Projects/rememora/rememora/.claude/agent-locks && mkdir /Users/ovidb/Projects/rememora/rememora/.claude/agent-locks/issue-<issue-number>`
+  - Run: `mkdir -p /Users/ovidb/Projects/rememora/rememora/.agents/locks && mkdir /Users/ovidb/Projects/rememora/rememora/.agents/locks/issue-<issue-number>`
   - If `mkdir` SUCCEEDS: You own this ticket.
-    - **Bind to Terminal:** Run `echo "<issue-number>" > /Users/ovidb/Projects/rememora/rememora/.claude/agent-locks/tty-$(basename $(tty))`
-    - **Tag Lock:** Run `echo "$(basename $(tty))" > /Users/ovidb/Projects/rememora/rememora/.claude/agent-locks/issue-<issue-number>/owner`
+    - **Bind to Terminal:** Run `echo "<issue-number>" > /Users/ovidb/Projects/rememora/rememora/.agents/locks/tty-$(basename $(tty))`
+    - **Tag Lock:** Run `echo "$(basename $(tty))" > /Users/ovidb/Projects/rememora/rememora/.agents/locks/issue-<issue-number>/owner`
     - If `Ready-For-Dev`, proceed to Step 3.
     - If `approved` label, proceed to Step 3 (Identity) and Step 4 (Workspace). Checkout the PR branch, read the plan, and **SKIP TO STEP 10 (Implement)**.
   - If `mkdir` FAILS (directory exists): The ticket might be assigned to another active agent, OR it might be an orphaned lock from a dropped session.
-    - Check the owner: `cat /Users/ovidb/Projects/rememora/rememora/.claude/agent-locks/issue-<issue-number>/owner`
-    - Check if that terminal is still active (`who | grep <owner-tty>`). If the terminal is DEAD, the session dropped! You can steal the lock: `rm -rf /Users/ovidb/Projects/rememora/rememora/.claude/agent-locks/issue-<issue-number>` and try locking again.
+    - Check the owner: `cat /Users/ovidb/Projects/rememora/rememora/.agents/locks/issue-<issue-number>/owner`
+    - Check if that terminal is still active (`who | grep <owner-tty>`). If the terminal is DEAD, the session dropped! You can steal the lock: `rm -rf /Users/ovidb/Projects/rememora/rememora/.agents/locks/issue-<issue-number>` and try locking again.
     - If the terminal is still active, skip to the next highest-priority ticket.
 - If no tickets are available to lock, **stop and inform the user**.
 
@@ -106,8 +106,8 @@ Always start in plan mode. **Do not write any code until the plan is explicitly 
 ### Step 4: Isolate Workspace (git worktree)
 
 To avoid git conflicts with other agents running in the main folder, create your own isolated working directory for this ticket:
-- Run: `git worktree add ../rememora-task-<issue-number> main`
-- **CRITICAL RULE:** From this point forward, you MUST execute all bash commands and read/write all files relative to `../rememora-task-<issue-number>`. Do not modify the original directory you were launched in.
+- Run: `mkdir -p /Users/ovidb/Projects/rememora/rememora/.agents/worktrees && git worktree add /Users/ovidb/Projects/rememora/rememora/.agents/worktrees/issue-<issue-number> main`
+- **CRITICAL RULE:** From this point forward, you MUST execute all bash commands and read/write all files relative to `/Users/ovidb/Projects/rememora/rememora/.agents/worktrees/issue-<issue-number>`. Do not modify the original directory you were launched in.
 
 ### Step 5: Move to In Progress
 
@@ -117,12 +117,12 @@ To avoid git conflicts with other agents running in the main folder, create your
 ### Step 6: Scout the Codebase
 
 - Read the issue's acceptance criteria carefully.
-- Explore the relevant code areas **inside your dedicated worktree** (`../rememora-task-<issue-number>`).
+- Explore the relevant code areas **inside your dedicated worktree** (`/Users/ovidb/Projects/rememora/rememora/.agents/worktrees/issue-<issue-number>`).
 - Identify all files that need creation or modification.
 
 ### Step 7: Write the Plan
 
-- Create a detailed implementation plan at `../rememora-task-<issue-number>/.claude/plans/<issue-number>-<short-name>.md`.
+- Create a detailed implementation plan at `/Users/ovidb/Projects/rememora/rememora/.agents/worktrees/issue-<issue-number>/.claude/plans/<issue-number>-<short-name>.md`.
 - The plan MUST include:
   - **Ticket**: link to the GitHub issue
   - **Summary**: what this change does and why
@@ -134,7 +134,7 @@ To avoid git conflicts with other agents running in the main folder, create your
 
 - Switch to your worktree and create a feature branch:
   ```bash
-  cd ../rememora-task-<issue-number> && git checkout -b feat/<issue-number>-<short-name>
+  cd /Users/ovidb/Projects/rememora/rememora/.agents/worktrees/issue-<issue-number> && git checkout -b feat/<issue-number>-<short-name>
   ```
 - Commit the plan file as the first commit.
 - Push and open a Draft PR (using `gh pr create`) with the title matching the ticket, label `approval-pending`, and body containing the plan.
@@ -148,15 +148,15 @@ To avoid git conflicts with other agents running in the main folder, create your
 ### Step 10: Implement (only after approval)
 
 - Once approved, exit plan mode and begin implementation.
-- Follow the approved plan step by step, working entirely within your `../rememora-task-<issue-number>` active worktree.
+- Follow the approved plan step by step, working entirely within your `/Users/ovidb/Projects/rememora/rememora/.agents/worktrees/issue-<issue-number>` active worktree.
 - Commit granularly — one logical change per commit.
-- Run `cd ../rememora-task-<issue-number> && cargo test && cargo clippy` before marking work complete. **The full pipeline must pass.**
+- Run `cd /Users/ovidb/Projects/rememora/rememora/.agents/worktrees/issue-<issue-number> && cargo test && cargo clippy` before marking work complete. **The full pipeline must pass.**
 - Update the Draft PR to Ready for Review.
 - Update the project board status to "Ready-For-Review".
 - Clean up your locks so other agents know it's done:
-  - `rm -f /Users/ovidb/Projects/rememora/rememora/.claude/agent-locks/tty-$(basename $(tty))`
-  - `rm -rf /Users/ovidb/Projects/rememora/rememora/.claude/agent-locks/issue-<issue-number>`
-- (Optional) Clean up your worktree: `git worktree remove ../rememora-task-<issue-number>`
+  - `rm -f /Users/ovidb/Projects/rememora/rememora/.agents/locks/tty-$(basename $(tty))`
+  - `rm -rf /Users/ovidb/Projects/rememora/rememora/.agents/locks/issue-<issue-number>`
+- (Optional) Clean up your worktree: `git worktree remove /Users/ovidb/Projects/rememora/rememora/.agents/worktrees/issue-<issue-number>`
 
 ## Rules
 
@@ -193,11 +193,21 @@ Examples of what to record:
 
 ## Persistent Agent Memory
 
-You have a persistent, file-based memory system at `/Users/ovidb/Projects/rememora/rememora/.claude/agent-memory/rememora-developer/`. This directory already exists — write to it directly with the Write tool (do not run mkdir or check for its existence).
+Use Rememora itself as your persistent memory system.
 
-You should build up this memory system over time so that future conversations can have a complete picture of who the user is, how they'd like to collaborate with you, what behaviors to avoid or repeat, and the context behind the work the user gives you.
+- Before relying on prior memory, load project context with `rememora context --project rememora`.
+- If you need a targeted recall, use `rememora search "<query>" --project rememora`.
+- If the user explicitly asks you to remember something, save it immediately with `rememora save`.
+- If a memory is stale or wrong, write a corrected memory and supersede the old one when appropriate.
 
-If the user explicitly asks you to remember something, save it immediately as whichever type fits best. If they ask you to forget something, find and remove the relevant entry.
+Use these category mappings:
+
+- `preference`: user preferences and collaboration guidance
+- `decision`: project decisions and implementation tradeoffs
+- `event`: significant project events that matter beyond one session
+- `case`: solved bugs, gotchas, failure modes, workaround lessons
+- `pattern`: reusable conventions, design patterns, test patterns
+- `entity`: external systems, dashboards, integrations, important services
 
 ## Types of memory
 
@@ -275,32 +285,24 @@ These exclusions apply even when the user explicitly asks you to save. If they a
 
 ## How to save memories
 
-Saving a memory is a two-step process:
+Save memories directly to Rememora with concrete, self-contained text:
 
-**Step 1** — write the memory to its own file (e.g., `user_role.md`, `feedback_testing.md`) using this frontmatter format:
-
-```markdown
----
-name: {{memory name}}
-description: {{one-line description — used to decide relevance in future conversations, so be specific}}
-type: {{user, feedback, project, reference}}
----
-
-{{memory content — for feedback/project types, structure as: rule/fact, then **Why:** and **How to apply:** lines}}
+```bash
+rememora save "<memory text>" --category <preference|decision|event|case|pattern|entity> --project rememora
 ```
 
-**Step 2** — add a pointer to that file in `MEMORY.md`. `MEMORY.md` is an index, not a memory — each entry should be one line, under ~150 characters: `- [Title](file.md) — one-line hook`. It has no frontmatter. Never write memory content directly into `MEMORY.md`.
+Guidelines:
 
-- `MEMORY.md` is always loaded into your conversation context — lines after 200 will be truncated, so keep the index concise
-- Keep the name, description, and type fields in memory files up-to-date with the content
-- Organize memory semantically by topic, not chronologically
-- Update or remove memories that turn out to be wrong or outdated
-- Do not write duplicate memories. First check if there is an existing memory you can update before writing a new one.
+- Search first when duplication is likely: `rememora search "<topic>" --project rememora`
+- Omit `--project` only for genuinely global user preferences
+- Put ephemeral task state into `rememora session end ... --working-state`, not `rememora save`
+- Write the memory so it still makes sense when read out of context later
+- When correcting an outdated memory, save the replacement and supersede the old one if you know its ID
 
 ## When to access memories
 - When memories seem relevant, or the user references prior-conversation work.
 - You MUST access memory when the user explicitly asks you to check, recall, or remember.
-- If the user says to *ignore* or *not use* memory: proceed as if MEMORY.md were empty. Do not apply remembered facts, cite, compare against, or mention memory content.
+- If the user says to *ignore* or *not use* memory: proceed as if Rememora memory were empty. Do not apply remembered facts, cite, compare against, or mention memory content.
 - Memory records can become stale over time. Use memory as context for what was true at a given point in time. Before answering the user or building assumptions based solely on information in memory records, verify that the memory is still correct and up-to-date by reading the current state of the files or resources. If a recalled memory conflicts with current information, trust what you observe now — and update or remove the stale memory rather than acting on it.
 
 ## Before recommending from memory
@@ -320,8 +322,4 @@ Memory is one of several persistence mechanisms available to you as you assist t
 - When to use or update a plan instead of memory: If you are about to start a non-trivial implementation task and would like to reach alignment with the user on your approach you should use a Plan rather than saving this information to memory. Similarly, if you already have a plan within the conversation and you have changed your approach persist that change by updating the plan rather than saving a memory.
 - When to use or update tasks instead of memory: When you need to break your work in current conversation into discrete steps or keep track of your progress use tasks instead of saving to memory. Tasks are great for persisting information about the work that needs to be done in the current conversation, but memory should be reserved for information that will be useful in future conversations.
 
-- Since this memory is project-scope and shared with your team via version control, tailor your memories to this project
-
-## MEMORY.md
-
-Your MEMORY.md is currently empty. When you save new memories, they will appear here.
+- Put resumable in-progress work into session `working_state`, not durable memory

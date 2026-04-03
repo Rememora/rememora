@@ -34,3 +34,12 @@ cargo install --path .        # Install globally
 ## DB location
 
 `~/.rememora/rememora.db`
+
+## Agent runtime
+
+- Shared repo-owned agent runtime artifacts should live under `.agents/`
+- Ticket lock files for local agents should live under `.agents/locks/`
+- Any remaining file-based agent memory artifacts should live under `.agents/agent-memory/`
+- Git worktrees for local agents must be created under `.agents/worktrees/`
+- Do not create agent worktrees under `.claude/`, `../`, or temporary sibling directories
+- If you need an isolated workspace for an issue, use a path like `.agents/worktrees/issue-<issue-number>`

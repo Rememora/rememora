@@ -1,4 +1,5 @@
 use anyhow::{bail, Context, Result};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -33,7 +34,11 @@ pub fn run(args: &AgentRunArgs) -> Result<()> {
     // 3. Set up worktree
     let repo_root = find_repo_root()?;
     let branch = format!("agent/issue-{}", args.issue);
-    let worktree_path = std::env::temp_dir().join(format!("rememora-agent-{}", args.issue));
+    let worktree_root = repo_root.join(".agents").join("worktrees");
+    let worktree_path = worktree_root.join(format!("issue-{}", args.issue));
+
+    fs::create_dir_all(&worktree_root)
+        .with_context(|| format!("Failed to create worktree directory {}", worktree_root.display()))?;
 
     if worktree_path.exists() {
         Command::new("git")
