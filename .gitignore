@@ -2,6 +2,9 @@
 *.db
 *.db-wal
 *.db-shm
+.remember/
+.agents/locks/
+.agents/worktrees/
 
 # Bench
 bench/node_modules/
