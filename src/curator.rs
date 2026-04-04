@@ -103,6 +103,13 @@ pub fn curate(transcript: &str, project: &str, backend: Backend, dry_run: bool) 
     })
 }
 
+/// Call a Claude Code subagent via `claude -p` with a specific model.
+///
+/// Public so other modules (e.g., consolidate) can invoke subagents directly.
+pub fn call_subagent_with_model(prompt: &str, model: &str) -> Result<String> {
+    call_subagent(prompt, model)
+}
+
 /// Call a Claude Code subagent via `claude -p`.
 fn call_subagent(prompt: &str, model: &str) -> Result<String> {
     let output = Command::new("claude")

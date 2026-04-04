@@ -244,6 +244,33 @@ enum Commands {
         project: Option<String>,
     },
 
+    /// Consolidate memories using subagent (smart dedup, prune, merge)
+    Consolidate {
+        /// Project scope
+        #[arg(long)]
+        project: Option<String>,
+
+        /// Show what would be done without modifying memory
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Only check if the dual gate (24h + 5 memories) is met (exit 42 = yes)
+        #[arg(long)]
+        check_only: bool,
+
+        /// Backend: subagent (default) or api
+        #[arg(long, default_value = "subagent")]
+        backend: String,
+
+        /// Minimum similarity threshold for clustering (0.0-1.0)
+        #[arg(long, default_value = "0.3")]
+        min_similarity: f64,
+
+        /// Maximum number of clusters to process per run
+        #[arg(long, default_value = "50")]
+        max_batch: usize,
+    },
+
     /// Consolidate similar/redundant memories using LLM
     Evolve {
         /// Project scope (required)
@@ -602,6 +629,29 @@ fn main() -> Result<()> {
                     backend,
                     reset_watermark,
                     project,
+                },
+                cli.json,
+            )
+        }
+
+        Commands::Consolidate {
+            project,
+            dry_run,
+            check_only,
+            backend,
+            min_similarity,
+            max_batch,
+        } => {
+            let backend = rememora::curator::Backend::from_str(&backend)?;
+            commands::consolidate::run(
+                &conn,
+                &commands::consolidate::ConsolidateArgs {
+                    project,
+                    dry_run,
+                    check_only,
+                    backend,
+                    min_similarity,
+                    max_batch,
                 },
                 cli.json,
             )
