@@ -56,6 +56,14 @@ pub fn get_session_context(conn: &Connection, project: &str) -> Result<Option<se
     session::get_latest_for_project(conn, project)
 }
 
+/// Get the latest session for a project (public wrapper for cheatsheet use).
+pub fn get_latest_session(conn: &Connection, project: Option<&str>) -> Result<Option<session::SessionRecord>> {
+    match project {
+        Some(p) => get_session_context(conn, p),
+        None => Ok(None),
+    }
+}
+
 /// Full context assembly: L0 map + L1 details + session state → structured result
 pub fn assemble(conn: &Connection, project: Option<&str>) -> Result<ContextAssembly> {
     let l0 = get_l0_map(conn, project)?;

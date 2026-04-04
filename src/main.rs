@@ -82,6 +82,10 @@ enum Commands {
         /// Auto-detect project from current directory
         #[arg(long)]
         auto: bool,
+
+        /// Compact cheatsheet: top-5 memories + working state + warnings
+        #[arg(long)]
+        cheatsheet: bool,
     },
 
     /// Get a specific context by URI
@@ -471,8 +475,8 @@ fn main() -> Result<()> {
             cli.json,
         ),
 
-        Commands::Context { project, auto } => {
-            commands::context::run(&conn, project.as_deref(), auto)
+        Commands::Context { project, auto, cheatsheet } => {
+            commands::context::run(&conn, project.as_deref(), auto, cheatsheet)
         }
 
         Commands::Get { uri } => commands::get::run(&conn, &uri, cli.json),
