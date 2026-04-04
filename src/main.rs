@@ -213,6 +213,37 @@ enum Commands {
         once: bool,
     },
 
+    /// Curate memories from Claude Code session transcripts
+    Curate {
+        /// Path to a specific JSONL file
+        #[arg(long)]
+        file: Option<String>,
+
+        /// Read JSONL from stdin
+        #[arg(long)]
+        from_stdin: bool,
+
+        /// Auto-discover Claude Code session files
+        #[arg(long)]
+        auto: bool,
+
+        /// Show what would be done without modifying memory
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Backend: subagent (default) or api
+        #[arg(long, default_value = "subagent")]
+        backend: String,
+
+        /// Reset watermark(s) to re-curate from beginning
+        #[arg(long)]
+        reset_watermark: bool,
+
+        /// Project scope
+        #[arg(long)]
+        project: Option<String>,
+    },
+
     /// Consolidate similar/redundant memories using LLM
     Evolve {
         /// Project scope (required)
@@ -550,6 +581,31 @@ fn main() -> Result<()> {
             once,
             retries,
         }),
+
+        Commands::Curate {
+            file,
+            from_stdin,
+            auto,
+            dry_run,
+            backend,
+            reset_watermark,
+            project,
+        } => {
+            let backend = rememora::curator::Backend::from_str(&backend)?;
+            commands::curate::run(
+                &conn,
+                &commands::curate::CurateArgs {
+                    file,
+                    from_stdin,
+                    auto,
+                    dry_run,
+                    backend,
+                    reset_watermark,
+                    project,
+                },
+                cli.json,
+            )
+        }
 
         Commands::Evolve {
             project,
