@@ -4,7 +4,7 @@ Persistent, cross-agent memory for AI coding assistants. One SQLite database, sh
 
 **The problem:** Claude Code, Codex, and Gemini CLI each lose context between sessions. Switch agents mid-task and you start from scratch. Come back to a project after a week and the agent has forgotten everything.
 
-**Rememora fixes this.** A fast Rust CLI that any agent can call via Bash to save and retrieve memories, transfer working context between agents, and build up project knowledge over time.
+**Rememora fixes this.** A fast Rust CLI that any agent can call via Bash to save and retrieve memories, transfer working context between agents, and build up project knowledge over time — with autonomous curation that extracts memories from session transcripts without manual intervention.
 
 ```bash
 # Agent A (Claude Code) saves a decision
@@ -24,7 +24,12 @@ rememora context --project myapp
 - **Tiered loading** — L0 abstracts (~100 tok) → L1 overviews (~500 tok) → L2 full content
 - **Hotness scoring** — frequently accessed + important memories surface first
 - **Full-text search** — BM25 via SQLite FTS5, zero external dependencies
-- **Auto-extract** — LLM-powered memory extraction from session transcripts
+- **Vector search** — optional cosine similarity via sqlite-vec + sentence-transformers (feature-gated)
+- **Hybrid search** — reciprocal rank fusion (RRF) merging BM25 + vector results
+- **Autonomous curation** — LLM-powered memory extraction from Claude Code session transcripts
+- **Memory consolidation** — smart dedup, merge, and pruning of stale memories via LLM
+- **Agent orchestration** — dispatch GitHub issues to Claude CLI with quality gates and retry loops
+- **Eval benchmark** — multi-scenario harness measuring instruction compliance and autonomous behavior
 - **Fast** — ~3ms startup, 3.6MB binary, single SQLite database with WAL
 - **Local-first** — everything stays on your machine
 
@@ -88,7 +93,85 @@ rememora session start --agent codex --project myapp \
   --parent <previous-session-id>
 ```
 
+## Autonomous Curation
+
+Rememora can automatically extract memories from Claude Code sessions without manual intervention:
+
+```bash
+# Auto-discover and curate all Claude Code session transcripts
+rememora curate --auto
+
+# Curate a specific session file
+rememora curate --file ~/.claude/projects/.../session.jsonl --project myapp
+
+# Preview what would be extracted (dry-run)
+rememora curate --auto --dry-run
+```
+
+**How it works:**
+1. **JSONL parsing** — reads Claude Code session transcripts incrementally (watermark-based, never re-processes old content)
+2. **Signal gate** — fast Haiku classification: does this transcript contain memorable knowledge? (YES/NO)
+3. **AUDN curation** — Sonnet subagent with Bash access runs the full Add/Update/Delete/Noop cycle via `rememora save/search/supersede`
+4. **Consolidation** — smart dedup via BM25 clustering + LLM-powered merge/prune
+
+Integrates with Claude Code hooks for fully autonomous operation — memories are extracted after every conversation turn.
+
+## Memory Consolidation
+
+Over time, memories accumulate duplicates and stale entries. Rememora consolidates them:
+
+```bash
+# Find and merge similar memories using LLM
+rememora evolve --project myapp
+
+# Preview clusters without applying changes
+rememora evolve --project myapp --dry-run
+
+# Check if consolidation gate is met (24h + 5 new memories)
+rememora consolidate --project myapp --check-only
+```
+
+The consolidation system uses BM25 cross-search to find similar memory clusters, then an LLM decides whether to merge, supersede, prune, or keep each cluster.
+
+## Agent Orchestration
+
+Dispatch GitHub issues to Claude CLI agents with quality gates:
+
+```bash
+# Run a single issue
+rememora agent-run --repo owner/repo --issue 42 --retries 3
+
+# Watch project board and auto-dispatch Ready-For-Dev issues
+rememora agent-loop --repo owner/repo --poll 300
+
+# One-shot: process current Ready-For-Dev items and exit
+rememora agent-loop --repo owner/repo --once
+```
+
+**`agent-run` workflow:**
+1. Fetch issue from GitHub → move to "In Progress"
+2. Create isolated git worktree
+3. Run Claude CLI with issue context
+4. Quality gate: run tests, retry on failure (configurable retries)
+5. Open PR → move to "Ready for Review"
+
+**`agent-loop`** polls the GitHub project board continuously, dispatching Ready-For-Dev issues and merging Cherry-Picked PRs.
+
 ## Agent Setup
+
+### Automatic Setup
+
+```bash
+# Detect installed agents and show what would be configured
+rememora setup
+
+# Apply the configuration
+rememora setup --apply
+```
+
+Auto-detects Claude Code, Codex, and Gemini CLI, then patches their config files with rememora instructions (behavioral triggers, hooks, and workflow examples).
+
+### Manual Setup
 
 Add to your agent's system prompt or instructions file:
 
@@ -114,17 +197,33 @@ Before ending: `rememora session end <id> --summary "..." --working-state "..."`
 """
 ```
 
+## Claude Code Plugin
+
+Rememora ships with a Claude Code plugin for fully autonomous operation:
+
+**Hooks** (fire automatically):
+- **SessionStart** — loads project context + starts rememora session + checks consolidation gate
+- **SessionEnd** — closes the active session
+- **Stop** — curates memories from the session transcript after each conversation turn
+
+**Skills** (model-invoked):
+- **rememora-save** — triggers autonomously after decisions, bug fixes, pattern discoveries
+- **rememora-search** — triggers before non-trivial implementations
+- **rememora-init** — manual `/rememora` command for save, search, status
+
 ## Commands
 
 | Command | Description |
 |---------|-------------|
 | `rememora save "..." --category <cat>` | Save a memory |
-| `rememora search "query"` | Search memories (BM25) |
-| `rememora context --project <name>` | Load full project context |
+| `rememora search "query"` | Search memories (BM25 + optional vector) |
+| `rememora context --project <name>` | Load full project context (L0 + L1) |
 | `rememora context --auto` | Auto-detect project from cwd |
+| `rememora context --cheatsheet` | Compact top-5 summary |
 | `rememora get <uri>` | Get specific context by URI |
 | `rememora session start` | Start a tracked session |
 | `rememora session end <id>` | End session with summary |
+| `rememora session end-active` | End active session (hook-friendly) |
 | `rememora session resume --project <name>` | Show last session state |
 | `rememora session list` | List recent sessions |
 | `rememora project add <name>` | Register a project |
@@ -133,6 +232,13 @@ Before ending: `rememora session end <id> --summary "..." --working-state "..."`
 | `rememora supersede <old-id> --by <new-id>` | Replace outdated memory |
 | `rememora relate <uri-a> <uri-b>` | Link two contexts |
 | `rememora extract` | Extract memories from text via LLM |
+| `rememora curate --auto` | Curate memories from session transcripts |
+| `rememora evolve --project <name>` | LLM-driven memory consolidation |
+| `rememora consolidate --project <name>` | Smart dedup with dual gate |
+| `rememora agent-run --repo X --issue N` | Dispatch issue to Claude CLI |
+| `rememora agent-loop --repo X` | Watch board + auto-dispatch |
+| `rememora setup` | Configure agents to use rememora |
+| `rememora eval` | DB compliance metrics |
 | `rememora status` | Show DB stats |
 | `rememora export --project <name>` | Export as JSON or markdown |
 
@@ -171,26 +277,153 @@ Requires `ANTHROPIC_API_KEY` environment variable. Uses Claude Haiku for fast, c
 
 ## Architecture
 
+### Core Storage
+
 - **Single SQLite database** at `~/.rememora/rememora.db` with WAL mode for concurrent access
 - **URI-based hierarchy**: `rememora://projects/{name}/memories/{category}/{slug}`
 - **Unified contexts table** — memories, projects, resources all in one table, differentiated by type
 - **Tiered loading** — each context has L0 (abstract), L1 (overview), L2 (content) fields
-- **Hotness scoring**: `sigmoid(log1p(access_count)) * exp(-age/half_life)` blended with importance
-- **Pluggable embedding backend** — `EmbedBackend` trait for future vector search (candle, llama.cpp)
+- **Hotness scoring**: `sigmoid(log1p(access_count)) * exp(-age/half_life)` blended 30/70 with importance
+- **FTS5 full-text search** with auto-synced triggers on insert/update/delete
+- **Soft deletion** via `superseded_by` pointers (audit trail, no data loss)
+
+### Search
+
+- **BM25** — FTS5-based search across name, abstract, overview, content, tags, category
+- **Vector search** — optional cosine similarity via sqlite-vec + `all-MiniLM-L6-v2` (384-dim, feature-gated)
+- **Hybrid RRF** — reciprocal rank fusion merges BM25 + vector results: `RRF(d) = Σ 1/(k+rank)` with k=60
+- **Pluggable embedding backend** — `EmbedBackend` trait with Candle implementation (Metal GPU + CPU fallback)
+
+### Autonomous Curation Pipeline
+
+```
+Session JSONL → Watermark (incremental) → Signal Gate (Haiku) → AUDN Curator (Sonnet) → rememora save/search/supersede
+```
+
+- **Watermark tracking** — byte offset per session file, never re-processes old content
+- **Signal gate** — fast Haiku YES/NO classification (min 500 chars, max 32KB transcript)
+- **AUDN cycle** — Sonnet subagent with Bash access runs Add/Update/Delete/Noop
+- **Consolidation** — BM25 clustering + LLM merge/supersede/prune with dual gate (24h + 5 new memories)
+- **Audit trail** — curator log tracks every action with model, reason, and timestamp
+
+### Three-Layer Integration
+
+```
+┌─────────────────────────────────────────────┐
+│ Layer 3: Multi-Agent Orchestration          │
+│ agent-run, agent-loop, developer/triage     │
+│ agents, atomic locking, git worktrees       │
+├─────────────────────────────────────────────┤
+│ Layer 2: Claude Code Plugin                 │
+│ Hooks (SessionStart, SessionEnd, Stop)      │
+│ Skills (save, search, init)                 │
+├─────────────────────────────────────────────┤
+│ Layer 1: CLI Core                           │
+│ save, search, context, session, curate,     │
+│ evolve, extract, agent-run, eval, export    │
+└─────────────────────────────────────────────┘
+```
+
+### Database Schema (3 migrations)
+
+| Table | Purpose |
+|-------|---------|
+| `contexts` | Unified memory storage (18 columns, ULID PKs, URI hierarchy, L0/L1/L2 layers) |
+| `contexts_fts` | FTS5 virtual table (auto-synced via triggers) |
+| `sessions` | Agent session tracking with parent chains for transfer |
+| `relations` | Bidirectional inter-context links (related, depends_on, derived_from, supersedes) |
+| `context_embeddings` | Vector storage (f32 BLOB, feature-gated) |
+| `vec_contexts` | sqlite-vec KNN index (feature-gated) |
+| `watermarks` | Incremental curation byte offsets per session file |
+| `curator_log` | Audit trail of curation actions (add/update/delete/noop) |
+| `consolidation_runs` | Memory consolidation run history |
+
+## Eval Benchmark
+
+A TypeScript harness for measuring rememora instruction compliance and autonomous agent behavior.
+
+```bash
+cd bench
+
+# Quick scenario eval (6 scenarios)
+pnpm run eval -- --cli claude-code
+
+# Multi-task sequence with experiment condition
+pnpm run eval:long -- --sequence tasks/instruction-mode-eval.json --condition conditions/full-hybrid.json
+
+# Run all conditions in matrix mode
+pnpm run eval:matrix -- --sequence tasks/instruction-mode-eval.json
+
+# Compare results across conditions
+pnpm run compare:conditions
+```
+
+**Quick scenarios** test isolated rememora CLI compliance: session start, save decision, save case, search, transfer handoff, session end.
+
+**Long-run sequences** measure autonomous behavior across multi-task workflows (8 tasks simulating real project development). Five instruction delivery modes are compared:
+
+| Condition | Description |
+|-----------|-------------|
+| `none` | No rememora instructions (baseline) |
+| `reference-card` | Quick command reference |
+| `behavioral-triggers` | "When to SEARCH", "When to SAVE" guidance |
+| `hooks-only` | Minimal reminders |
+| `full-hybrid` | Comprehensive MANDATORY protocol |
+
+Results are exported as **Braintrust-aligned JSONL** (`input/output/expected/scores/metadata`), importable into AI Foundry, Langfuse, LangSmith, and OpenAI Evals with thin adapters.
+
+**Runners:** Claude Code, Codex, Claude Tmux (interactive).
 
 ## Development
 
 ```bash
-cargo test          # 62 tests
+cargo test          # 124 tests (121 pass, 3 ignored)
 cargo build         # Debug build
 cargo clippy        # Lint
 ```
+
+### Source Structure
+
+| Module | Purpose |
+|--------|---------|
+| `main.rs` | CLI entry point (clap, 19 commands) |
+| `db.rs` | SQLite connection, WAL, 3 migrations |
+| `uri.rs` | `rememora://` URI parsing & building |
+| `models/context.rs` | Context CRUD + FTS5 |
+| `models/session.rs` | Session lifecycle + transfer chains |
+| `models/project.rs` | Project metadata + CWD detection |
+| `models/relation.rs` | Bidirectional context links |
+| `models/watermark.rs` | Curation watermarks + curator log + consolidation runs |
+| `hierarchy.rs` | L0/L1 context assembly |
+| `hotness.rs` | Scoring: sigmoid(log1p(access)) * exp(-age/7) |
+| `search.rs` | BM25 + vector + reciprocal rank fusion |
+| `format.rs` | Markdown/JSON output formatting |
+| `curator.rs` | Signal gate + AUDN subagent curation |
+| `jsonl.rs` | Claude Code session JSONL parser + noise filtering |
+| `evolve.rs` | BM25 clustering for memory consolidation |
+| `embed/mod.rs` | EmbedBackend trait |
+| `embed/candle.rs` | Candle implementation (all-MiniLM-L6-v2, 384-dim) |
+| `commands/*` | Individual command implementations |
+
+### Dependencies
+
+**Core:** rusqlite (bundled), clap 4, serde, ulid, chrono, dirs, anyhow, cliclack, ureq
+
+**Embedding (feature-gated):** candle-core/nn/transformers, hf-hub, tokenizers, sqlite-vec
+
+**Feature flags:** `embed-candle` (vector search via Candle), `embed-llamacpp` (stub), `metal` (Apple GPU)
 
 ## Roadmap
 
 - [x] Auto-extraction of memories from text via LLM
 - [x] Homebrew formula (`brew install Rememora/tap/rememora`)
 - [x] Claude Code hooks for automatic session tracking
+- [x] Autonomous curation from session transcripts
+- [x] Memory consolidation (evolve + consolidate)
+- [x] Agent orchestration (agent-run + agent-loop)
+- [x] Agent auto-setup (detect + configure)
+- [x] Eval benchmark harness (scenarios + long-run + conditions matrix)
+- [x] Cheatsheet context mode (compact top-5 summary)
 - [ ] Vector search via candle + sqlite-vec (hybrid BM25 + cosine similarity)
 - [ ] Hierarchical retrieval with score propagation
 - [ ] Memory evolution — LLM-based consolidation of old memories
