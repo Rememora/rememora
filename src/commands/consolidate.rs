@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use rusqlite::Connection;
 
-use rememora::curator::{self, Backend};
+use rememora::curator;
 use rememora::evolve;
 use rememora::models::context;
 use rememora::models::watermark;
@@ -19,7 +19,6 @@ pub struct ConsolidateArgs {
     pub project: Option<String>,
     pub dry_run: bool,
     pub check_only: bool,
-    pub backend: Backend,
     pub min_similarity: f64,
     pub max_batch: usize,
 }
@@ -105,11 +104,7 @@ pub fn run(conn: &Connection, args: &ConsolidateArgs, json_output: bool) -> Resu
         prompt
     };
 
-    // Run consolidation via subagent
-    let output = match args.backend {
-        Backend::Subagent => curator::call_subagent_with_model(&full_prompt, "sonnet")?,
-        Backend::Api => anyhow::bail!("API backend not yet implemented"),
-    };
+    let output = curator::call_subagent(&full_prompt, "sonnet")?;
 
     // Complete the consolidation run
     let actions_json = serde_json::json!({"output": &output[..output.len().min(1000)]}).to_string();

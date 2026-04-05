@@ -3,7 +3,7 @@ use rusqlite::Connection;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use rememora::curator::{self, Backend, Signal};
+use rememora::curator::{self, Signal};
 use rememora::jsonl;
 use rememora::models::watermark;
 
@@ -12,7 +12,6 @@ pub struct CurateArgs {
     pub from_stdin: bool,
     pub auto: bool,
     pub dry_run: bool,
-    pub backend: Backend,
     pub reset_watermark: bool,
     pub project: Option<String>,
 }
@@ -106,7 +105,7 @@ fn curate_file(
     }
 
     // Signal gate
-    let signal = curator::signal_gate(&transcript, args.backend)?;
+    let signal = curator::signal_gate(&transcript)?;
 
     if signal == Signal::No {
         // Update watermark even if no signal — don't re-process
@@ -131,7 +130,7 @@ fn curate_file(
     }
 
     // Run curator
-    let result = curator::curate(&transcript, project, args.backend, args.dry_run)?;
+    let result = curator::curate(&transcript, project, args.dry_run)?;
 
     // Update watermark
     watermark::set(conn, &path_str, parse_result.new_offset, parse_result.lines_processed as u64)?;
@@ -188,7 +187,7 @@ fn curate_stdin(_conn: &Connection, args: &CurateArgs, json_output: bool) -> Res
 
     let transcript = jsonl::render_transcript(&parse_result.entries);
 
-    let signal = curator::signal_gate(&transcript, args.backend)?;
+    let signal = curator::signal_gate(&transcript)?;
     if signal == Signal::No {
         if json_output {
             println!("{{\"status\":\"no_signal\",\"message\":\"No signal detected\"}}");
@@ -199,7 +198,7 @@ fn curate_stdin(_conn: &Connection, args: &CurateArgs, json_output: bool) -> Res
     }
 
     let project = args.project.as_deref().unwrap_or("unknown");
-    let result = curator::curate(&transcript, project, args.backend, args.dry_run)?;
+    let result = curator::curate(&transcript, project, args.dry_run)?;
 
     if json_output {
         let output = serde_json::json!({

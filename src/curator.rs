@@ -1,8 +1,7 @@
 //! Curator: manages subagent invocation for signal gating and AUDN curation.
 //!
-//! Two backends:
-//! - **Subagent** (default): calls `claude -p "prompt"` — subscription-included
-//! - **API** (future): direct Anthropic Messages API — for Codex/Gemini/CI users
+//! Uses `claude -p` (Claude Code CLI) as the subagent — subscription-included,
+//! no per-token API cost.
 
 use anyhow::{bail, Context, Result};
 use std::process::Command;
@@ -12,25 +11,6 @@ const CURATOR_PROMPT: &str = include_str!("../prompts/curator.md");
 
 /// Minimum transcript length worth gating (chars). Below this, skip entirely.
 const MIN_TRANSCRIPT_CHARS: usize = 500;
-
-/// Backend for curator invocation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Backend {
-    /// Claude Code subagent via `claude -p` (subscription-included).
-    Subagent,
-    /// Direct Anthropic API (future, not yet implemented).
-    Api,
-}
-
-impl Backend {
-    pub fn from_str(s: &str) -> Result<Self> {
-        match s {
-            "subagent" => Ok(Self::Subagent),
-            "api" => Ok(Self::Api),
-            _ => bail!("Unknown backend: {s}. Use 'subagent' or 'api'."),
-        }
-    }
-}
 
 /// Result of the signal gate check.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,17 +33,13 @@ pub struct CurationResult {
 /// Check whether a transcript has signal worth curating.
 ///
 /// Uses Haiku via subagent for a fast YES/NO classification.
-pub fn signal_gate(transcript: &str, backend: Backend) -> Result<Signal> {
+pub fn signal_gate(transcript: &str) -> Result<Signal> {
     if transcript.len() < MIN_TRANSCRIPT_CHARS {
         return Ok(Signal::No);
     }
 
     let prompt = SIGNAL_GATE_PROMPT.replace("{transcript}", transcript);
-
-    let output = match backend {
-        Backend::Subagent => call_subagent(&prompt, "haiku")?,
-        Backend::Api => bail!("API backend not yet implemented"),
-    };
+    let output = call_subagent(&prompt, "haiku")?;
 
     let answer = output.trim().to_uppercase();
     if answer.contains("YES") {
@@ -77,7 +53,7 @@ pub fn signal_gate(transcript: &str, backend: Backend) -> Result<Signal> {
 ///
 /// Uses Sonnet via subagent — the subagent gets bash access to run
 /// `rememora search/save/supersede` commands directly.
-pub fn curate(transcript: &str, project: &str, backend: Backend, dry_run: bool) -> Result<CurationResult> {
+pub fn curate(transcript: &str, project: &str, dry_run: bool) -> Result<CurationResult> {
     let prompt = CURATOR_PROMPT
         .replace("{transcript}", transcript)
         .replace("{project}", project);
@@ -91,10 +67,7 @@ pub fn curate(transcript: &str, project: &str, backend: Backend, dry_run: bool) 
         prompt
     };
 
-    let output = match backend {
-        Backend::Subagent => call_subagent(&full_prompt, "sonnet")?,
-        Backend::Api => bail!("API backend not yet implemented"),
-    };
+    let output = call_subagent(&full_prompt, "sonnet")?;
 
     Ok(CurationResult {
         signal: Signal::Yes,
@@ -104,14 +77,7 @@ pub fn curate(transcript: &str, project: &str, backend: Backend, dry_run: bool) 
 }
 
 /// Call a Claude Code subagent via `claude -p` with a specific model.
-///
-/// Public so other modules (e.g., consolidate) can invoke subagents directly.
-pub fn call_subagent_with_model(prompt: &str, model: &str) -> Result<String> {
-    call_subagent(prompt, model)
-}
-
-/// Call a Claude Code subagent via `claude -p`.
-fn call_subagent(prompt: &str, model: &str) -> Result<String> {
+pub fn call_subagent(prompt: &str, model: &str) -> Result<String> {
     let output = Command::new("claude")
         .args(["-p", prompt, "--model", model])
         .output()
@@ -130,17 +96,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_backend_from_str() {
-        assert_eq!(Backend::from_str("subagent").unwrap(), Backend::Subagent);
-        assert_eq!(Backend::from_str("api").unwrap(), Backend::Api);
-        assert!(Backend::from_str("unknown").is_err());
-    }
-
-    #[test]
     fn test_signal_gate_short_transcript() {
         // Transcripts below MIN_TRANSCRIPT_CHARS should return No without calling subagent
         let short = "user: hello\nassistant: hi";
-        let result = signal_gate(short, Backend::Subagent).unwrap();
+        let result = signal_gate(short).unwrap();
         assert_eq!(result, Signal::No);
     }
 

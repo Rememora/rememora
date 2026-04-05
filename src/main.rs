@@ -235,10 +235,6 @@ enum Commands {
         #[arg(long)]
         dry_run: bool,
 
-        /// Backend: subagent (default) or api
-        #[arg(long, default_value = "subagent")]
-        backend: String,
-
         /// Reset watermark(s) to re-curate from beginning
         #[arg(long)]
         reset_watermark: bool,
@@ -261,10 +257,6 @@ enum Commands {
         /// Only check if the dual gate (24h + 5 memories) is met (exit 42 = yes)
         #[arg(long)]
         check_only: bool,
-
-        /// Backend: subagent (default) or api
-        #[arg(long, default_value = "subagent")]
-        backend: String,
 
         /// Minimum similarity threshold for clustering (0.0-1.0)
         #[arg(long, default_value = "0.3")]
@@ -618,48 +610,38 @@ fn main() -> Result<()> {
             from_stdin,
             auto,
             dry_run,
-            backend,
             reset_watermark,
             project,
-        } => {
-            let backend = rememora::curator::Backend::from_str(&backend)?;
-            commands::curate::run(
-                &conn,
-                &commands::curate::CurateArgs {
-                    file,
-                    from_stdin,
-                    auto,
-                    dry_run,
-                    backend,
-                    reset_watermark,
-                    project,
-                },
-                cli.json,
-            )
-        }
+        } => commands::curate::run(
+            &conn,
+            &commands::curate::CurateArgs {
+                file,
+                from_stdin,
+                auto,
+                dry_run,
+                reset_watermark,
+                project,
+            },
+            cli.json,
+        ),
 
         Commands::Consolidate {
             project,
             dry_run,
             check_only,
-            backend,
             min_similarity,
             max_batch,
-        } => {
-            let backend = rememora::curator::Backend::from_str(&backend)?;
-            commands::consolidate::run(
-                &conn,
-                &commands::consolidate::ConsolidateArgs {
-                    project,
-                    dry_run,
-                    check_only,
-                    backend,
-                    min_similarity,
-                    max_batch,
-                },
-                cli.json,
-            )
-        }
+        } => commands::consolidate::run(
+            &conn,
+            &commands::consolidate::ConsolidateArgs {
+                project,
+                dry_run,
+                check_only,
+                min_similarity,
+                max_batch,
+            },
+            cli.json,
+        ),
 
         Commands::Evolve {
             project,
