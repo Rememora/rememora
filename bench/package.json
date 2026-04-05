@@ -11,6 +11,7 @@
     "eval:matrix": "tsx src/run-long.ts --matrix",
     "compare": "tsx src/run.ts --compare",
     "compare:conditions": "tsx src/compare-conditions.ts",
+    "report": "tsx src/generate-report.ts",
     "test:eval": "vitest run"
   },
   "devDependencies": {
