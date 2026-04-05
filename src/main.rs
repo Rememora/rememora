@@ -82,6 +82,10 @@ enum Commands {
         /// Auto-detect project from current directory
         #[arg(long)]
         auto: bool,
+
+        /// Compact cheatsheet: top-5 memories + working state + warnings
+        #[arg(long)]
+        cheatsheet: bool,
     },
 
     /// Get a specific context by URI
@@ -211,6 +215,56 @@ enum Commands {
         /// Run once and exit (don't loop)
         #[arg(long)]
         once: bool,
+    },
+
+    /// Curate memories from Claude Code session transcripts
+    Curate {
+        /// Path to a specific JSONL file
+        #[arg(long)]
+        file: Option<String>,
+
+        /// Read JSONL from stdin
+        #[arg(long)]
+        from_stdin: bool,
+
+        /// Auto-discover Claude Code session files
+        #[arg(long)]
+        auto: bool,
+
+        /// Show what would be done without modifying memory
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Reset watermark(s) to re-curate from beginning
+        #[arg(long)]
+        reset_watermark: bool,
+
+        /// Project scope
+        #[arg(long)]
+        project: Option<String>,
+    },
+
+    /// Consolidate memories using subagent (smart dedup, prune, merge)
+    Consolidate {
+        /// Project scope
+        #[arg(long)]
+        project: Option<String>,
+
+        /// Show what would be done without modifying memory
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Only check if the dual gate (24h + 5 memories) is met (exit 42 = yes)
+        #[arg(long)]
+        check_only: bool,
+
+        /// Minimum similarity threshold for clustering (0.0-1.0)
+        #[arg(long, default_value = "0.3")]
+        min_similarity: f64,
+
+        /// Maximum number of clusters to process per run
+        #[arg(long, default_value = "50")]
+        max_batch: usize,
     },
 
     /// Consolidate similar/redundant memories using LLM
@@ -413,8 +467,8 @@ fn main() -> Result<()> {
             cli.json,
         ),
 
-        Commands::Context { project, auto } => {
-            commands::context::run(&conn, project.as_deref(), auto)
+        Commands::Context { project, auto, cheatsheet } => {
+            commands::context::run(&conn, project.as_deref(), auto, cheatsheet)
         }
 
         Commands::Get { uri } => commands::get::run(&conn, &uri, cli.json),
@@ -550,6 +604,44 @@ fn main() -> Result<()> {
             once,
             retries,
         }),
+
+        Commands::Curate {
+            file,
+            from_stdin,
+            auto,
+            dry_run,
+            reset_watermark,
+            project,
+        } => commands::curate::run(
+            &conn,
+            &commands::curate::CurateArgs {
+                file,
+                from_stdin,
+                auto,
+                dry_run,
+                reset_watermark,
+                project,
+            },
+            cli.json,
+        ),
+
+        Commands::Consolidate {
+            project,
+            dry_run,
+            check_only,
+            min_similarity,
+            max_batch,
+        } => commands::consolidate::run(
+            &conn,
+            &commands::consolidate::ConsolidateArgs {
+                project,
+                dry_run,
+                check_only,
+                min_similarity,
+                max_batch,
+            },
+            cli.json,
+        ),
 
         Commands::Evolve {
             project,

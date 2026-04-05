@@ -1,5 +1,5 @@
 use anyhow::Result;
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 
 pub fn run(conn: &Connection, json: bool) -> Result<()> {
     let total_contexts: i64 = conn.query_row("SELECT COUNT(*) FROM contexts", [], |r| r.get(0))?;
@@ -14,6 +14,20 @@ pub fn run(conn: &Connection, json: bool) -> Result<()> {
     let categories: Vec<(String, i64)> = stmt
         .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
         .collect::<std::result::Result<Vec<_>, _>>()?;
+
+    // Curator stats
+    let watermark_count: i64 = conn.query_row("SELECT COUNT(*) FROM watermarks", [], |r| r.get(0))?;
+    let curator_actions: i64 = conn.query_row("SELECT COUNT(*) FROM curator_log", [], |r| r.get(0))?;
+    let curator_adds: i64 = conn.query_row("SELECT COUNT(*) FROM curator_log WHERE action = 'add'", [], |r| r.get(0))?;
+    let consolidation_runs: i64 = conn.query_row("SELECT COUNT(*) FROM consolidation_runs", [], |r| r.get(0))?;
+    let last_consolidation: Option<String> = conn
+        .query_row(
+            "SELECT completed_at FROM consolidation_runs ORDER BY started_at DESC LIMIT 1",
+            [],
+            |r| r.get(0),
+        )
+        .optional()?
+        .flatten();
 
     if json {
         let cat_map: serde_json::Map<String, serde_json::Value> = categories
@@ -31,6 +45,13 @@ pub fn run(conn: &Connection, json: bool) -> Result<()> {
                 "active_sessions": active_sessions,
                 "relations": total_relations,
                 "categories": cat_map,
+                "curator": {
+                    "tracked_files": watermark_count,
+                    "total_actions": curator_actions,
+                    "memories_added": curator_adds,
+                    "consolidation_runs": consolidation_runs,
+                    "last_consolidation": last_consolidation,
+                },
             })
         );
     } else {
@@ -46,6 +67,13 @@ pub fn run(conn: &Connection, json: bool) -> Result<()> {
             for (cat, count) in &categories {
                 println!("    {cat}: {count}");
             }
+        }
+        println!("\n  Curator:");
+        println!("    Tracked files:       {watermark_count}");
+        println!("    Curation actions:    {curator_actions} ({curator_adds} adds)");
+        println!("    Consolidation runs:  {consolidation_runs}");
+        if let Some(last) = &last_consolidation {
+            println!("    Last consolidation:  {last}");
         }
     }
 

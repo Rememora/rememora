@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 const REMEMORA_MARKER: &str = "## Rememora";
 const REMEMORA_HOOK_MARKER: &str = "rememora context --auto";
+const REMEMORA_CURATE_MARKER: &str = "rememora curate";
 
 // ---------------------------------------------------------------------------
 // Instruction snippets — behavioral triggers + urgency framing (Layer 2 + 3)
@@ -185,7 +186,7 @@ fn already_configured(path: &PathBuf) -> bool {
 
 fn hooks_already_configured(path: &PathBuf) -> bool {
     if let Ok(content) = std::fs::read_to_string(path) {
-        content.contains(REMEMORA_HOOK_MARKER)
+        content.contains(REMEMORA_HOOK_MARKER) && content.contains(REMEMORA_CURATE_MARKER)
     } else {
         false
     }
@@ -257,6 +258,25 @@ fn write_hooks(path: &PathBuf) -> Result<()> {
             arr.push(serde_json::json!({
                 "type": "command",
                 "command": "rememora session end-active --auto-summary 2>/dev/null || true"
+            }));
+        }
+    }
+
+    // Stop hook — autonomous curation after each agent turn
+    let stop = hooks_obj
+        .entry("Stop")
+        .or_insert_with(|| serde_json::json!([]));
+    if let Some(arr) = stop.as_array_mut() {
+        let already = arr.iter().any(|h| {
+            h.get("command")
+                .and_then(|c| c.as_str())
+                .map(|s| s.contains(REMEMORA_CURATE_MARKER))
+                .unwrap_or(false)
+        });
+        if !already {
+            arr.push(serde_json::json!({
+                "type": "command",
+                "command": "bash -c '(rememora curate --auto 2>/dev/null || true) &'"
             }));
         }
     }

@@ -23,3 +23,11 @@ fi
 
 # Start a session (captures session ID for later)
 rememora session start --agent claude-code --project "$(basename "$PWD")" --intent "Interactive session" 2>/dev/null || true
+
+# Check if consolidation is due (dual gate: 24h + 5 new memories)
+# Exit code 42 means gate is met — run consolidation in background
+PROJECT=$(basename "$PWD")
+rememora consolidate --check-only --project "$PROJECT" 2>/dev/null
+if [ $? -eq 42 ]; then
+  (rememora consolidate --project "$PROJECT" 2>/dev/null || true) &
+fi

@@ -1,9 +1,11 @@
+pub mod curator;
 pub mod db;
 pub mod embed;
 pub mod evolve;
 pub mod format;
 pub mod hierarchy;
 pub mod hotness;
+pub mod jsonl;
 pub mod models;
 pub mod search;
 pub mod uri;

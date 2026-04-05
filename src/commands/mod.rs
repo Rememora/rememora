@@ -1,6 +1,8 @@
 pub mod agent_loop;
 pub mod agent_run;
+pub mod consolidate;
 pub mod context;
+pub mod curate;
 pub mod eval;
 pub mod evolve;
 pub mod export;
