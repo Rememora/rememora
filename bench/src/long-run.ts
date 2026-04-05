@@ -120,22 +120,82 @@ function cleanupFixture(dir: string): void {
 }
 
 // ---------------------------------------------------------------------------
-// DB helpers — query rememora for KB stats
+// DB helpers — query rememora for KB stats (DB as ground truth)
 // ---------------------------------------------------------------------------
 
-/** Count entries in a rememora DB by shelling out to rememora status. */
+/** Shared env builder for rememora subprocess calls. */
+function rememoraEnv(dbPath: string): NodeJS.ProcessEnv {
+  return { ...process.env, REMEMORA_DB: dbPath };
+}
+
+/** Count memory entries in a rememora DB by shelling out to rememora status. */
 function getKbSize(dbPath: string): number {
   try {
     const out = execFileSync("rememora", ["status", "--json"], {
-      env: { ...process.env, REMEMORA_DB: dbPath },
+      env: rememoraEnv(dbPath),
       timeout: 5_000,
       encoding: "utf-8",
     });
     const data = JSON.parse(out);
-    return (data.contexts_count as number) ?? 0;
+    return (data.memories as number) ?? 0;
   } catch {
-    // If rememora isn't available or status fails, fall back to 0
     return 0;
+  }
+}
+
+/** A context record as returned by `rememora export --json`. */
+interface DbContext {
+  id: string;
+  uri: string;
+  context_type: string;
+  category: string | null;
+  name: string;
+  abstract: string;
+  importance: number;
+  created_at: string;
+  source_agent: string | null;
+}
+
+/**
+ * Export all contexts from the DB, optionally filtered to those created
+ * after a given ISO timestamp. Returns memory-type contexts only.
+ */
+function getDbContexts(dbPath: string): DbContext[] {
+  try {
+    const out = execFileSync("rememora", ["export", "--json"], {
+      env: rememoraEnv(dbPath),
+      timeout: 10_000,
+      encoding: "utf-8",
+      maxBuffer: 5 * 1024 * 1024,
+    });
+    const all = JSON.parse(out) as DbContext[];
+    return all.filter((c) => c.context_type === "memory");
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Find contexts created after a given ISO timestamp.
+ * This is the primary mechanism for detecting saves — DB is ground truth.
+ */
+function getNewContextsSince(dbPath: string, since: string): DbContext[] {
+  const all = getDbContexts(dbPath);
+  return all.filter((c) => c.created_at > since);
+}
+
+/** Get category breakdown from DB. */
+function getDbCategories(dbPath: string): Record<string, number> {
+  try {
+    const out = execFileSync("rememora", ["status", "--json"], {
+      env: rememoraEnv(dbPath),
+      timeout: 5_000,
+      encoding: "utf-8",
+    });
+    const data = JSON.parse(out);
+    return (data.categories as Record<string, number>) ?? {};
+  } catch {
+    return {};
   }
 }
 
@@ -252,6 +312,7 @@ export async function runLongRun(
   for (let i = 0; i < sequence.tasks.length; i++) {
     const task = sequence.tasks[i];
     const kbSizeAtStart = getKbSize(dbPath);
+    const taskStartTime = new Date().toISOString();
 
     log(`\n  Task ${i + 1}/${sequence.tasks.length}: ${task.id}`);
     log(`  ${task.description}`);
@@ -286,24 +347,38 @@ export async function runLongRun(
         task.userMessage,
       );
 
+      // DB-based inference: query what was actually saved (ground truth)
       const kbSizeAtEnd = getKbSize(dbPath);
+      const newContexts = getNewContextsSince(dbPath, taskStartTime);
+      const dbSaves = newContexts.length;
+      const dbCategories: Record<string, number> = {};
+      for (const ctx of newContexts) {
+        const cat = ctx.category ?? "unknown";
+        dbCategories[cat] = (dbCategories[cat] ?? 0) + 1;
+      }
+
       const latencyMs = runResult.latencyMs;
       totalLatencyMs += latencyMs;
+
+      // Use DB-inferred saves as primary metric, fall back to parsed commands
+      const effectiveSaves = dbSaves > 0 ? dbSaves : behavior.saves.length;
 
       // Build scores
       const scores: LongRunScores = {
         task_completion: runResult.exitCode === 0 ? 1 : 0,
         task_quality: 0, // Placeholder — requires LLM judge or human review
-        autonomous_saves: behavior.autonomousSaveCount,
+        autonomous_saves: dbSaves > 0 ? dbSaves : behavior.autonomousSaveCount,
         autonomous_searches: behavior.autonomousSearchCount,
         tokens_consumed: 0, // Placeholder — extract from CLI output if available
         kb_size_at_start: kbSizeAtStart,
         kb_size_at_end: kbSizeAtEnd,
+        db_saves: dbSaves,
+        db_categories: Object.keys(dbCategories).length > 0 ? dbCategories : undefined,
       };
 
-      totalSaves += behavior.saves.length;
+      totalSaves += effectiveSaves;
       totalSearches += behavior.searches.length;
-      autonomousSaves += behavior.autonomousSaveCount;
+      autonomousSaves += dbSaves > 0 ? dbSaves : behavior.autonomousSaveCount;
       autonomousSearches += behavior.autonomousSearchCount;
 
       const row: LongRunEvalRow = {
@@ -320,6 +395,11 @@ export async function runLongRun(
           commands,
           saves: behavior.saves.map((s) => s.fullCommand),
           searches: behavior.searches.map((s) => s.fullCommand),
+          db_new_contexts: newContexts.map((c) => ({
+            category: c.category,
+            name: c.name,
+            abstract: c.abstract,
+          })),
         },
         expected: {
           ground_truth: task.groundTruth,
@@ -340,21 +420,26 @@ export async function runLongRun(
       rows.push(row);
 
       const saveIcon =
-        behavior.saves.length > 0
-          ? `\x1b[32m${behavior.saves.length} saves\x1b[0m`
+        effectiveSaves > 0
+          ? `\x1b[32m${effectiveSaves} saves\x1b[0m`
           : "0 saves";
+      const dbIcon = dbSaves > 0
+        ? ` \x1b[33m(${dbSaves} in DB)\x1b[0m`
+        : "";
       const searchIcon =
         behavior.searches.length > 0
           ? `\x1b[36m${behavior.searches.length} searches\x1b[0m`
           : "0 searches";
 
       log(
-        `  Result: ${saveIcon}, ${searchIcon}, KB: ${kbSizeAtStart} -> ${kbSizeAtEnd}`,
+        `  Result: ${saveIcon}${dbIcon}, ${searchIcon}, KB: ${kbSizeAtStart} -> ${kbSizeAtEnd}`,
       );
     } catch (err) {
       log(`  \x1b[31mERROR\x1b[0m  ${task.id}: ${err}`);
 
       const kbSizeAtEnd = getKbSize(dbPath);
+      const newContexts = getNewContextsSince(dbPath, taskStartTime);
+      const dbSaves = newContexts.length;
 
       rows.push({
         id: `${sequence.id}/${condition.id}/${task.id}/${timestamp}`,
@@ -370,6 +455,11 @@ export async function runLongRun(
           commands: [],
           saves: [],
           searches: [],
+          db_new_contexts: newContexts.map((c) => ({
+            category: c.category,
+            name: c.name,
+            abstract: c.abstract,
+          })),
         },
         expected: {
           ground_truth: task.groundTruth,
@@ -378,11 +468,12 @@ export async function runLongRun(
         scores: {
           task_completion: 0,
           task_quality: 0,
-          autonomous_saves: 0,
+          autonomous_saves: dbSaves,
           autonomous_searches: 0,
           tokens_consumed: 0,
           kb_size_at_start: kbSizeAtStart,
           kb_size_at_end: kbSizeAtEnd,
+          db_saves: dbSaves,
         },
         metadata: {
           experiment: `${sequence.id}_${condition.id}`,

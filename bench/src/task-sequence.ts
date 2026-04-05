@@ -76,6 +76,10 @@ export interface LongRunScores {
   kb_size_at_start: number;
   /** Number of KB entries when this task ended. */
   kb_size_at_end: number;
+  /** Number of new contexts detected in DB after this task (ground truth). */
+  db_saves?: number;
+  /** Categories of new DB contexts (e.g. {"decision": 1, "case": 1}). */
+  db_categories?: Record<string, number>;
 }
 
 // ---------------------------------------------------------------------------
@@ -99,6 +103,8 @@ export interface LongRunEvalRow {
     saves: string[];
     searches: string[];
     raw_output?: string;
+    /** Contexts found in DB after this task (ground truth, not parsed). */
+    db_new_contexts?: Array<{ category: string | null; name: string; abstract: string }>;
   };
   expected: {
     ground_truth?: string;

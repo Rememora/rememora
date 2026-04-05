@@ -23,6 +23,8 @@ export interface ConditionSummary {
   promptedSearches: number;
   avgKbGrowthPerTask: number;
   taskCompletionRate: number;
+  /** Total DB-inferred saves (ground truth, when available). */
+  dbSaves: number;
 }
 
 /** Full comparison result across conditions. */
@@ -124,6 +126,12 @@ export function compareConditions(
         ? kbGrowths.reduce((a, b) => a + b, 0) / kbGrowths.length
         : 0;
 
+    // DB-inferred saves (ground truth when available)
+    const dbSaves = rows.reduce(
+      (sum, r) => sum + (r.scores.db_saves ?? 0),
+      0,
+    );
+
     // Determine run count from unique timestamps
     const uniqueTimestamps = new Set(rows.map((r) => r.metadata.timestamp));
 
@@ -141,6 +149,7 @@ export function compareConditions(
         totalTasks > 0
           ? Math.round((tasksCompleted / totalTasks) * 100) / 100
           : 0,
+      dbSaves,
     });
   }
 

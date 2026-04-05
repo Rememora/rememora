@@ -81,6 +81,12 @@ interface TaskDetail {
   latencyMs: number;
   saves: string[];
   searches: string[];
+  /** DB-inferred saves (ground truth). */
+  dbSaves: number;
+  /** DB-inferred category breakdown. */
+  dbCategories: Record<string, number>;
+  /** New contexts found in DB after task. */
+  dbNewContexts: Array<{ category: string | null; name: string; abstract: string }>;
 }
 
 function getLatestRunDetails(
@@ -106,6 +112,9 @@ function getLatestRunDetails(
       latencyMs: row.metadata.latency_ms,
       saves: row.output.saves,
       searches: row.output.searches,
+      dbSaves: row.scores.db_saves ?? 0,
+      dbCategories: row.scores.db_categories ?? {},
+      dbNewContexts: row.output.db_new_contexts ?? [],
     }));
 }
 
@@ -157,6 +166,7 @@ function generateHtml(
   allRuns: Map<string, Map<string, LongRunEvalRow[]>>,
   sequenceId: string,
 ): string {
+  const maxDbSaves = Math.max(...report.conditions.map((c) => c.dbSaves), 1);
   const maxSaves = Math.max(...report.conditions.map((c) => c.autonomousSaves), 1);
   const maxSearches = Math.max(...report.conditions.map((c) => c.autonomousSearches), 1);
   const maxKb = Math.max(...report.conditions.map((c) => c.avgKbGrowthPerTask), 0.1);
@@ -170,6 +180,7 @@ function generateHtml(
         <td class="num">${c.runCount}</td>
         <td class="num">${c.tasksCompleted}/${c.totalTasks}</td>
         <td class="num">${(c.taskCompletionRate * 100).toFixed(0)}%</td>
+        <td>${bar(c.dbSaves, maxDbSaves, "#f59e0b")}</td>
         <td>${bar(c.autonomousSaves, maxSaves, "#34d399")}</td>
         <td>${bar(c.autonomousSearches, maxSearches, "#60a5fa")}</td>
         <td class="num">${c.promptedSaves}</td>
@@ -216,9 +227,23 @@ function generateHtml(
         .map((d) => {
           const statusIcon = d.completed ? "&#10003;" : "&#10007;";
           const statusClass = d.completed ? "pass" : "fail";
+
+          // DB-inferred saves (ground truth)
+          const dbSavesHtml = d.dbNewContexts.length > 0
+            ? `<details><summary class="db-save">${d.dbSaves} DB save(s)</summary><ul class="db-list">${
+                d.dbNewContexts.map((c) =>
+                  `<li><span class="tag">${escapeHtml(c.category ?? "?")}</span> ${escapeHtml(c.name)}<br><span class="muted">${escapeHtml(c.abstract)}</span></li>`
+                ).join("")
+              }</ul></details>`
+            : d.kbEnd > d.kbStart
+              ? `<span class="db-save">${d.kbEnd - d.kbStart} (KB delta)</span>`
+              : `<span class="muted">0</span>`;
+
+          // Parsed command saves (secondary)
           const savesHtml = d.saves.length > 0
-            ? `<details><summary>${d.totalSaves} save(s)</summary><pre class="cmd-list">${d.saves.map(escapeHtml).join("\n")}</pre></details>`
-            : `<span class="muted">0 saves</span>`;
+            ? `<details><summary>${d.totalSaves} parsed</summary><pre class="cmd-list">${d.saves.map(escapeHtml).join("\n")}</pre></details>`
+            : `<span class="muted">0 parsed</span>`;
+
           const searchesHtml = d.searches.length > 0
             ? `<details><summary>${d.totalSearches} search(es)</summary><pre class="cmd-list">${d.searches.map(escapeHtml).join("\n")}</pre></details>`
             : `<span class="muted">0 searches</span>`;
@@ -227,7 +252,7 @@ function generateHtml(
             <td class="${statusClass}">${statusIcon}</td>
             <td>${escapeHtml(d.taskId)}</td>
             <td class="desc">${escapeHtml(d.taskDescription)}</td>
-            <td class="num">${d.autonomousSaves}</td>
+            <td>${dbSavesHtml}</td>
             <td class="num">${d.autonomousSearches}</td>
             <td class="num">${d.kbStart}&rarr;${d.kbEnd}</td>
             <td class="num">${(d.latencyMs / 1000).toFixed(1)}s</td>
@@ -243,7 +268,7 @@ function generateHtml(
         <table class="detail-table">
           <thead>
             <tr>
-              <th></th><th>Task</th><th>Description</th><th>A-Saves</th><th>A-Search</th><th>KB</th><th>Latency</th><th>Save Commands</th><th>Search Commands</th>
+              <th></th><th>Task</th><th>Description</th><th>DB Saves</th><th>A-Search</th><th>KB</th><th>Latency</th><th>Parsed Saves</th><th>Search Commands</th>
             </tr>
           </thead>
           <tbody>${taskRows}</tbody>
@@ -321,6 +346,11 @@ function generateHtml(
 
   details { cursor: pointer; }
   details summary { color: var(--blue); font-size: 0.85rem; }
+  details summary.db-save { color: var(--green); }
+  .db-save { color: var(--green); font-weight: 600; }
+  .db-list { list-style: none; padding: 0; margin-top: 0.4rem; }
+  .db-list li { background: var(--bg); padding: 0.4rem 0.6rem; border-radius: 4px; margin-bottom: 0.3rem; font-size: 0.8rem; }
+  .tag { display: inline-block; background: var(--surface2); color: var(--accent); padding: 0.1rem 0.4rem; border-radius: 3px; font-size: 0.7rem; margin-right: 0.4rem; }
   .cmd-list { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.75rem; background: var(--bg); padding: 0.6rem; border-radius: 4px; margin-top: 0.4rem; white-space: pre-wrap; word-break: break-all; max-height: 200px; overflow-y: auto; }
 
   /* Grid for charts */
@@ -367,7 +397,7 @@ function generateHtml(
 <table>
   <thead>
     <tr>
-      <th>Condition</th><th>Runs</th><th>Completed</th><th>Rate</th><th>Autonomous Saves</th><th>Autonomous Searches</th><th>P-Saves</th><th>P-Search</th><th>KB/Task</th>
+      <th>Condition</th><th>Runs</th><th>Completed</th><th>Rate</th><th>DB Saves</th><th>Parsed Saves</th><th>Autonomous Searches</th><th>P-Saves</th><th>P-Search</th><th>KB/Task</th>
     </tr>
   </thead>
   <tbody>

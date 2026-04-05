@@ -198,8 +198,14 @@ export class ClaudeTmuxRunner implements CliRunner {
       { timeout: 10_000 },
     );
 
-    // Set environment variables in the tmux session
+    // Set environment variables at BOTH tmux session level and shell level.
+    // tmux setenv makes vars available to all new processes in the session.
+    // Shell export ensures the current shell (and claude) inherit them.
     for (const [key, value] of Object.entries(options.env)) {
+      execSync(
+        `tmux setenv -t ${sessionName} ${key} "${value}"`,
+        { timeout: 5_000 },
+      );
       execSync(
         `tmux send-keys -t ${sessionName} 'export ${key}="${value}"' Enter`,
         { timeout: 5_000 },
@@ -209,8 +215,11 @@ export class ClaudeTmuxRunner implements CliRunner {
     // Small delay for exports to take effect
     execSync("sleep 1");
 
-    // Launch claude
-    tmuxSendKeys(sessionName, claudeCmd);
+    // Launch claude with env vars as prefix for belt-and-suspenders
+    const envPrefix = Object.entries(options.env)
+      .map(([k, v]) => `${k}="${v}"`)
+      .join(" ");
+    tmuxSendKeys(sessionName, `${envPrefix} ${claudeCmd}`);
     tmuxSendEnter(sessionName);
 
     // Wait for Claude to be ready, handling the trust dialog if it appears
