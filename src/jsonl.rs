@@ -90,19 +90,32 @@ pub fn parse_file(path: &Path, byte_offset: u64) -> Result<ParseResult> {
     }
 
     file.seek(SeekFrom::Start(byte_offset))?;
-    parse_reader(file, file_len)
+    let mut result = parse_reader(file)?;
+
+    // Adjust offset: if not truncated, advance to end of file.
+    // If truncated, advance by the bytes we actually consumed.
+    if !result.truncated {
+        result.new_offset += byte_offset;
+    } else {
+        result.new_offset += byte_offset;
+    }
+
+    Ok(result)
 }
 
 /// Parse JSONL from any reader (useful for testing with in-memory data).
-pub fn parse_reader<R: Read>(reader: R, total_len: u64) -> Result<ParseResult> {
+pub fn parse_reader<R: Read>(reader: R) -> Result<ParseResult> {
     let buf = BufReader::new(reader);
     let mut entries = Vec::new();
     let mut total_bytes: usize = 0;
     let mut lines_processed: usize = 0;
+    let mut bytes_consumed: u64 = 0;
     let mut truncated = false;
 
     for line_result in buf.lines() {
         let line = line_result?;
+        // +1 for the newline that BufRead::lines() strips
+        bytes_consumed += line.len() as u64 + 1;
         lines_processed += 1;
 
         if line.trim().is_empty() {
@@ -131,7 +144,7 @@ pub fn parse_reader<R: Read>(reader: R, total_len: u64) -> Result<ParseResult> {
 
     Ok(ParseResult {
         entries,
-        new_offset: total_len,
+        new_offset: bytes_consumed,
         lines_processed,
         truncated,
     })
@@ -405,9 +418,8 @@ mod tests {
 
     fn parse_lines(lines: &[String]) -> ParseResult {
         let data = lines.join("\n");
-        let len = data.len() as u64;
         let cursor = Cursor::new(data.into_bytes());
-        parse_reader(cursor, len).unwrap()
+        parse_reader(cursor).unwrap()
     }
 
     #[test]

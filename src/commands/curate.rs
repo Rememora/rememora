@@ -174,9 +174,8 @@ fn curate_stdin(_conn: &Connection, args: &CurateArgs, json_output: bool) -> Res
     }
 
     // Parse JSONL from stdin
-    let len = input.len() as u64;
     let cursor = std::io::Cursor::new(input.into_bytes());
-    let parse_result = jsonl::parse_reader(cursor, len)?;
+    let parse_result = jsonl::parse_reader(cursor)?;
 
     if parse_result.entries.is_empty() {
         if json_output {
