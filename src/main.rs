@@ -13,6 +13,10 @@ struct Cli {
     /// Output as JSON instead of markdown
     #[arg(long, global = true)]
     json: bool,
+
+    /// Disable encryption (open database without applying encryption key)
+    #[arg(long, global = true)]
+    no_encryption: bool,
 }
 
 #[derive(Subcommand)]
@@ -297,6 +301,12 @@ enum Commands {
         days: u32,
     },
 
+    /// Encrypt an existing unencrypted database
+    Encrypt,
+
+    /// Decrypt an encrypted database back to plain SQLite
+    Decrypt,
+
     /// Show system status
     Status,
 
@@ -422,7 +432,23 @@ enum ProjectAction {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let db_path = db::default_db_path();
-    let conn = db::open(&db_path)?;
+
+    // Commands that bypass the normal db::open() flow
+    match &cli.command {
+        Commands::Setup { apply } => return commands::setup::run(*apply),
+        Commands::Encrypt => return commands::encrypt::run_encrypt(&db_path),
+        Commands::Decrypt => return commands::encrypt::run_decrypt(&db_path),
+        _ => {}
+    }
+
+    // First-run gate: require setup before any other command
+    if !db_path.exists() {
+        anyhow::bail!(
+            "Rememora is not set up yet. Run `rememora setup` to get started."
+        );
+    }
+
+    let conn = db::open_with_options(&db_path, cli.no_encryption)?;
 
     match cli.command {
         Commands::Save {
@@ -569,7 +595,7 @@ fn main() -> Result<()> {
             cli.json,
         ),
 
-        Commands::Setup { apply } => commands::setup::run(apply),
+        Commands::Setup { .. } => unreachable!("handled above"),
 
         Commands::AgentRun {
             repo,
@@ -662,6 +688,8 @@ fn main() -> Result<()> {
             &commands::eval::EvalArgs { project, days },
             cli.json,
         ),
+
+        Commands::Encrypt | Commands::Decrypt => unreachable!("handled above"),
 
         Commands::Status => commands::status::run(&conn, cli.json),
 

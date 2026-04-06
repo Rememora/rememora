@@ -1,3 +1,4 @@
+pub mod crypto;
 pub mod curator;
 pub mod db;
 pub mod embed;
