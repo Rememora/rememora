@@ -1,7 +1,13 @@
 use anyhow::Result;
 use rusqlite::{Connection, OptionalExtension};
+use std::path::Path;
 
 pub fn run(conn: &Connection, json: bool) -> Result<()> {
+    run_with_path(conn, &rememora::db::default_db_path(), json)
+}
+
+pub fn run_with_path(conn: &Connection, db_path: &Path, json: bool) -> Result<()> {
+    let encrypted = rememora::crypto::is_db_encrypted(db_path);
     let total_contexts: i64 = conn.query_row("SELECT COUNT(*) FROM contexts", [], |r| r.get(0))?;
     let total_memories: i64 = conn.query_row("SELECT COUNT(*) FROM contexts WHERE context_type = 'memory'", [], |r| r.get(0))?;
     let total_projects: i64 = conn.query_row("SELECT COUNT(*) FROM contexts WHERE context_type = 'project'", [], |r| r.get(0))?;
@@ -38,6 +44,7 @@ pub fn run(conn: &Connection, json: bool) -> Result<()> {
         println!(
             "{}",
             serde_json::json!({
+                "encrypted": encrypted,
                 "contexts": total_contexts,
                 "memories": total_memories,
                 "projects": total_projects,
@@ -57,6 +64,7 @@ pub fn run(conn: &Connection, json: bool) -> Result<()> {
     } else {
         println!("Rememora Status");
         println!("===============");
+        println!("  Encryption: {}", if encrypted { "enabled" } else { "disabled" });
         println!("  Contexts: {total_contexts}");
         println!("  Memories: {total_memories}");
         println!("  Projects: {total_projects}");

@@ -27,6 +27,10 @@ fn register_vec_extension() {
 }
 
 pub fn open(path: &Path) -> Result<Connection> {
+    open_with_options(path, false)
+}
+
+pub fn open_with_options(path: &Path, no_encryption: bool) -> Result<Connection> {
     #[cfg(feature = "embed-candle")]
     register_vec_extension();
 
@@ -35,6 +39,12 @@ pub fn open(path: &Path) -> Result<Connection> {
             .with_context(|| format!("Failed to create directory: {}", parent.display()))?;
     }
     let conn = Connection::open(path)?;
+
+    // PRAGMA key must be the very first statement on a SQLCipher connection
+    if !no_encryption {
+        apply_encryption_key(&conn, path)?;
+    }
+
     configure(&conn)?;
     migrate(&conn)?;
     Ok(conn)
@@ -121,6 +131,34 @@ fn migrate(conn: &Connection) -> Result<()> {
                 embedding float[384] distance_metric=cosine
             );",
         )?;
+    }
+
+    Ok(())
+}
+
+/// Apply encryption key to a SQLCipher connection.
+/// - Encrypted DB: key is required (env/keychain/prompt)
+/// - Existing unencrypted DB: left as-is (user must run `rememora encrypt`)
+/// - New DB with key available: encrypted from the start
+fn apply_encryption_key(conn: &Connection, path: &Path) -> Result<()> {
+    use crate::crypto;
+
+    let encrypted = crypto::is_db_encrypted(path);
+    let exists = path.exists() && path.metadata().map(|m| m.len() > 0).unwrap_or(false);
+
+    if encrypted {
+        // DB is encrypted — key is required
+        let key = crypto::resolve_key(true)?
+            .with_context(|| "Encryption key required but not available")?;
+        conn.pragma_update(None, "key", &key)?;
+    } else if exists {
+        // DB exists and is unencrypted — don't apply a key.
+        // User must run `rememora encrypt` to migrate.
+    } else {
+        // New DB — encrypt if a key is available (env/keychain), don't prompt
+        if let Some(key) = crypto::resolve_key(false)? {
+            conn.pragma_update(None, "key", &key)?;
+        }
     }
 
     Ok(())
