@@ -17,3 +17,4 @@ pub mod session;
 pub mod setup;
 pub mod status;
 pub mod supersede;
+pub mod tui;
