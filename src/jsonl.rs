@@ -92,13 +92,8 @@ pub fn parse_file(path: &Path, byte_offset: u64) -> Result<ParseResult> {
     file.seek(SeekFrom::Start(byte_offset))?;
     let mut result = parse_reader(file)?;
 
-    // Adjust offset: if not truncated, advance to end of file.
-    // If truncated, advance by the bytes we actually consumed.
-    if !result.truncated {
-        result.new_offset += byte_offset;
-    } else {
-        result.new_offset += byte_offset;
-    }
+    // Adjust offset relative to file start (parse_reader returns offset relative to the seek point).
+    result.new_offset += byte_offset;
 
     Ok(result)
 }

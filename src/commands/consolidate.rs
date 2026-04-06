@@ -60,7 +60,7 @@ pub fn run(conn: &Connection, args: &ConsolidateArgs, json_output: bool) -> Resu
         conn,
         project,
         total as i64,
-        if args.dry_run { "manual" } else { "manual" },
+        "manual",
     )?;
 
     // Find clusters
