@@ -323,6 +323,9 @@ enum Commands {
         #[arg(long, default_value = "json")]
         format: String,
     },
+
+    /// Launch the Rememora Desktop app (Tauri)
+    Desktop,
 }
 
 #[derive(Subcommand)]
@@ -441,6 +444,7 @@ fn main() -> Result<()> {
         Commands::Setup { apply } => return commands::setup::run(*apply),
         Commands::Encrypt => return commands::encrypt::run_encrypt(&db_path),
         Commands::Decrypt => return commands::encrypt::run_decrypt(&db_path),
+        Commands::Desktop => return commands::desktop::run(),
         _ => {}
     }
 
@@ -692,7 +696,7 @@ fn main() -> Result<()> {
             cli.json,
         ),
 
-        Commands::Encrypt | Commands::Decrypt => unreachable!("handled above"),
+        Commands::Encrypt | Commands::Decrypt | Commands::Desktop => unreachable!("handled above"),
 
         Commands::Tui => commands::tui::run(&conn),
 

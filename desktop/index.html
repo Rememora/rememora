@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Rememora Desktop</title>
+    <link rel="stylesheet" href="/src/styles/main.css" />
+  </head>
+  <body>
+    <div id="app">
+      <nav id="sidebar">
+        <div class="sidebar-header">
+          <h1>Rememora</h1>
+          <span class="version">v0.1.0</span>
+        </div>
+        <ul class="nav-links">
+          <li><a href="#" class="nav-link active" data-view="dashboard">Dashboard</a></li>
+          <li><a href="#" class="nav-link" data-view="browse">Browse</a></li>
+          <li><a href="#" class="nav-link" data-view="search">Search</a></li>
+        </ul>
+      </nav>
+      <main id="content">
+        <!-- Views are rendered here by JS -->
+      </main>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
