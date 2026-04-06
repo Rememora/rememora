@@ -1,0 +1,812 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Documentation — Rememora</title>
+  <meta name="description" content="Complete documentation for Rememora CLI — commands, architecture, agent setup, and API reference.">
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="css/style.css">
+
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧠</text></svg>">
+</head>
+<body>
+
+  <!-- ===== Navigation ===== -->
+  <nav class="nav scrolled">
+    <div class="nav-inner">
+      <a href="index.html" class="nav-logo">
+        <span class="logo-icon">R</span>
+        <span>Rememora</span>
+      </a>
+      <button class="nav-toggle" aria-label="Toggle menu">
+        <span></span><span></span><span></span>
+      </button>
+      <ul class="nav-links">
+        <li><a href="index.html#features">Features</a></li>
+        <li><a href="index.html#architecture">Architecture</a></li>
+        <li><a href="index.html#install">Install</a></li>
+        <li><a href="docs.html" style="color: var(--text-primary);">Docs</a></li>
+        <li><a href="https://github.com/Rememora/rememora" class="nav-cta">GitHub</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <div class="docs-layout">
+    <!-- ===== Sidebar ===== -->
+    <aside class="docs-sidebar">
+      <div class="docs-sidebar-group">
+        <div class="docs-sidebar-title">Getting Started</div>
+        <ul class="docs-sidebar-links">
+          <li><a href="#installation" class="active">Installation</a></li>
+          <li><a href="#quick-start">Quick Start</a></li>
+          <li><a href="#agent-setup">Agent Setup</a></li>
+        </ul>
+      </div>
+      <div class="docs-sidebar-group">
+        <div class="docs-sidebar-title">Core Concepts</div>
+        <ul class="docs-sidebar-links">
+          <li><a href="#memories">Memories</a></li>
+          <li><a href="#sessions">Sessions</a></li>
+          <li><a href="#projects">Projects</a></li>
+          <li><a href="#categories">Categories</a></li>
+          <li><a href="#tiered-loading">Tiered Loading</a></li>
+          <li><a href="#search">Search</a></li>
+          <li><a href="#hotness">Hotness Scoring</a></li>
+        </ul>
+      </div>
+      <div class="docs-sidebar-group">
+        <div class="docs-sidebar-title">Commands</div>
+        <ul class="docs-sidebar-links">
+          <li><a href="#cmd-save">save</a></li>
+          <li><a href="#cmd-search">search</a></li>
+          <li><a href="#cmd-context">context</a></li>
+          <li><a href="#cmd-session">session</a></li>
+          <li><a href="#cmd-project">project</a></li>
+          <li><a href="#cmd-get">get</a></li>
+          <li><a href="#cmd-supersede">supersede</a></li>
+          <li><a href="#cmd-relate">relate</a></li>
+          <li><a href="#cmd-extract">extract</a></li>
+          <li><a href="#cmd-curate">curate</a></li>
+          <li><a href="#cmd-evolve">evolve</a></li>
+          <li><a href="#cmd-consolidate">consolidate</a></li>
+          <li><a href="#cmd-setup">setup</a></li>
+          <li><a href="#cmd-agent-run">agent-run</a></li>
+          <li><a href="#cmd-agent-loop">agent-loop</a></li>
+          <li><a href="#cmd-encrypt">encrypt / decrypt</a></li>
+          <li><a href="#cmd-export">export</a></li>
+          <li><a href="#cmd-status">status</a></li>
+          <li><a href="#cmd-tui">tui</a></li>
+          <li><a href="#cmd-eval">eval</a></li>
+        </ul>
+      </div>
+      <div class="docs-sidebar-group">
+        <div class="docs-sidebar-title">Advanced</div>
+        <ul class="docs-sidebar-links">
+          <li><a href="#uri-scheme">URI Scheme</a></li>
+          <li><a href="#database">Database Schema</a></li>
+          <li><a href="#curation-pipeline">Curation Pipeline</a></li>
+          <li><a href="#claude-code-plugin">Claude Code Plugin</a></li>
+          <li><a href="#agent-orchestration">Agent Orchestration</a></li>
+          <li><a href="#encryption">Encryption</a></li>
+          <li><a href="#vector-search">Vector Search</a></li>
+          <li><a href="#configuration">Configuration</a></li>
+        </ul>
+      </div>
+    </aside>
+
+    <!-- ===== Content ===== -->
+    <main class="docs-content">
+      <h1><span class="gradient-text">Documentation</span></h1>
+      <p>Complete reference for the Rememora CLI — persistent, cross-agent memory for AI coding assistants.</p>
+
+      <!-- ==================== GETTING STARTED ==================== -->
+
+      <h2 id="installation">Installation</h2>
+
+      <h3>Homebrew (recommended)</h3>
+      <div class="code-window">
+        <div class="code-header">
+          <div class="code-dots"><span class="red"></span><span class="yellow"></span><span class="green"></span></div>
+          <span class="code-title">terminal</span>
+          <button class="code-copy">Copy</button>
+        </div>
+        <div class="code-body">
+<pre><span class="prompt">$</span> <span class="cmd">brew install</span> Rememora/tap/rememora</pre>
+        </div>
+      </div>
+
+      <h3>From Source</h3>
+      <div class="code-window">
+        <div class="code-header">
+          <div class="code-dots"><span class="red"></span><span class="yellow"></span><span class="green"></span></div>
+          <span class="code-title">terminal</span>
+          <button class="code-copy">Copy</button>
+        </div>
+        <div class="code-body">
+<pre><span class="prompt">$</span> <span class="cmd">git clone</span> https://github.com/Rememora/rememora.git
+<span class="prompt">$</span> <span class="cmd">cd</span> rememora
+<span class="prompt">$</span> <span class="cmd">cargo install</span> <span class="flag">--path</span> .</pre>
+        </div>
+      </div>
+
+      <h3>GitHub Releases</h3>
+      <p>Pre-built binaries are available on the <a href="https://github.com/Rememora/rememora/releases">Releases page</a>.</p>
+
+      <h3>Feature Flags</h3>
+      <table>
+        <thead>
+          <tr><th>Flag</th><th>Description</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>embed-candle</code></td><td>Vector search via Candle (CPU + Metal GPU)</td></tr>
+          <tr><td><code>embed-llamacpp</code></td><td>Vector search via llama.cpp (stub)</td></tr>
+          <tr><td><code>metal</code></td><td>Apple Silicon GPU acceleration for embeddings</td></tr>
+        </tbody>
+      </table>
+
+      <div class="code-window">
+        <div class="code-header">
+          <div class="code-dots"><span class="red"></span><span class="yellow"></span><span class="green"></span></div>
+          <span class="code-title">build with vector search</span>
+          <button class="code-copy">Copy</button>
+        </div>
+        <div class="code-body">
+<pre><span class="prompt">$</span> <span class="cmd">cargo install</span> <span class="flag">--path</span> . <span class="flag">--features</span> embed-candle,metal</pre>
+        </div>
+      </div>
+
+      <!-- Quick Start -->
+      <h2 id="quick-start">Quick Start</h2>
+
+      <div class="code-window">
+        <div class="code-header">
+          <div class="code-dots"><span class="red"></span><span class="yellow"></span><span class="green"></span></div>
+          <span class="code-title">quickstart.sh</span>
+          <button class="code-copy">Copy</button>
+        </div>
+        <div class="code-body">
+<pre><span class="comment"># Register a project</span>
+<span class="prompt">$</span> <span class="cmd">rememora</span> <span class="cmd">project add</span> myapp <span class="flag">--path</span> /path/to/myapp \
+    <span class="flag">--description</span> <span class="string">"Mobile app"</span> \
+    <span class="flag">--stack</span> <span class="string">"react-native,typescript"</span>
+
+<span class="comment"># Start a tracked session</span>
+<span class="prompt">$</span> <span class="cmd">rememora</span> <span class="cmd">session start</span> <span class="flag">--agent</span> claude-code \
+    <span class="flag">--project</span> myapp \
+    <span class="flag">--intent</span> <span class="string">"implementing auth flow"</span>
+<span class="output">  Session started: 01JARW...</span>
+
+<span class="comment"># Save memories as you work</span>
+<span class="prompt">$</span> <span class="cmd">rememora</span> <span class="cmd">save</span> <span class="string">"Uses expo-secure-store for token storage"</span> \
+    <span class="flag">--category</span> decision <span class="flag">--project</span> myapp <span class="flag">--importance</span> 0.8
+
+<span class="comment"># Search memories</span>
+<span class="prompt">$</span> <span class="cmd">rememora</span> <span class="cmd">search</span> <span class="string">"authentication"</span> <span class="flag">--project</span> myapp
+
+<span class="comment"># End session</span>
+<span class="prompt">$</span> <span class="cmd">rememora</span> <span class="cmd">session end</span> 01JARW... \
+    <span class="flag">--summary</span> <span class="string">"Auth flow complete."</span> \
+    <span class="flag">--working-state</span> <span class="string">"Need to add biometric auth."</span></pre>
+        </div>
+      </div>
+
+      <!-- Agent Setup -->
+      <h2 id="agent-setup">Agent Setup</h2>
+      <p>Rememora can auto-configure Claude Code, Codex, and Gemini CLI with a single command:</p>
+
+      <div class="code-window">
+        <div class="code-header">
+          <div class="code-dots"><span class="red"></span><span class="yellow"></span><span class="green"></span></div>
+          <span class="code-title">terminal</span>
+          <button class="code-copy">Copy</button>
+        </div>
+        <div class="code-body">
+<pre><span class="comment"># Preview what would be configured</span>
+<span class="prompt">$</span> <span class="cmd">rememora</span> <span class="cmd">setup</span>
+
+<span class="comment"># Apply the configuration</span>
+<span class="prompt">$</span> <span class="cmd">rememora</span> <span class="cmd">setup</span> <span class="flag">--apply</span></pre>
+        </div>
+      </div>
+
+      <h3>Manual Setup: Claude Code</h3>
+      <p>Add to <code>~/.claude/CLAUDE.md</code>:</p>
+      <div class="code-window">
+        <div class="code-header">
+          <div class="code-dots"><span class="red"></span><span class="yellow"></span><span class="green"></span></div>
+          <span class="code-title">~/.claude/CLAUDE.md</span>
+          <button class="code-copy">Copy</button>
+        </div>
+        <div class="code-body">
+<pre><span class="comment">## Rememora Memory System</span>
+On session start:
+1. `rememora context --auto`
+2. `rememora session start --agent claude-code
+     --project &lt;name&gt; --intent "..."`
+
+During work, save discoveries:
+- `rememora save "..." --category decision --project &lt;name&gt;`
+
+Before ending:
+- `rememora session end &lt;id&gt; --summary "..." --working-state "..."`</pre>
+        </div>
+      </div>
+
+      <h3>Manual Setup: Codex</h3>
+      <p>Add to <code>~/.codex/config.toml</code>:</p>
+      <div class="code-window">
+        <div class="code-header">
+          <div class="code-dots"><span class="red"></span><span class="yellow"></span><span class="green"></span></div>
+          <span class="code-title">~/.codex/config.toml</span>
+          <button class="code-copy">Copy</button>
+        </div>
+        <div class="code-body">
+<pre>system_prompt = """
+On session start: run `rememora context --auto` and
+  `rememora session start --agent codex ...`
+Save important discoveries with `rememora save ...`
+Before ending: `rememora session end &lt;id&gt; --summary "..." ...`
+"""</pre>
+        </div>
+      </div>
+
+      <h3>Manual Setup: Gemini CLI</h3>
+      <p>Add to <code>~/.gemini/GEMINI.md</code> or your system instructions file using the same pattern.</p>
+
+      <!-- ==================== CORE CONCEPTS ==================== -->
+
+      <h2 id="memories">Memories</h2>
+      <p>Memories are the fundamental unit of knowledge in Rememora. Each memory has:</p>
+      <ul>
+        <li><strong>URI</strong> — hierarchical identifier (e.g., <code>rememora://projects/myapp/memories/decision/zustand-over-redux</code>)</li>
+        <li><strong>Category</strong> — one of 6 types (preference, entity, decision, event, case, pattern)</li>
+        <li><strong>Content</strong> — the actual knowledge, with optional 3-tier structure (abstract/overview/content)</li>
+        <li><strong>Importance</strong> — 0.0 to 1.0, blended with hotness for ranking</li>
+        <li><strong>Tags</strong> — comma-separated for additional filtering</li>
+        <li><strong>Provenance</strong> — source agent, session, and timestamps</li>
+      </ul>
+      <p>Memories are never hard-deleted. Instead, they are <strong>superseded</strong> by newer memories, preserving a full audit trail.</p>
+
+      <h2 id="sessions">Sessions</h2>
+      <p>Sessions track agent work periods and enable cross-agent handoffs.</p>
+      <ul>
+        <li><strong>start</strong> — begins tracking with agent name, project, and intent</li>
+        <li><strong>end</strong> — closes with summary and working state</li>
+        <li><strong>transfer</strong> — end with <code>--status transferred</code> for cross-agent handoff</li>
+        <li><strong>parent chains</strong> — link sessions via <code>--parent</code> for continuity tracking</li>
+      </ul>
+
+      <h2 id="projects">Projects</h2>
+      <p>Projects scope memories and sessions. Register once, then auto-detect from working directory:</p>
+      <div class="code-window">
+        <div class="code-header">
+          <div class="code-dots"><span class="red"></span><span class="yellow"></span><span class="green"></span></div>
+          <span class="code-title">terminal</span>
+          <button class="code-copy">Copy</button>
+        </div>
+        <div class="code-body">
+<pre><span class="prompt">$</span> <span class="cmd">rememora</span> <span class="cmd">project add</span> myapp <span class="flag">--path</span> /path/to/myapp
+<span class="prompt">$</span> <span class="cmd">cd</span> /path/to/myapp
+<span class="prompt">$</span> <span class="cmd">rememora</span> <span class="cmd">context</span> <span class="flag">--auto</span>  <span class="comment"># auto-detects "myapp"</span></pre>
+        </div>
+      </div>
+
+      <h2 id="categories">Categories</h2>
+      <table>
+        <thead><tr><th>Category</th><th>Use For</th><th>Examples</th></tr></thead>
+        <tbody>
+          <tr><td><code>preference</code></td><td>User/project preferences</td><td>"Prefers Zustand over Redux", "Uses pnpm"</td></tr>
+          <tr><td><code>entity</code></td><td>Key concepts, APIs, tools</td><td>"Stripe API uses idempotency keys"</td></tr>
+          <tr><td><code>decision</code></td><td>Architecture/design choices</td><td>"Chose expo-router over React Navigation"</td></tr>
+          <tr><td><code>event</code></td><td>Milestones, releases</td><td>"v2.0 shipped 2026-03-01"</td></tr>
+          <tr><td><code>case</code></td><td>Problem + solution pairs</td><td>"iOS build fails with Hermes: disable new arch"</td></tr>
+          <tr><td><code>pattern</code></td><td>Reusable processes</td><td>"Always run migrations before seeding"</td></tr>
+        </tbody>
+      </table>
+
+      <h2 id="tiered-loading">Tiered Loading</h2>
+      <p>Rememora loads context at three detail levels to minimize token usage:</p>
+      <table>
+        <thead><tr><th>Tier</th><th>Size</th><th>Content</th></tr></thead>
+        <tbody>
+          <tr><td><strong>L0</strong></td><td>~100 tokens</td><td>Abstract — compact memory map for quick orientation</td></tr>
+          <tr><td><strong>L1</strong></td><td>~500 tokens</td><td>Overview — top memories ranked by importance/hotness</td></tr>
+          <tr><td><strong>L2</strong></td><td>Full</td><td>Complete content — used for deep retrieval</td></tr>
+        </tbody>
+      </table>
+
+      <h2 id="search">Search</h2>
+      <p>Three search modes, composable:</p>
+      <ul>
+        <li><strong>BM25</strong> (default) — SQLite FTS5 full-text search, zero dependencies</li>
+        <li><strong>Vector</strong> (feature-gated) — cosine similarity via sqlite-vec + all-MiniLM-L6-v2</li>
+        <li><strong>Hybrid RRF</strong> — reciprocal rank fusion merging BM25 + vector results with <code>k=60</code></li>
+      </ul>
+
+      <h2 id="hotness">Hotness Scoring</h2>
+      <p>Memories are ranked by a blend of importance and hotness:</p>
+      <div class="code-window">
+        <div class="code-header">
+          <div class="code-dots"><span class="red"></span><span class="yellow"></span><span class="green"></span></div>
+          <span class="code-title">hotness formula</span>
+          <span></span>
+        </div>
+        <div class="code-body">
+<pre><span class="variable">frequency</span>  = sigmoid(log1p(access_count))   <span class="comment">// S-curve 0→1</span>
+<span class="variable">recency</span>   = exp(-age_days / 7.0)            <span class="comment">// 7-day half-life</span>
+<span class="variable">hotness</span>   = frequency * recency              <span class="comment">// combined score</span>
+<span class="variable">final</span>     = 0.7 * importance + 0.3 * hotness  <span class="comment">// blended rank</span></pre>
+        </div>
+      </div>
+
+      <!-- ==================== COMMANDS ==================== -->
+
+      <h2 id="cmd-save">save</h2>
+      <p>Save a memory to the database.</p>
+      <div class="code-window">
+        <div class="code-header">
+          <div class="code-dots"><span class="red"></span><span class="yellow"></span><span class="green"></span></div>
+          <span class="code-title">usage</span>
+          <button class="code-copy">Copy</button>
+        </div>
+        <div class="code-body">
+<pre><span class="cmd">rememora</span> <span class="cmd">save</span> <span class="string">"&lt;content&gt;"</span> \
+    <span class="flag">--category</span> &lt;preference|entity|decision|event|case|pattern&gt; \
+    <span class="flag">--project</span> &lt;name&gt; \
+    <span class="flag">--importance</span> &lt;0.0-1.0&gt; \
+    <span class="flag">--tags</span> <span class="string">"tag1,tag2"</span> \
+    <span class="flag">--name</span> <span class="string">"optional display name"</span></pre>
+        </div>
+      </div>
+      <table>
+        <thead><tr><th>Flag</th><th>Required</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td><code>--category</code></td><td>Yes</td><td>Memory category</td></tr>
+          <tr><td><code>--project</code></td><td>No</td><td>Project scope (global if omitted)</td></tr>
+          <tr><td><code>--importance</code></td><td>No</td><td>0.0-1.0, default 0.5</td></tr>
+          <tr><td><code>--tags</code></td><td>No</td><td>Comma-separated tags</td></tr>
+          <tr><td><code>--name</code></td><td>No</td><td>Display name (auto-generated if omitted)</td></tr>
+        </tbody>
+      </table>
+
+      <h2 id="cmd-search">search</h2>
+      <p>Search memories using BM25 full-text search (or hybrid with vector if enabled).</p>
+      <div class="code-window">
+        <div class="code-header">
+          <div class="code-dots"><span class="red"></span><span class="yellow"></span><span class="green"></span></div>
+          <span class="code-title">usage</span>
+          <button class="code-copy">Copy</button>
+        </div>
+        <div class="code-body">
+<pre><span class="cmd">rememora</span> <span class="cmd">search</span> <span class="string">"&lt;query&gt;"</span> \
+    <span class="flag">--project</span> &lt;name&gt; \
+    <span class="flag">--category</span> &lt;category&gt; \
+    <span class="flag">--limit</span> &lt;n&gt; \
+    <span class="flag">--json</span></pre>
+        </div>
+      </div>
+
+      <h2 id="cmd-context">context</h2>
+      <p>Load full project context — memories, last session, working state. The primary entry point for agents at session start.</p>
+      <div class="code-window">
+        <div class="code-header">
+          <div class="code-dots"><span class="red"></span><span class="yellow"></span><span class="green"></span></div>
+          <span class="code-title">usage</span>
+          <button class="code-copy">Copy</button>
+        </div>
+        <div class="code-body">
+<pre><span class="cmd">rememora</span> <span class="cmd">context</span> <span class="flag">--project</span> &lt;name&gt;    <span class="comment"># explicit project</span>
+<span class="cmd">rememora</span> <span class="cmd">context</span> <span class="flag">--auto</span>              <span class="comment"># auto-detect from CWD</span>
+<span class="cmd">rememora</span> <span class="cmd">context</span> <span class="flag">--auto</span> <span class="flag">--cheatsheet</span>  <span class="comment"># compact top-5 summary</span></pre>
+        </div>
+      </div>
+
+      <h2 id="cmd-session">session</h2>
+      <p>Manage agent sessions with full lifecycle tracking.</p>
+      <div class="code-window">
+        <div class="code-header">
+          <div class="code-dots"><span class="red"></span><span class="yellow"></span><span class="green"></span></div>
+          <span class="code-title">subcommands</span>
+          <button class="code-copy">Copy</button>
+        </div>
+        <div class="code-body">
+<pre><span class="comment"># Start a new session</span>
+<span class="cmd">rememora</span> <span class="cmd">session start</span> <span class="flag">--agent</span> claude-code <span class="flag">--project</span> myapp \
+    <span class="flag">--intent</span> <span class="string">"implementing auth"</span> <span class="flag">--parent</span> &lt;prev-id&gt;
+
+<span class="comment"># End a session</span>
+<span class="cmd">rememora</span> <span class="cmd">session end</span> &lt;id&gt; \
+    <span class="flag">--summary</span> <span class="string">"Auth complete"</span> \
+    <span class="flag">--working-state</span> <span class="string">"Need biometric auth"</span>
+
+<span class="comment"># Transfer to another agent</span>
+<span class="cmd">rememora</span> <span class="cmd">session end</span> &lt;id&gt; <span class="flag">--status</span> transferred \
+    <span class="flag">--summary</span> <span class="string">"..."</span> <span class="flag">--working-state</span> <span class="string">"..."</span>
+
+<span class="comment"># End active session (hook-friendly)</span>
+<span class="cmd">rememora</span> <span class="cmd">session end-active</span> <span class="flag">--project</span> myapp
+
+<span class="comment"># Show last session for project</span>
+<span class="cmd">rememora</span> <span class="cmd">session resume</span> <span class="flag">--project</span> myapp
+
+<span class="comment"># List recent sessions</span>
+<span class="cmd">rememora</span> <span class="cmd">session list</span> <span class="flag">--project</span> myapp <span class="flag">--limit</span> 10</pre>
+        </div>
+      </div>
+
+      <h2 id="cmd-project">project</h2>
+      <p>Manage project registrations.</p>
+      <div class="code-window">
+        <div class="code-header">
+          <div class="code-dots"><span class="red"></span><span class="yellow"></span><span class="green"></span></div>
+          <span class="code-title">subcommands</span>
+          <button class="code-copy">Copy</button>
+        </div>
+        <div class="code-body">
+<pre><span class="cmd">rememora</span> <span class="cmd">project add</span> &lt;name&gt; <span class="flag">--path</span> &lt;dir&gt; <span class="flag">--description</span> <span class="string">"..."</span> <span class="flag">--stack</span> <span class="string">"..."</span>
+<span class="cmd">rememora</span> <span class="cmd">project list</span>
+<span class="cmd">rememora</span> <span class="cmd">project show</span> &lt;name&gt;</pre>
+        </div>
+      </div>
+
+      <h2 id="cmd-get">get</h2>
+      <p>Retrieve a specific context by URI.</p>
+      <div class="code-window">
+        <div class="code-header">
+          <div class="code-dots"><span class="red"></span><span class="yellow"></span><span class="green"></span></div>
+          <span class="code-title">usage</span>
+          <button class="code-copy">Copy</button>
+        </div>
+        <div class="code-body">
+<pre><span class="cmd">rememora</span> <span class="cmd">get</span> <span class="string">"rememora://projects/myapp/memories/decision/zustand"</span></pre>
+        </div>
+      </div>
+
+      <h2 id="cmd-supersede">supersede</h2>
+      <p>Mark a memory as replaced by a new one (soft delete with audit trail).</p>
+      <div class="code-window">
+        <div class="code-header">
+          <div class="code-dots"><span class="red"></span><span class="yellow"></span><span class="green"></span></div>
+          <span class="code-title">usage</span>
+          <button class="code-copy">Copy</button>
+        </div>
+        <div class="code-body">
+<pre><span class="cmd">rememora</span> <span class="cmd">supersede</span> <span class="flag">--old</span> &lt;uri-or-id&gt; <span class="flag">--new</span> &lt;uri-or-id&gt;</pre>
+        </div>
+      </div>
+
+      <h2 id="cmd-relate">relate</h2>
+      <p>Create bidirectional links between memories.</p>
+      <div class="code-window">
+        <div class="code-header">
+          <div class="code-dots"><span class="red"></span><span class="yellow"></span><span class="green"></span></div>
+          <span class="code-title">usage</span>
+          <button class="code-copy">Copy</button>
+        </div>
+        <div class="code-body">
+<pre><span class="cmd">rememora</span> <span class="cmd">relate</span> <span class="flag">--source</span> &lt;uri&gt; <span class="flag">--target</span> &lt;uri&gt; \
+    <span class="flag">--relation</span> &lt;related|depends_on|derived_from|supersedes&gt; \
+    <span class="flag">--reason</span> <span class="string">"why they're linked"</span></pre>
+        </div>
+      </div>
+
+      <h2 id="cmd-extract">extract</h2>
+      <p>Extract memories from text using LLM (requires <code>ANTHROPIC_API_KEY</code>).</p>
+      <div class="code-window">
+        <div class="code-header">
+          <div class="code-dots"><span class="red"></span><span class="yellow"></span><span class="green"></span></div>
+          <span class="code-title">usage</span>
+          <button class="code-copy">Copy</button>
+        </div>
+        <div class="code-body">
+<pre><span class="comment"># Extract and preview</span>
+<span class="cmd">echo</span> <span class="string">"We chose SQLite because..."</span> | <span class="cmd">rememora</span> <span class="cmd">extract</span>
+
+<span class="comment"># Extract and save directly</span>
+<span class="cmd">echo</span> <span class="string">"..."</span> | <span class="cmd">rememora</span> <span class="cmd">extract</span> <span class="flag">--save</span> <span class="flag">--project</span> myapp</pre>
+        </div>
+      </div>
+
+      <h2 id="cmd-curate">curate</h2>
+      <p>Autonomous memory extraction from Claude Code session transcripts.</p>
+      <div class="code-window">
+        <div class="code-header">
+          <div class="code-dots"><span class="red"></span><span class="yellow"></span><span class="green"></span></div>
+          <span class="code-title">usage</span>
+          <button class="code-copy">Copy</button>
+        </div>
+        <div class="code-body">
+<pre><span class="cmd">rememora</span> <span class="cmd">curate</span> <span class="flag">--auto</span>                      <span class="comment"># auto-discover all sessions</span>
+<span class="cmd">rememora</span> <span class="cmd">curate</span> <span class="flag">--file</span> &lt;path.jsonl&gt;           <span class="comment"># specific file</span>
+<span class="cmd">rememora</span> <span class="cmd">curate</span> <span class="flag">--auto</span> <span class="flag">--dry-run</span>             <span class="comment"># preview only</span>
+<span class="cmd">rememora</span> <span class="cmd">curate</span> <span class="flag">--auto</span> <span class="flag">--reset-watermark</span>     <span class="comment"># re-curate from start</span>
+<span class="cmd">cat</span> transcript.txt | <span class="cmd">rememora</span> <span class="cmd">curate</span> <span class="flag">--from-stdin</span> <span class="flag">--project</span> myapp</pre>
+        </div>
+      </div>
+
+      <h2 id="cmd-evolve">evolve</h2>
+      <p>LLM-driven memory consolidation — finds similar clusters and merges/supersedes/prunes.</p>
+      <div class="code-window">
+        <div class="code-header">
+          <div class="code-dots"><span class="red"></span><span class="yellow"></span><span class="green"></span></div>
+          <span class="code-title">usage</span>
+          <button class="code-copy">Copy</button>
+        </div>
+        <div class="code-body">
+<pre><span class="cmd">rememora</span> <span class="cmd">evolve</span> <span class="flag">--project</span> myapp             <span class="comment"># run consolidation</span>
+<span class="cmd">rememora</span> <span class="cmd">evolve</span> <span class="flag">--project</span> myapp <span class="flag">--dry-run</span>   <span class="comment"># preview clusters</span></pre>
+        </div>
+      </div>
+
+      <h2 id="cmd-consolidate">consolidate</h2>
+      <p>Smart deduplication with dual gate (24h age + 5 new memories threshold).</p>
+      <div class="code-window">
+        <div class="code-header">
+          <div class="code-dots"><span class="red"></span><span class="yellow"></span><span class="green"></span></div>
+          <span class="code-title">usage</span>
+          <button class="code-copy">Copy</button>
+        </div>
+        <div class="code-body">
+<pre><span class="cmd">rememora</span> <span class="cmd">consolidate</span> <span class="flag">--project</span> myapp
+<span class="cmd">rememora</span> <span class="cmd">consolidate</span> <span class="flag">--project</span> myapp <span class="flag">--check-only</span>  <span class="comment"># check gate only</span></pre>
+        </div>
+      </div>
+
+      <h2 id="cmd-setup">setup</h2>
+      <p>Auto-detect and configure agents to use Rememora.</p>
+      <div class="code-window">
+        <div class="code-header">
+          <div class="code-dots"><span class="red"></span><span class="yellow"></span><span class="green"></span></div>
+          <span class="code-title">usage</span>
+          <button class="code-copy">Copy</button>
+        </div>
+        <div class="code-body">
+<pre><span class="cmd">rememora</span> <span class="cmd">setup</span>            <span class="comment"># dry-run: show what would be changed</span>
+<span class="cmd">rememora</span> <span class="cmd">setup</span> <span class="flag">--apply</span>   <span class="comment"># apply configuration</span></pre>
+        </div>
+      </div>
+
+      <h2 id="cmd-agent-run">agent-run</h2>
+      <p>Dispatch a GitHub issue to Claude CLI with quality gates.</p>
+      <div class="code-window">
+        <div class="code-header">
+          <div class="code-dots"><span class="red"></span><span class="yellow"></span><span class="green"></span></div>
+          <span class="code-title">usage</span>
+          <button class="code-copy">Copy</button>
+        </div>
+        <div class="code-body">
+<pre><span class="cmd">rememora</span> <span class="cmd">agent-run</span> <span class="flag">--repo</span> owner/repo <span class="flag">--issue</span> 42 <span class="flag">--retries</span> 3</pre>
+        </div>
+      </div>
+      <p><strong>Workflow:</strong> Fetch issue &rarr; Move to "In Progress" &rarr; Create worktree &rarr; Run Claude CLI &rarr; Quality gate (tests) &rarr; Open PR &rarr; Move to "Ready for Review"</p>
+
+      <h2 id="cmd-agent-loop">agent-loop</h2>
+      <p>Continuous polling of GitHub project board for automated issue dispatch.</p>
+      <div class="code-window">
+        <div class="code-header">
+          <div class="code-dots"><span class="red"></span><span class="yellow"></span><span class="green"></span></div>
+          <span class="code-title">usage</span>
+          <button class="code-copy">Copy</button>
+        </div>
+        <div class="code-body">
+<pre><span class="cmd">rememora</span> <span class="cmd">agent-loop</span> <span class="flag">--repo</span> owner/repo <span class="flag">--poll</span> 300   <span class="comment"># poll every 5m</span>
+<span class="cmd">rememora</span> <span class="cmd">agent-loop</span> <span class="flag">--repo</span> owner/repo <span class="flag">--once</span>       <span class="comment"># one-shot</span></pre>
+        </div>
+      </div>
+
+      <h2 id="cmd-encrypt">encrypt / decrypt</h2>
+      <p>Convert between encrypted (SQLCipher) and plaintext databases.</p>
+      <div class="code-window">
+        <div class="code-header">
+          <div class="code-dots"><span class="red"></span><span class="yellow"></span><span class="green"></span></div>
+          <span class="code-title">usage</span>
+          <button class="code-copy">Copy</button>
+        </div>
+        <div class="code-body">
+<pre><span class="cmd">rememora</span> <span class="cmd">encrypt</span>   <span class="comment"># encrypt existing plaintext DB</span>
+<span class="cmd">rememora</span> <span class="cmd">decrypt</span>   <span class="comment"># decrypt to plaintext</span></pre>
+        </div>
+      </div>
+
+      <h2 id="cmd-export">export</h2>
+      <p>Export memories as JSON or markdown.</p>
+      <div class="code-window">
+        <div class="code-header">
+          <div class="code-dots"><span class="red"></span><span class="yellow"></span><span class="green"></span></div>
+          <span class="code-title">usage</span>
+          <button class="code-copy">Copy</button>
+        </div>
+        <div class="code-body">
+<pre><span class="cmd">rememora</span> <span class="cmd">export</span> <span class="flag">--project</span> myapp <span class="flag">--format</span> json
+<span class="cmd">rememora</span> <span class="cmd">export</span> <span class="flag">--project</span> myapp <span class="flag">--format</span> markdown</pre>
+        </div>
+      </div>
+
+      <h2 id="cmd-status">status</h2>
+      <p>Show database statistics — memory counts, categories, sessions, curator info.</p>
+      <div class="code-window">
+        <div class="code-header">
+          <div class="code-dots"><span class="red"></span><span class="yellow"></span><span class="green"></span></div>
+          <span class="code-title">usage</span>
+          <button class="code-copy">Copy</button>
+        </div>
+        <div class="code-body">
+<pre><span class="prompt">$</span> <span class="cmd">rememora</span> <span class="cmd">status</span>
+<span class="output">  Database: ~/.rememora/rememora.db (encrypted)
+  Memories: 142 active, 23 superseded
+  Categories: 31 decision, 28 entity, 25 pattern...
+  Sessions: 67 total, 12 transferred
+  Last curated: 2h ago (4 added)</span></pre>
+        </div>
+      </div>
+
+      <h2 id="cmd-tui">tui</h2>
+      <p>Interactive terminal dashboard for browsing memories, sessions, and projects.</p>
+      <div class="code-window">
+        <div class="code-header">
+          <div class="code-dots"><span class="red"></span><span class="yellow"></span><span class="green"></span></div>
+          <span class="code-title">usage</span>
+          <button class="code-copy">Copy</button>
+        </div>
+        <div class="code-body">
+<pre><span class="cmd">rememora</span> <span class="cmd">tui</span></pre>
+        </div>
+      </div>
+      <p>Built with <a href="https://ratatui.rs">ratatui</a>. Navigate with keyboard: <code>Tab</code> to switch panes, <code>/</code> to search, <code>j/k</code> to scroll.</p>
+
+      <h2 id="cmd-eval">eval</h2>
+      <p>Database compliance metrics — checks session hygiene, memory quality, transfer chains.</p>
+      <div class="code-window">
+        <div class="code-header">
+          <div class="code-dots"><span class="red"></span><span class="yellow"></span><span class="green"></span></div>
+          <span class="code-title">usage</span>
+          <button class="code-copy">Copy</button>
+        </div>
+        <div class="code-body">
+<pre><span class="cmd">rememora</span> <span class="cmd">eval</span></pre>
+        </div>
+      </div>
+
+      <!-- ==================== ADVANCED ==================== -->
+
+      <h2 id="uri-scheme">URI Scheme</h2>
+      <p>All contexts are addressable via hierarchical URIs:</p>
+      <div class="code-window">
+        <div class="code-header">
+          <div class="code-dots"><span class="red"></span><span class="yellow"></span><span class="green"></span></div>
+          <span class="code-title">URI structure</span>
+          <span></span>
+        </div>
+        <div class="code-body">
+<pre><span class="variable">rememora://</span>global/memories/{category}/{slug}
+<span class="variable">rememora://</span>projects/{name}/memories/{category}/{slug}
+<span class="variable">rememora://</span>projects/{name}/_meta
+<span class="variable">rememora://</span>agents/{name}/...
+<span class="variable">rememora://</span>sessions/{id}/...</pre>
+        </div>
+      </div>
+
+      <h2 id="database">Database Schema</h2>
+      <p>Single SQLite database at <code>~/.rememora/rememora.db</code> with WAL mode.</p>
+      <h3>Key Tables</h3>
+      <table>
+        <thead><tr><th>Table</th><th>Purpose</th></tr></thead>
+        <tbody>
+          <tr><td><code>contexts</code></td><td>All memories, projects, resources (unified, 18 columns)</td></tr>
+          <tr><td><code>sessions</code></td><td>Agent sessions with lifecycle tracking</td></tr>
+          <tr><td><code>relations</code></td><td>Bidirectional links between contexts</td></tr>
+          <tr><td><code>contexts_fts</code></td><td>FTS5 full-text index (auto-synced via triggers)</td></tr>
+          <tr><td><code>context_embeddings</code></td><td>384-dim vectors (feature-gated)</td></tr>
+          <tr><td><code>watermarks</code></td><td>Incremental curation tracking</td></tr>
+          <tr><td><code>curator_log</code></td><td>Audit trail for all curation actions</td></tr>
+          <tr><td><code>consolidation_runs</code></td><td>Consolidation history</td></tr>
+        </tbody>
+      </table>
+
+      <h2 id="curation-pipeline">Curation Pipeline</h2>
+      <p>The autonomous curation pipeline processes Claude Code session transcripts in four stages:</p>
+      <ol>
+        <li><strong>JSONL Parsing</strong> — reads session files incrementally via byte-offset watermarks (never re-processes old content)</li>
+        <li><strong>Signal Gate (Haiku)</strong> — fast YES/NO classification: "Does this transcript contain memorable knowledge?" (~$0.03 per call)</li>
+        <li><strong>AUDN Curation (Sonnet)</strong> — full Add/Update/Delete/Noop cycle via a subagent with Bash access to <code>rememora save/search/supersede</code></li>
+        <li><strong>Consolidation</strong> — if gate conditions are met (24h + 5 new memories), triggers smart dedup via <code>evolve</code></li>
+      </ol>
+
+      <h2 id="claude-code-plugin">Claude Code Plugin</h2>
+      <p>Full integration with Claude Code via hooks and skills:</p>
+      <h3>Hooks (automatic)</h3>
+      <table>
+        <thead><tr><th>Hook</th><th>Trigger</th><th>Action</th></tr></thead>
+        <tbody>
+          <tr><td><code>SessionStart</code></td><td>Conversation begins</td><td>Load context + start rememora session + check consolidation gate</td></tr>
+          <tr><td><code>SessionEnd</code></td><td>Conversation ends</td><td>Close active rememora session</td></tr>
+          <tr><td><code>Stop</code></td><td>Each assistant turn</td><td>Curate memories from transcript</td></tr>
+        </tbody>
+      </table>
+      <h3>Skills (model-invoked)</h3>
+      <table>
+        <thead><tr><th>Skill</th><th>When</th><th>Action</th></tr></thead>
+        <tbody>
+          <tr><td><code>rememora-save</code></td><td>After decisions/bug fixes/discoveries</td><td>Save to rememora</td></tr>
+          <tr><td><code>rememora-search</code></td><td>Before non-trivial implementations</td><td>Search rememora</td></tr>
+          <tr><td><code>rememora-init</code></td><td>Manual <code>/rememora</code> command</td><td>Initialize context loading</td></tr>
+        </tbody>
+      </table>
+
+      <h2 id="agent-orchestration">Agent Orchestration</h2>
+      <p>The <code>agent-run</code> and <code>agent-loop</code> commands provide autonomous issue dispatch:</p>
+      <ol>
+        <li>Fetch issue from GitHub &rarr; move to "In Progress" on project board</li>
+        <li>Create isolated git worktree under <code>.agents/worktrees/</code></li>
+        <li>Run Claude CLI with issue context + rememora memory</li>
+        <li>Quality gate: run <code>cargo test</code>, retry on failure (configurable)</li>
+        <li>Open pull request &rarr; move to "Ready for Review"</li>
+        <li><code>agent-loop</code> also merges "Cherry-Picked" PRs automatically</li>
+      </ol>
+
+      <h2 id="encryption">Encryption</h2>
+      <p>Rememora uses SQLCipher for encryption at rest. Key sources (in priority order):</p>
+      <ol>
+        <li><code>REMEMORA_KEY</code> environment variable (hex string)</li>
+        <li>macOS Keychain / Linux secret-service</li>
+        <li>Interactive password prompt (via rpassword)</li>
+      </ol>
+      <p>Use <code>--no-encryption</code> flag for development/testing.</p>
+
+      <h2 id="vector-search">Vector Search</h2>
+      <p>Optional feature-gated vector search using:</p>
+      <ul>
+        <li><strong>Model:</strong> all-MiniLM-L6-v2 (384-dim, ~1.3MB, downloaded from HuggingFace on first use)</li>
+        <li><strong>Backend:</strong> Candle with Metal GPU acceleration on Apple Silicon</li>
+        <li><strong>Index:</strong> sqlite-vec for KNN queries with cosine distance metric</li>
+        <li><strong>Hybrid:</strong> Reciprocal Rank Fusion (RRF) with <code>k=60</code> merges BM25 + vector results</li>
+      </ul>
+      <p>Enable with: <code>cargo install --path . --features embed-candle,metal</code></p>
+
+      <h2 id="configuration">Configuration</h2>
+      <h3>Environment Variables</h3>
+      <table>
+        <thead><tr><th>Variable</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td><code>REMEMORA_KEY</code></td><td>Encryption key (hex string) for SQLCipher</td></tr>
+          <tr><td><code>ANTHROPIC_API_KEY</code></td><td>Required for <code>extract</code>, <code>curate</code>, <code>evolve</code> commands</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Database Location</h3>
+      <p>Default: <code>~/.rememora/rememora.db</code></p>
+
+      <h3>Global Flags</h3>
+      <table>
+        <thead><tr><th>Flag</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td><code>--json</code></td><td>Output structured JSON instead of markdown</td></tr>
+          <tr><td><code>--no-encryption</code></td><td>Disable SQLCipher encryption (dev/testing only)</td></tr>
+        </tbody>
+      </table>
+
+      <br><br>
+      <div style="border-top: 1px solid rgba(255,255,255,0.06); padding-top: 32px; text-align: center;">
+        <p style="color: var(--text-muted);">
+          Built with Rust. Open source. MIT licensed.<br>
+          <a href="https://github.com/Rememora/rememora">GitHub</a> &bull;
+          <a href="https://github.com/Rememora/rememora/issues">Issues</a> &bull;
+          <a href="https://github.com/Rememora/rememora/releases">Releases</a>
+        </p>
+      </div>
+
+    </main>
+  </div>
+
+  <!-- Mobile sidebar toggle -->
+  <button class="docs-sidebar-toggle" aria-label="Toggle sidebar">&#9776;</button>
+
+  <script src="js/main.js"></script>
+</body>
+</html>
