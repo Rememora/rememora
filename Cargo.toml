@@ -20,6 +20,8 @@ anyhow = "1"
 cliclack = "0.5"
 slug = "0.1"
 ureq = { version = "2", features = ["json"] }
+ratatui = "0.29"
+crossterm = "0.28"
 
 # Embedding backends (optional, feature-gated)
 candle-core = { version = "0.8", optional = true }

@@ -307,6 +307,9 @@ enum Commands {
     /// Decrypt an encrypted database back to plain SQLite
     Decrypt,
 
+    /// Interactive TUI dashboard for browsing memories
+    Tui,
+
     /// Show system status
     Status,
 
@@ -690,6 +693,8 @@ fn main() -> Result<()> {
         ),
 
         Commands::Encrypt | Commands::Decrypt => unreachable!("handled above"),
+
+        Commands::Tui => commands::tui::run(&conn),
 
         Commands::Status => commands::status::run(&conn, cli.json),
 
