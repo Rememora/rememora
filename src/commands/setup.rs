@@ -294,6 +294,10 @@ fn write_hooks(path: &PathBuf) -> Result<()> {
 pub fn run(apply: bool) -> Result<()> {
     cliclack::intro("rememora setup")?;
 
+    // --- Step 1: Encryption ---
+    setup_encryption()?;
+
+    // --- Step 2: Agent configuration ---
     let spinner = cliclack::spinner();
     spinner.start("Scanning for AI agents...");
 
@@ -447,6 +451,57 @@ pub fn run(apply: bool) -> Result<()> {
     }
 
     cliclack::outro("All agents configured.")?;
+
+    Ok(())
+}
+
+fn setup_encryption() -> Result<()> {
+    let db_path = rememora::db::default_db_path();
+
+    // Already encrypted — nothing to do
+    if db_path.exists() && rememora::crypto::is_db_encrypted(&db_path) {
+        cliclack::log::success("Encryption: already enabled")?;
+        return Ok(());
+    }
+
+    // Key already in keychain/env — encryption will apply automatically
+    if rememora::crypto::resolve_key(false)?.is_some() {
+        if db_path.exists() {
+            // Unencrypted DB exists + key available — offer to encrypt
+            let should_encrypt = cliclack::confirm("Database exists but is not encrypted. Encrypt now?")
+                .initial_value(true)
+                .interact()?;
+            if should_encrypt {
+                super::encrypt::run_encrypt(&db_path)?;
+            }
+        } else {
+            cliclack::log::success("Encryption: key found — new database will be encrypted")?;
+        }
+        return Ok(());
+    }
+
+    // No key anywhere — generate one
+    let key = rememora::crypto::generate_key();
+
+    match rememora::crypto::keychain_set(&key) {
+        Ok(()) => {
+            cliclack::log::success("Encryption: key generated and stored in OS keychain")?;
+        }
+        Err(e) => {
+            cliclack::log::warning(format!(
+                "Could not store key in keychain: {e}\n\
+                 Set this environment variable to enable encryption:\n\
+                 \n  export REMEMORA_KEY={key}\n"
+            ))?;
+        }
+    }
+
+    // If an unencrypted DB already exists, encrypt it now
+    if db_path.exists() {
+        super::encrypt::run_encrypt(&db_path)?;
+    } else {
+        cliclack::log::info("Database will be created with encryption on first use")?;
+    }
 
     Ok(())
 }

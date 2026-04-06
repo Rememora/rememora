@@ -433,11 +433,19 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     let db_path = db::default_db_path();
 
-    // Encrypt/decrypt handle the DB directly — must run before db::open()
+    // Commands that bypass the normal db::open() flow
     match &cli.command {
+        Commands::Setup { apply } => return commands::setup::run(*apply),
         Commands::Encrypt => return commands::encrypt::run_encrypt(&db_path),
         Commands::Decrypt => return commands::encrypt::run_decrypt(&db_path),
         _ => {}
+    }
+
+    // First-run gate: require setup before any other command
+    if !db_path.exists() {
+        anyhow::bail!(
+            "Rememora is not set up yet. Run `rememora setup` to get started."
+        );
     }
 
     let conn = db::open_with_options(&db_path, cli.no_encryption)?;
@@ -587,7 +595,7 @@ fn main() -> Result<()> {
             cli.json,
         ),
 
-        Commands::Setup { apply } => commands::setup::run(apply),
+        Commands::Setup { .. } => unreachable!("handled above"),
 
         Commands::AgentRun {
             repo,
