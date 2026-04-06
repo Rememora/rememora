@@ -22,7 +22,7 @@ pub fn run_encrypt(db_path: &Path) -> Result<()> {
         }
         None => {
             let generated = crypto::generate_key();
-            cliclack::log::info(format!("Generated new encryption key"))?;
+            cliclack::log::info("Generated new encryption key".to_string())?;
             generated
         }
     };
