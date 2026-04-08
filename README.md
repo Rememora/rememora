@@ -1,6 +1,11 @@
 # Rememora
 
-Persistent, cross-agent memory for AI coding assistants. One SQLite database, shared by every agent you use.
+[![GitHub release](https://img.shields.io/github/v/release/Rememora/rememora?style=flat-square)](https://github.com/Rememora/rememora/releases)
+[![CI](https://img.shields.io/github/actions/workflow/status/Rememora/rememora/ci.yml?style=flat-square&label=CI)](https://github.com/Rememora/rememora/actions)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
+[![Homebrew](https://img.shields.io/badge/brew-Rememora%2Ftap-orange?style=flat-square)](https://github.com/Rememora/homebrew-tap)
+
+Persistent, cross-agent memory for AI coding agents. One SQLite database, shared by every agent you use.
 
 **The problem:** Claude Code, Codex, and Gemini CLI each lose context between sessions. Switch agents mid-task and you start from scratch. Come back to a project after a week and the agent has forgotten everything.
 
