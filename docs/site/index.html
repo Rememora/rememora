@@ -651,12 +651,12 @@
             <button class="code-copy">Copy</button>
           </div>
           <div class="code-body">
-<pre><span class="comment"># 1. Install</span>
+<pre><span class="comment"># 1. Install the CLI</span>
 <span class="prompt">$</span> <span class="cmd">brew install</span> Rememora/tap/rememora
 
-<span class="comment"># 2. Add as a Claude Code skill (recommended)</span>
-<span class="prompt">$</span> <span class="cmd">cp</span> <span class="flag">-r</span> plugin/ ~/.claude/plugins/rememora/
-<span class="comment"># → Hooks + skills installed. Claude auto-saves &amp; searches memory.</span>
+<span class="comment"># 2. Add as a Claude Code plugin</span>
+<span class="prompt">&gt;</span> <span class="cmd">/plugin marketplace add</span> Rememora/rememora
+<span class="prompt">&gt;</span> <span class="cmd">/plugin install</span> rememora@rememora
 
 <span class="comment"># 3. Register a project</span>
 <span class="prompt">$</span> <span class="cmd">rememora</span> <span class="cmd">project add</span> myapp <span class="flag">--path</span> . \

@@ -199,22 +199,28 @@
       <!-- Agent Setup -->
       <h2 id="agent-setup">Agent Setup</h2>
 
-      <h3>Claude Code: Install as Skill (Recommended)</h3>
-      <p>The fastest way to add Rememora to Claude Code is as a skill. This gives you <strong>fully autonomous operation</strong> &mdash; no manual commands needed.</p>
+      <h3>Claude Code: Install as Plugin (Recommended)</h3>
+      <p>Install Rememora as a Claude Code plugin for <strong>fully autonomous operation</strong> &mdash; no manual commands needed.</p>
 
       <div class="code-window">
         <div class="code-header">
           <div class="code-dots"><span class="red"></span><span class="yellow"></span><span class="green"></span></div>
-          <span class="code-title">terminal</span>
+          <span class="code-title">claude code</span>
           <button class="code-copy">Copy</button>
         </div>
         <div class="code-body">
-<pre><span class="comment"># Copy the plugin to your Claude Code plugins directory</span>
-<span class="prompt">$</span> <span class="cmd">cp</span> <span class="flag">-r</span> plugin/ ~/.claude/plugins/rememora/</pre>
+<pre><span class="comment"># 1. Add the Rememora marketplace</span>
+<span class="prompt">&gt;</span> <span class="cmd">/plugin marketplace add</span> Rememora/rememora
+
+<span class="comment"># 2. Install the plugin</span>
+<span class="prompt">&gt;</span> <span class="cmd">/plugin install</span> rememora@rememora
+
+<span class="comment"># For project-wide install (shared via git):</span>
+<span class="prompt">&gt;</span> <span class="cmd">/plugin install</span> rememora@rememora <span class="flag">--scope</span> project</pre>
         </div>
       </div>
 
-      <p>After copying, restart Claude Code. The plugin auto-detects your project from the working directory.</p>
+      <p>After installing, restart Claude Code. The plugin auto-detects your project from the working directory.</p>
 
       <h4>What you get</h4>
       <table>

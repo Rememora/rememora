@@ -1,10 +1,13 @@
 {
   "name": "rememora",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Persistent cross-agent memory. Automatically saves decisions, bug fixes, and patterns across sessions. Semantically retrieves context when you need it.",
-  "author": "Rememora",
+  "author": {
+    "name": "Rememora"
+  },
   "license": "MIT",
-  "homepage": "https://github.com/Rememora/rememora",
+  "homepage": "https://rememora.dev",
+  "repository": "https://github.com/Rememora/rememora",
   "keywords": ["memory", "context", "persistence", "cross-agent", "knowledge-base"],
   "requirements": {
     "binaries": ["rememora"]
