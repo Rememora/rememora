@@ -1,10 +1,720 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <meta http-equiv="refresh" content="0; url=site/index.html">
-  <title>Redirecting to Rememora</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Rememora — Persistent Memory for AI Coding Assistants</title>
+  <meta name="description" content="Cross-agent persistent memory for AI coding assistants. One SQLite database shared by Claude Code, Codex, and Gemini CLI. Fast, local-first, autonomous.">
+  <meta name="theme-color" content="#6c5ce7">
+
+  <!-- Open Graph -->
+  <meta property="og:title" content="Rememora — Persistent Memory for AI Coding Assistants">
+  <meta property="og:description" content="Cross-agent persistent memory. One SQLite database shared by Claude Code, Codex, and Gemini CLI.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://rememora.ai">
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="css/style.css">
+
+  <!-- Favicon -->
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧠</text></svg>">
 </head>
 <body>
-  <p>Redirecting to <a href="site/index.html">Rememora</a>...</p>
+
+  <!-- ===== Navigation ===== -->
+  <nav class="nav">
+    <div class="nav-inner">
+      <a href="#" class="nav-logo">
+        <span class="logo-icon">R</span>
+        <span>Rememora</span>
+      </a>
+      <button class="nav-toggle" aria-label="Toggle menu">
+        <span></span><span></span><span></span>
+      </button>
+      <ul class="nav-links">
+        <li><a href="#features">Features</a></li>
+        <li><a href="#how-it-works">How It Works</a></li>
+        <li><a href="#architecture">Architecture</a></li>
+        <li><a href="#install">Install</a></li>
+        <li><a href="docs.html">Docs</a></li>
+        <li><a href="https://github.com/Rememora/rememora" class="nav-cta">GitHub</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <!-- ===== Hero ===== -->
+  <section class="hero" id="hero">
+    <canvas id="neural-canvas" class="hero-canvas"></canvas>
+    <div class="hero-glow hero-glow-1"></div>
+    <div class="hero-glow hero-glow-2"></div>
+    <div class="hero-glow hero-glow-3"></div>
+
+    <div class="hero-content">
+      <div class="hero-badge">
+        <span class="dot"></span>
+        v0.2.0 &mdash; Now with SQLCipher encryption & TUI dashboard
+      </div>
+
+      <h1>
+        Persistent memory for<br>
+        <span class="gradient-text">AI coding assistants</span>
+      </h1>
+
+      <p class="hero-description">
+        One SQLite database shared by every agent you use. Save decisions, transfer context between agents,
+        and build project knowledge that survives across sessions &mdash; autonomously.
+      </p>
+
+      <div class="hero-actions">
+        <a href="#install" class="btn btn-primary">Get Started</a>
+        <a href="docs.html" class="btn btn-secondary">Read the Docs</a>
+      </div>
+
+      <div class="hero-terminal">
+        <div class="code-window">
+          <div class="code-header">
+            <div class="code-dots">
+              <span class="red"></span>
+              <span class="yellow"></span>
+              <span class="green"></span>
+            </div>
+            <span class="code-title">terminal</span>
+            <button class="code-copy">Copy</button>
+          </div>
+          <div class="code-body">
+<pre><span class="comment"># Agent A (Claude Code) saves a decision</span>
+<span class="prompt">$</span> <span class="cmd">rememora</span> <span class="cmd">save</span> <span class="string">"Chose Zustand over Redux for state"</span> \
+    <span class="flag">--category</span> decision <span class="flag">--project</span> myapp
+
+<span class="comment"># Agent B (Codex) picks up full context</span>
+<span class="prompt">$</span> <span class="cmd">rememora</span> <span class="cmd">context</span> <span class="flag">--project</span> myapp
+<span class="output">  12 memories loaded (3 decisions, 4 entities, 5 patterns)
+  Last session: auth flow 80% done (Claude Code, 2h ago)
+  Working state: Login UI done. Token refresh blocked...</span></pre>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== Agent Logos ===== -->
+  <div class="container text-center reveal">
+    <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 20px; text-transform: uppercase; letter-spacing: 0.1em; font-weight: 600;">Works with every agent that has Bash access</p>
+    <div class="agent-logos">
+      <div class="agent-logo">
+        <div class="agent-logo-icon">&#9672;</div>
+        <span class="agent-logo-name">Claude Code</span>
+      </div>
+      <div class="agent-logo">
+        <div class="agent-logo-icon">&#9671;</div>
+        <span class="agent-logo-name">Codex</span>
+      </div>
+      <div class="agent-logo">
+        <div class="agent-logo-icon">&#9670;</div>
+        <span class="agent-logo-name">Gemini CLI</span>
+      </div>
+      <div class="agent-logo">
+        <div class="agent-logo-icon">&#9673;</div>
+        <span class="agent-logo-name">Any Agent</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== Stats ===== -->
+  <div class="container">
+    <div class="stats-bar reveal">
+      <div class="stat">
+        <div class="stat-value" data-count="3" data-suffix="ms">0ms</div>
+        <div class="stat-label">Startup Time</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value" data-count="3.6" data-suffix="MB">0MB</div>
+        <div class="stat-label">Binary Size</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value" data-count="0">0</div>
+        <div class="stat-label">External Dependencies</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value" data-count="19" data-suffix="+">0</div>
+        <div class="stat-label">CLI Commands</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section-divider"></div>
+
+  <!-- ===== The Problem ===== -->
+  <section id="problem">
+    <div class="container text-center">
+      <div class="reveal">
+        <span class="section-label">The Problem</span>
+        <h2 class="section-title">Your AI assistants have <span class="gradient-text">amnesia</span></h2>
+        <p class="section-subtitle">
+          Every session starts from scratch. Switch agents mid-task and context is lost.
+          Come back after a week &mdash; your assistant has forgotten everything.
+        </p>
+      </div>
+
+      <div class="features-grid-2 reveal" style="max-width: 800px; margin: 0 auto;">
+        <div class="glass-card">
+          <div class="card-icon pink">&#10007;</div>
+          <h3>Without Rememora</h3>
+          <p>Agents lose all context between sessions. You manually re-explain decisions, repeat yourself, and watch agents make mistakes you already corrected.</p>
+        </div>
+        <div class="glass-card" style="border-color: rgba(85, 239, 196, 0.2);">
+          <div class="card-icon mint">&#10003;</div>
+          <h3>With Rememora</h3>
+          <p>Every agent inherits full project history. Decisions, patterns, gotchas, and working state carry over seamlessly &mdash; even between different agents.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="section-divider"></div>
+
+  <!-- ===== Features ===== -->
+  <section id="features">
+    <div class="container text-center">
+      <div class="reveal">
+        <span class="section-label">Features</span>
+        <h2 class="section-title">Everything your agents need to <span class="gradient-text">remember</span></h2>
+        <p class="section-subtitle">
+          A complete memory system designed from the ground up for multi-agent workflows.
+        </p>
+      </div>
+
+      <div class="features-grid reveal">
+        <div class="glass-card">
+          <div class="card-icon">&#128256;</div>
+          <h3>Cross-Agent Transfer</h3>
+          <p>Hand off working context between Claude Code, Codex, Gemini CLI, or any agent. Session chains maintain full continuity.</p>
+        </div>
+        <div class="glass-card">
+          <div class="card-icon teal">&#128270;</div>
+          <h3>BM25 + Vector Search</h3>
+          <p>Full-text search via SQLite FTS5 with optional vector similarity. Hybrid RRF merges both for best results.</p>
+        </div>
+        <div class="glass-card">
+          <div class="card-icon pink">&#129302;</div>
+          <h3>Autonomous Curation</h3>
+          <p>LLM-powered extraction from session transcripts. Haiku signal gate + Sonnet AUDN curator. Zero manual work.</p>
+        </div>
+        <div class="glass-card">
+          <div class="card-icon gold">&#128200;</div>
+          <h3>Hotness Scoring</h3>
+          <p>Sigmoid-based frequency scoring with exponential time decay. Important + frequently-used memories surface first.</p>
+        </div>
+        <div class="glass-card">
+          <div class="card-icon mint">&#128274;</div>
+          <h3>Encrypted & Local</h3>
+          <p>SQLCipher encryption at rest. Keychain integration. Everything stays on your machine &mdash; no cloud, no telemetry.</p>
+        </div>
+        <div class="glass-card">
+          <div class="card-icon">&#9881;</div>
+          <h3>Memory Evolution</h3>
+          <p>Automatic consolidation of stale and duplicate memories. BM25 clustering + LLM-driven merge, supersede, and pruning.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="section-divider"></div>
+
+  <!-- ===== Memory Categories ===== -->
+  <section id="categories">
+    <div class="container text-center">
+      <div class="reveal">
+        <span class="section-label">Memory Categories</span>
+        <h2 class="section-title">Six types of knowledge, <span class="gradient-text">structured</span></h2>
+        <p class="section-subtitle">
+          Memories are categorized for optimal retrieval and context assembly.
+        </p>
+      </div>
+
+      <div class="categories reveal">
+        <div class="category-pill"><span class="emoji">&#128736;</span> Preference</div>
+        <div class="category-pill"><span class="emoji">&#128218;</span> Entity</div>
+        <div class="category-pill"><span class="emoji">&#9878;</span> Decision</div>
+        <div class="category-pill"><span class="emoji">&#128197;</span> Event</div>
+        <div class="category-pill"><span class="emoji">&#128270;</span> Case</div>
+        <div class="category-pill"><span class="emoji">&#128260;</span> Pattern</div>
+      </div>
+
+      <div class="features-grid reveal" style="margin-top: 48px;">
+        <div class="glass-card" style="text-align: left;">
+          <h3 style="color: var(--accent-1);">Preference</h3>
+          <p>"Prefers Zustand over Redux"<br>"Uses pnpm, not npm"</p>
+        </div>
+        <div class="glass-card" style="text-align: left;">
+          <h3 style="color: var(--accent-2);">Entity</h3>
+          <p>"Stripe API uses idempotency keys"<br>"Auth service at src/auth/"</p>
+        </div>
+        <div class="glass-card" style="text-align: left;">
+          <h3 style="color: var(--accent-3);">Decision</h3>
+          <p>"Chose expo-router over React Navigation"<br>"SQLite over Postgres for CLI"</p>
+        </div>
+        <div class="glass-card" style="text-align: left;">
+          <h3 style="color: var(--accent-4);">Event</h3>
+          <p>"v2.0 shipped 2026-03-01"<br>"Merge freeze starts Friday"</p>
+        </div>
+        <div class="glass-card" style="text-align: left;">
+          <h3 style="color: var(--accent-5);">Case</h3>
+          <p>"iOS build fails with Hermes + RN 0.76"<br>"Fix: disable new arch in pod"</p>
+        </div>
+        <div class="glass-card" style="text-align: left;">
+          <h3 style="color: var(--accent-1);">Pattern</h3>
+          <p>"Always run migrations before seeding"<br>"Use BDD-style test names"</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="section-divider"></div>
+
+  <!-- ===== How It Works ===== -->
+  <section id="how-it-works">
+    <div class="container">
+      <div class="text-center reveal">
+        <span class="section-label">How It Works</span>
+        <h2 class="section-title">From session to <span class="gradient-text">shared memory</span></h2>
+        <p class="section-subtitle">
+          Rememora integrates directly into your agent workflow via Bash &mdash; no MCP, no server, no infrastructure.
+        </p>
+      </div>
+
+      <div class="features-grid-2" style="gap: 48px; align-items: start;">
+        <!-- Steps -->
+        <div class="flow-container reveal">
+          <div class="flow-step">
+            <div class="flow-number">1</div>
+            <div class="flow-content">
+              <h3>Register your project</h3>
+              <p>One command to register. Rememora auto-detects project from your working directory after that.</p>
+              <div class="code-window" style="box-shadow: none;">
+                <div class="code-body" style="padding: 12px 16px;">
+<pre><span class="prompt">$</span> <span class="cmd">rememora</span> <span class="cmd">project add</span> myapp <span class="flag">--path</span> . <span class="flag">--description</span> <span class="string">"Mobile app"</span></pre>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="flow-step">
+            <div class="flow-number">2</div>
+            <div class="flow-content">
+              <h3>Agents save memories</h3>
+              <p>During work, agents save decisions, discoveries, and patterns. Or let autonomous curation extract them automatically.</p>
+              <div class="code-window" style="box-shadow: none;">
+                <div class="code-body" style="padding: 12px 16px;">
+<pre><span class="prompt">$</span> <span class="cmd">rememora</span> <span class="cmd">save</span> <span class="string">"expo-secure-store for tokens"</span> \
+    <span class="flag">--category</span> decision <span class="flag">--project</span> myapp</pre>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="flow-step">
+            <div class="flow-number">3</div>
+            <div class="flow-content">
+              <h3>Context loads on session start</h3>
+              <p>Every agent gets full project context in one call. Tiered loading keeps token usage minimal.</p>
+              <div class="code-window" style="box-shadow: none;">
+                <div class="code-body" style="padding: 12px 16px;">
+<pre><span class="prompt">$</span> <span class="cmd">rememora</span> <span class="cmd">context</span> <span class="flag">--auto</span></pre>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="flow-step">
+            <div class="flow-number">4</div>
+            <div class="flow-content">
+              <h3>Transfer between agents</h3>
+              <p>End a session with status and working state. The next agent &mdash; any agent &mdash; picks up exactly where you left off.</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Code example -->
+        <div class="reveal">
+          <div class="code-window">
+            <div class="code-header">
+              <div class="code-dots">
+                <span class="red"></span><span class="yellow"></span><span class="green"></span>
+              </div>
+              <span class="code-title">cross-agent-transfer.sh</span>
+              <button class="code-copy">Copy</button>
+            </div>
+            <div class="code-body">
+<pre><span class="comment"># Claude Code finishes, hands off</span>
+<span class="prompt">$</span> <span class="cmd">rememora</span> <span class="cmd">session end</span> <span class="variable">$SESSION_ID</span> \
+    <span class="flag">--status</span> transferred \
+    <span class="flag">--summary</span> <span class="string">"Auth flow 80% done"</span> \
+    <span class="flag">--working-state</span> <span class="string">"Login UI done.
+    Token refresh blocked on
+    secure storage decision."</span>
+
+<span class="comment"># Switch to Codex — full context</span>
+<span class="prompt">$</span> <span class="cmd">rememora</span> <span class="cmd">context</span> <span class="flag">--project</span> myapp
+<span class="output">  ## Project: myapp
+
+  ### Active Memories (12)
+  ● [decision] Chose Zustand over Redux
+  ● [decision] expo-secure-store for tokens
+  ● [entity] Stripe API idempotency keys
+  ● [case] iOS Hermes fix: disable new arch
+  ● [pattern] BDD-style test names
+  ...
+
+  ### Last Session (transferred)
+  Agent: claude-code | 2h ago
+  Summary: Auth flow 80% done
+  Working: Token refresh blocked...</span>
+
+<span class="comment"># Codex continues with full context</span>
+<span class="prompt">$</span> <span class="cmd">rememora</span> <span class="cmd">session start</span> \
+    <span class="flag">--agent</span> codex \
+    <span class="flag">--project</span> myapp \
+    <span class="flag">--intent</span> <span class="string">"resolve secure storage"</span> \
+    <span class="flag">--parent</span> <span class="variable">$SESSION_ID</span></pre>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="section-divider"></div>
+
+  <!-- ===== Autonomous Curation ===== -->
+  <section id="curation">
+    <div class="container text-center">
+      <div class="reveal">
+        <span class="section-label">Autonomous Curation</span>
+        <h2 class="section-title">Memories that <span class="gradient-text">write themselves</span></h2>
+        <p class="section-subtitle">
+          Rememora hooks into Claude Code to extract and curate memories from your session transcripts &mdash; automatically, incrementally, with audit trail.
+        </p>
+      </div>
+
+      <div class="features-grid reveal" style="grid-template-columns: repeat(4, 1fr); max-width: 1000px; margin: 0 auto;">
+        <div class="glass-card" style="padding: 24px;">
+          <h4 style="color: var(--accent-1); margin-bottom: 8px;">Parse</h4>
+          <p style="font-size: 0.85rem;">JSONL session transcripts read incrementally via watermarks</p>
+        </div>
+        <div class="glass-card" style="padding: 24px;">
+          <h4 style="color: var(--accent-2); margin-bottom: 8px;">Gate</h4>
+          <p style="font-size: 0.85rem;">Haiku signal gate: fast YES/NO — does this contain knowledge?</p>
+        </div>
+        <div class="glass-card" style="padding: 24px;">
+          <h4 style="color: var(--accent-3); margin-bottom: 8px;">Curate</h4>
+          <p style="font-size: 0.85rem;">Sonnet AUDN cycle: Add, Update, Delete, or Noop each memory</p>
+        </div>
+        <div class="glass-card" style="padding: 24px;">
+          <h4 style="color: var(--accent-5); margin-bottom: 8px;">Evolve</h4>
+          <p style="font-size: 0.85rem;">BM25 clustering + LLM merge/prune removes stale duplicates</p>
+        </div>
+      </div>
+
+      <div class="reveal" style="margin-top: 48px; max-width: 640px; margin-left: auto; margin-right: auto;">
+        <div class="code-window">
+          <div class="code-header">
+            <div class="code-dots">
+              <span class="red"></span><span class="yellow"></span><span class="green"></span>
+            </div>
+            <span class="code-title">autonomous-curation.sh</span>
+            <button class="code-copy">Copy</button>
+          </div>
+          <div class="code-body">
+<pre><span class="comment"># Auto-curate all Claude Code sessions</span>
+<span class="prompt">$</span> <span class="cmd">rememora</span> <span class="cmd">curate</span> <span class="flag">--auto</span>
+<span class="output">  Scanning 14 session files...
+  ▸ 3 new transcripts found
+  ▸ Signal gate: 2 passed, 1 filtered
+  ▸ AUDN results: +4 added, ~1 updated, -0 deleted
+  ▸ 5 memories curated in 3.2s</span>
+
+<span class="comment"># Preview without applying</span>
+<span class="prompt">$</span> <span class="cmd">rememora</span> <span class="cmd">curate</span> <span class="flag">--auto</span> <span class="flag">--dry-run</span>
+
+<span class="comment"># Evolve: merge stale duplicates</span>
+<span class="prompt">$</span> <span class="cmd">rememora</span> <span class="cmd">evolve</span> <span class="flag">--project</span> myapp
+<span class="output">  Found 3 clusters of similar memories
+  ▸ Merged 2 decision memories
+  ▸ Superseded 1 stale pattern
+  ▸ Kept 4 memories as-is</span></pre>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="section-divider"></div>
+
+  <!-- ===== Architecture ===== -->
+  <section id="architecture">
+    <div class="container text-center">
+      <div class="reveal">
+        <span class="section-label">Architecture</span>
+        <h2 class="section-title">Three layers of <span class="gradient-text">integration</span></h2>
+        <p class="section-subtitle">
+          From raw CLI commands to fully autonomous multi-agent orchestration.
+        </p>
+      </div>
+
+      <div class="reveal" style="max-width: 700px; margin: 0 auto;">
+        <div class="arch-diagram">
+          <div class="arch-layer">
+            <div class="arch-layer-title">Layer 3: Multi-Agent Orchestration</div>
+            <div class="arch-layer-desc">agent-run, agent-loop, developer/triage agents, atomic locking, git worktrees, GitHub Project board integration</div>
+          </div>
+          <div class="arch-layer">
+            <div class="arch-layer-title">Layer 2: Claude Code Plugin</div>
+            <div class="arch-layer-desc">Hooks (SessionStart, SessionEnd, Stop) &bull; Skills (save, search, init) &bull; Autonomous curation after every turn</div>
+          </div>
+          <div class="arch-layer">
+            <div class="arch-layer-title">Layer 1: CLI Core</div>
+            <div class="arch-layer-desc">save, search, context, session, curate, evolve, extract, project, export, tui &bull; SQLite + FTS5 + WAL &bull; SQLCipher encryption</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="features-grid-2 reveal" style="margin-top: 48px; max-width: 800px; margin-left: auto; margin-right: auto;">
+        <div class="glass-card" style="text-align: left;">
+          <h3>Tiered Context Loading</h3>
+          <p><strong style="color: var(--accent-1);">L0</strong> &mdash; Abstract (~100 tokens): memory map for quick orientation<br>
+          <strong style="color: var(--accent-2);">L1</strong> &mdash; Overview (~500 tokens): top memories with detail<br>
+          <strong style="color: var(--accent-3);">L2</strong> &mdash; Full content: complete text when needed</p>
+        </div>
+        <div class="glass-card" style="text-align: left;">
+          <h3>Hotness Scoring</h3>
+          <p><code style="font-size: 0.8rem;">sigmoid(log1p(access)) * exp(-age/7d)</code><br><br>
+          Blended 70% importance + 30% hotness. Frequently-accessed, recent, important memories always surface first.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="section-divider"></div>
+
+  <!-- ===== Agent Orchestration ===== -->
+  <section id="orchestration">
+    <div class="container text-center">
+      <div class="reveal">
+        <span class="section-label">Agent Orchestration</span>
+        <h2 class="section-title">Dispatch issues to agents <span class="gradient-text">autonomously</span></h2>
+        <p class="section-subtitle">
+          Rememora can watch your GitHub project board, dispatch issues to Claude CLI, and open PRs &mdash; with quality gates and retry loops.
+        </p>
+      </div>
+
+      <div class="features-grid-2 reveal" style="max-width: 900px; margin: 0 auto;">
+        <div class="glass-card" style="text-align: left;">
+          <div class="card-icon">&#128640;</div>
+          <h3>agent-run</h3>
+          <p>Dispatch a single GitHub issue to Claude CLI. Creates isolated git worktree, runs tests, retries on failure, opens PR, updates project board.</p>
+          <div class="code-window" style="box-shadow: none; margin-top: 16px;">
+            <div class="code-body" style="padding: 12px;">
+<pre><span class="prompt">$</span> <span class="cmd">rememora</span> <span class="cmd">agent-run</span> \
+    <span class="flag">--repo</span> owner/repo \
+    <span class="flag">--issue</span> 42 \
+    <span class="flag">--retries</span> 3</pre>
+            </div>
+          </div>
+        </div>
+        <div class="glass-card" style="text-align: left;">
+          <div class="card-icon teal">&#128257;</div>
+          <h3>agent-loop</h3>
+          <p>Continuous polling of your project board. Auto-dispatches "Ready-For-Dev" issues. Merges "Cherry-Picked" PRs. Configurable poll interval.</p>
+          <div class="code-window" style="box-shadow: none; margin-top: 16px;">
+            <div class="code-body" style="padding: 12px;">
+<pre><span class="prompt">$</span> <span class="cmd">rememora</span> <span class="cmd">agent-loop</span> \
+    <span class="flag">--repo</span> owner/repo \
+    <span class="flag">--poll</span> 300</pre>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="section-divider"></div>
+
+  <!-- ===== Why Rememora ===== -->
+  <section id="why">
+    <div class="container text-center">
+      <div class="reveal">
+        <span class="section-label">Why Rememora</span>
+        <h2 class="section-title">Built different, <span class="gradient-text">by design</span></h2>
+      </div>
+
+      <div class="reveal" style="max-width: 900px; margin: 0 auto; overflow-x: auto;">
+        <div class="glass-card" style="padding: 0; overflow: hidden;">
+          <table class="comparison-table">
+            <thead>
+              <tr>
+                <th>Feature</th>
+                <th class="highlight-col">Rememora</th>
+                <th>MCP Memory</th>
+                <th>File-based</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Cross-agent support</td>
+                <td class="highlight-col"><span class="check">&#10003;</span> Any agent with Bash</td>
+                <td><span class="cross">&#10007;</span> MCP-only agents</td>
+                <td><span class="cross">~</span> Manual sync</td>
+              </tr>
+              <tr>
+                <td>Session transfer</td>
+                <td class="highlight-col"><span class="check">&#10003;</span> Built-in chains</td>
+                <td><span class="cross">&#10007;</span> No</td>
+                <td><span class="cross">&#10007;</span> No</td>
+              </tr>
+              <tr>
+                <td>Full-text search</td>
+                <td class="highlight-col"><span class="check">&#10003;</span> BM25 + Vector + RRF</td>
+                <td><span class="cross">~</span> Basic</td>
+                <td><span class="cross">&#10007;</span> grep</td>
+              </tr>
+              <tr>
+                <td>Autonomous curation</td>
+                <td class="highlight-col"><span class="check">&#10003;</span> LLM signal + AUDN</td>
+                <td><span class="cross">&#10007;</span> Manual</td>
+                <td><span class="cross">&#10007;</span> Manual</td>
+              </tr>
+              <tr>
+                <td>Memory evolution</td>
+                <td class="highlight-col"><span class="check">&#10003;</span> Merge, supersede, prune</td>
+                <td><span class="cross">&#10007;</span> No</td>
+                <td><span class="cross">&#10007;</span> No</td>
+              </tr>
+              <tr>
+                <td>Encryption</td>
+                <td class="highlight-col"><span class="check">&#10003;</span> SQLCipher</td>
+                <td><span class="cross">~</span> Varies</td>
+                <td><span class="cross">&#10007;</span> Plaintext</td>
+              </tr>
+              <tr>
+                <td>Infrastructure</td>
+                <td class="highlight-col"><span class="check">&#10003;</span> Zero (single SQLite)</td>
+                <td><span class="cross">~</span> MCP server</td>
+                <td><span class="check">&#10003;</span> Zero</td>
+              </tr>
+              <tr>
+                <td>Startup time</td>
+                <td class="highlight-col"><span class="check">&#10003;</span> ~3ms</td>
+                <td><span class="cross">~</span> ~100ms+</td>
+                <td><span class="check">&#10003;</span> ~0ms</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="section-divider"></div>
+
+  <!-- ===== Install ===== -->
+  <section id="install">
+    <div class="container text-center">
+      <div class="reveal">
+        <span class="section-label">Install</span>
+        <h2 class="section-title">Get started in <span class="gradient-text">seconds</span></h2>
+        <p class="section-subtitle">
+          One command to install, one command to configure all your agents.
+        </p>
+      </div>
+
+      <div class="reveal" style="margin-bottom: 48px;">
+        <div class="install-command" style="margin-bottom: 16px;">
+          <span class="dollar">$</span>
+          <span class="text">brew install Rememora/tap/rememora</span>
+          <span class="copy-icon">&#x2398; Copy</span>
+        </div>
+        <p style="color: var(--text-muted); font-size: 0.85rem;">or <code style="font-family: var(--font-mono); color: var(--accent-1); background: rgba(108, 92, 231, 0.1); padding: 2px 6px; border-radius: 4px;">cargo install --path .</code> from source</p>
+      </div>
+
+      <div class="reveal">
+        <div class="code-window" style="max-width: 640px; margin: 0 auto;">
+          <div class="code-header">
+            <div class="code-dots">
+              <span class="red"></span><span class="yellow"></span><span class="green"></span>
+            </div>
+            <span class="code-title">quickstart.sh</span>
+            <button class="code-copy">Copy</button>
+          </div>
+          <div class="code-body">
+<pre><span class="comment"># 1. Install the CLI</span>
+<span class="prompt">$</span> <span class="cmd">brew install</span> Rememora/tap/rememora
+
+<span class="comment"># 2. Add as a Claude Code plugin</span>
+<span class="prompt">&gt;</span> <span class="cmd">/plugin marketplace add</span> Rememora/rememora
+<span class="prompt">&gt;</span> <span class="cmd">/plugin install</span> rememora@rememora
+
+<span class="comment"># 3. Register a project</span>
+<span class="prompt">$</span> <span class="cmd">rememora</span> <span class="cmd">project add</span> myapp <span class="flag">--path</span> . \
+    <span class="flag">--description</span> <span class="string">"My awesome app"</span>
+
+<span class="comment"># 4. Start coding — memories persist across sessions.</span>
+<span class="comment"># Claude will automatically:</span>
+<span class="comment">#   • Load project context on session start</span>
+<span class="comment">#   • Save decisions, bug fixes, patterns</span>
+<span class="comment">#   • Search before non-trivial implementations</span>
+<span class="comment">#   • Curate memories from transcripts</span></pre>
+          </div>
+        </div>
+      </div>
+
+      <p class="reveal" style="color: var(--text-muted); font-size: 0.85rem; margin-top: 16px; text-align: center;">
+        Or use <code style="font-family: var(--font-mono); color: var(--accent-1); background: rgba(108, 92, 231, 0.1); padding: 2px 6px; border-radius: 4px;">rememora setup --apply</code> to auto-configure Codex, Gemini CLI, and other agents.
+        <a href="docs.html#agent-setup" style="color: var(--accent-2);">See all setup options &rarr;</a>
+      </p>
+    </div>
+  </section>
+
+  <div class="section-divider"></div>
+
+  <!-- ===== CTA ===== -->
+  <section class="cta-section">
+    <div class="container reveal">
+      <h2 style="margin-bottom: 16px;">Give your agents <span class="gradient-text">long-term memory</span></h2>
+      <p class="section-subtitle">Open source. MIT licensed. Built in Rust.</p>
+      <div class="hero-actions" style="margin-bottom: 0;">
+        <a href="https://github.com/Rememora/rememora" class="btn btn-primary">
+          Star on GitHub
+        </a>
+        <a href="docs.html" class="btn btn-secondary">
+          Read the Docs
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== Footer ===== -->
+  <footer class="footer">
+    <div class="container">
+      <div class="footer-inner">
+        <div class="footer-left">
+          <span class="logo-icon" style="width: 24px; height: 24px; font-size: 0.7rem; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; background: var(--gradient-hero);">R</span>
+          Rememora &mdash; MIT License
+        </div>
+        <ul class="footer-links">
+          <li><a href="https://github.com/Rememora/rememora">GitHub</a></li>
+          <li><a href="docs.html">Documentation</a></li>
+          <li><a href="https://github.com/Rememora/rememora/releases">Releases</a></li>
+          <li><a href="https://github.com/Rememora/rememora/issues">Issues</a></li>
+        </ul>
+      </div>
+    </div>
+  </footer>
+
+  <script src="js/main.js"></script>
 </body>
 </html>
