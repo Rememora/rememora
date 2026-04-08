@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../invoke.js";
 
 let currentProject = null;
 let currentCategory = null;

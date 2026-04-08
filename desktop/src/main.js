@@ -1,4 +1,3 @@
-import { invoke } from "@tauri-apps/api/core";
 import { renderDashboard } from "./views/dashboard.js";
 import { renderBrowse } from "./views/browse.js";
 import { renderSearch } from "./views/search.js";

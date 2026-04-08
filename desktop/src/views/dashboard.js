@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../invoke.js";
 
 const CATEGORY_COLORS = {
   preference: "var(--blue)",
