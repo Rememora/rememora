@@ -57,7 +57,7 @@
     <div class="hero-content">
       <div class="hero-badge">
         <span class="dot"></span>
-        v0.2.0 &mdash; Now with SQLCipher encryption & TUI dashboard
+        v0.3.0 &mdash; Hierarchical search, plugin install, desktop app
       </div>
 
       <h1>
@@ -709,6 +709,63 @@
         Or use <code style="font-family: var(--font-mono); color: var(--accent-1); background: rgba(108, 92, 231, 0.1); padding: 2px 6px; border-radius: 4px;">rememora setup --apply</code> to auto-configure Codex, Gemini CLI, and other agents.
         <a href="docs.html#agent-setup" style="color: var(--accent-2);">See all setup options &rarr;</a>
       </p>
+    </div>
+  </section>
+
+  <div class="section-divider"></div>
+
+  <!-- ===== Releases ===== -->
+  <section id="releases">
+    <div class="container text-center">
+      <div class="reveal">
+        <span class="section-label">Releases</span>
+        <h2 class="section-title">What's <span class="gradient-text">new</span></h2>
+      </div>
+
+      <div class="reveal" style="max-width: 700px; margin: 0 auto; text-align: left;">
+        <div class="glass-card" style="margin-bottom: 16px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+            <h3 style="margin: 0;">v0.3.0</h3>
+            <span style="color: var(--text-muted); font-size: 0.8rem;">April 2026</span>
+          </div>
+          <ul style="margin: 0; padding-left: 20px; line-height: 1.8;">
+            <li><strong>Hierarchical score propagation</strong> &mdash; search boosts related memories via URI tree</li>
+            <li><strong>Claude Code plugin install</strong> &mdash; <code>/plugin install rememora@rememora</code></li>
+            <li><strong>Desktop app</strong> &mdash; Tauri v2 with dashboard, browser, and search</li>
+            <li><strong>Landing page &amp; docs site</strong> &mdash; GitHub Pages with full documentation</li>
+          </ul>
+        </div>
+
+        <div class="glass-card" style="margin-bottom: 16px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+            <h3 style="margin: 0;">v0.2.0</h3>
+            <span style="color: var(--text-muted); font-size: 0.8rem;">April 2026</span>
+          </div>
+          <ul style="margin: 0; padding-left: 20px; line-height: 1.8;">
+            <li><strong>SQLCipher encryption at rest</strong> &mdash; keychain integration</li>
+            <li><strong>TUI dashboard</strong> &mdash; interactive terminal browser (ratatui)</li>
+            <li><strong>BDD-style tests</strong> &mdash; Given-When-Then test structure</li>
+            <li><strong>Autonomous curation</strong> &mdash; LLM-powered memory extraction from session transcripts</li>
+          </ul>
+        </div>
+
+        <div class="glass-card">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+            <h3 style="margin: 0;">v0.1.0</h3>
+            <span style="color: var(--text-muted); font-size: 0.8rem;">March 2026</span>
+          </div>
+          <ul style="margin: 0; padding-left: 20px; line-height: 1.8;">
+            <li><strong>Core CLI</strong> &mdash; save, search, context, sessions, projects</li>
+            <li><strong>BM25 search</strong> &mdash; FTS5 full-text search, zero dependencies</li>
+            <li><strong>Vector search</strong> &mdash; optional cosine similarity via sqlite-vec + Candle</li>
+            <li><strong>Agent orchestration</strong> &mdash; agent-run, agent-loop, GitHub project board integration</li>
+          </ul>
+        </div>
+
+        <p style="text-align: center; margin-top: 24px;">
+          <a href="https://github.com/Rememora/rememora/releases" style="color: var(--accent-2);">View all releases on GitHub &rarr;</a>
+        </p>
+      </div>
     </div>
   </section>
 
