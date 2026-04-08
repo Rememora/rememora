@@ -75,6 +75,18 @@ enum Commands {
         /// Max results
         #[arg(long, default_value = "10")]
         limit: usize,
+
+        /// Enable hierarchical score propagation (boost parents/children/siblings)
+        #[arg(long)]
+        propagate: bool,
+
+        /// Decay factor per hop for propagation (default 0.3)
+        #[arg(long, default_value = "0.3")]
+        propagate_decay: f64,
+
+        /// Maximum propagation hops (default 2)
+        #[arg(long, default_value = "2")]
+        propagate_depth: usize,
     },
 
     /// Get project context (L0 map + L1 top memories)
@@ -489,6 +501,9 @@ fn main() -> Result<()> {
             project,
             category,
             limit,
+            propagate,
+            propagate_decay,
+            propagate_depth,
         } => commands::search::run(
             &conn,
             &commands::search::SearchArgs {
@@ -496,6 +511,9 @@ fn main() -> Result<()> {
                 project,
                 category,
                 limit,
+                propagate,
+                propagate_decay,
+                propagate_depth,
             },
             cli.json,
         ),

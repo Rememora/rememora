@@ -159,23 +159,32 @@ rememora agent-loop --repo owner/repo --once
 
 ## Agent Setup
 
-### Automatic Setup
+### Claude Code (Recommended: Skill)
+
+The fastest way to add Rememora to Claude Code is as a skill:
 
 ```bash
-# Detect installed agents and show what would be configured
-rememora setup
-
-# Apply the configuration
-rememora setup --apply
+# Copy the plugin to your Claude Code plugins directory
+cp -r plugin/ ~/.claude/plugins/rememora/
 ```
 
-Auto-detects Claude Code, Codex, and Gemini CLI, then patches their config files with rememora instructions (behavioral triggers, hooks, and workflow examples).
+This gives you **fully autonomous operation** — no manual commands needed:
 
-### Manual Setup
+| Component | What it does |
+|-----------|-------------|
+| **SessionStart hook** | Loads project context + starts rememora session |
+| **SessionEnd hook** | Closes the active session |
+| **Stop hook** | Curates memories from the session transcript after each turn |
+| **rememora-save skill** | Claude autonomously saves decisions, bug fixes, patterns |
+| **rememora-search skill** | Claude autonomously searches before implementations |
+| **`/rememora` command** | Manual save, search, or status check |
 
-Add to your agent's system prompt or instructions file:
+After copying, restart Claude Code. The plugin auto-detects your project from the working directory.
 
-**Claude Code** (`~/.claude/CLAUDE.md`):
+### Claude Code (Alternative: CLAUDE.md)
+
+If you prefer manual control, add to `~/.claude/CLAUDE.md`:
+
 ```markdown
 ## Rememora Memory System
 On session start:
@@ -188,7 +197,10 @@ During work, save important discoveries:
 Before ending: `rememora session end <id> --summary "..." --working-state "..."`
 ```
 
-**Codex** (`~/.codex/config.toml`):
+### Codex
+
+Add to `~/.codex/config.toml`:
+
 ```toml
 system_prompt = """
 On session start: run `rememora context --auto` and `rememora session start --agent codex ...`
@@ -197,19 +209,21 @@ Before ending: `rememora session end <id> --summary "..." --working-state "..."`
 """
 ```
 
-## Claude Code Plugin
+### Gemini CLI
 
-Rememora ships with a Claude Code plugin for fully autonomous operation:
+Add to `~/.gemini/GEMINI.md` using the same pattern as the Claude Code CLAUDE.md approach.
 
-**Hooks** (fire automatically):
-- **SessionStart** — loads project context + starts rememora session + checks consolidation gate
-- **SessionEnd** — closes the active session
-- **Stop** — curates memories from the session transcript after each conversation turn
+### Auto-Setup (All Agents)
 
-**Skills** (model-invoked):
-- **rememora-save** — triggers autonomously after decisions, bug fixes, pattern discoveries
-- **rememora-search** — triggers before non-trivial implementations
-- **rememora-init** — manual `/rememora` command for save, search, status
+```bash
+# Detect installed agents and show what would be configured
+rememora setup
+
+# Apply the configuration
+rememora setup --apply
+```
+
+Auto-detects Claude Code, Codex, and Gemini CLI, then patches their config files with rememora instructions.
 
 ## Commands
 
@@ -425,9 +439,9 @@ cargo clippy        # Lint
 - [x] Eval benchmark harness (scenarios + long-run + conditions matrix)
 - [x] Cheatsheet context mode (compact top-5 summary)
 - [ ] Vector search via candle + sqlite-vec (hybrid BM25 + cosine similarity)
-- [ ] Hierarchical retrieval with score propagation
+- [x] Hierarchical retrieval with score propagation
 - [ ] Memory evolution — LLM-based consolidation of old memories
-- [ ] TUI dashboard for browsing memories
+- [x] TUI dashboard for browsing memories
 
 ## Insights
 

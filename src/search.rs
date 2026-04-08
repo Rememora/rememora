@@ -104,6 +104,24 @@ pub fn search(
     Ok(rows)
 }
 
+/// Search with hierarchical score propagation.
+///
+/// Runs a normal BM25 search with an expanded limit (3x), then applies
+/// URI-tree propagation to boost related contexts. Results are re-sorted
+/// by propagated score (positive, higher = better).
+pub fn search_with_propagation(
+    conn: &Connection,
+    query: &str,
+    project: Option<&str>,
+    category: Option<&str>,
+    limit: usize,
+    config: &crate::propagate::PropagationConfig,
+) -> Result<Vec<SearchResult>> {
+    let expanded_limit = limit * 3;
+    let results = search(conn, query, project, category, expanded_limit)?;
+    crate::propagate::propagate_scores(conn, results, config, limit)
+}
+
 /// Store a precomputed embedding for a context in the context_embeddings table.
 pub fn store_embedding(
     conn: &Connection,
