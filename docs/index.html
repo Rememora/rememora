@@ -87,15 +87,16 @@
             <button class="code-copy">Copy</button>
           </div>
           <div class="code-body">
-<pre><span class="comment"># Agent A (Claude Code) saves a decision</span>
-<span class="prompt">$</span> <span class="cmd">rememora</span> <span class="cmd">save</span> <span class="string">"Chose Zustand over Redux for state"</span> \
-    <span class="flag">--category</span> decision <span class="flag">--project</span> myapp
+<pre><span class="comment"># 1. Install the CLI</span>
+<span class="prompt">$</span> <span class="cmd">brew install</span> Rememora/tap/rememora
 
-<span class="comment"># Agent B (Codex) picks up full context</span>
-<span class="prompt">$</span> <span class="cmd">rememora</span> <span class="cmd">context</span> <span class="flag">--project</span> myapp
-<span class="output">  12 memories loaded (3 decisions, 4 entities, 5 patterns)
-  Last session: auth flow 80% done (Claude Code, 2h ago)
-  Working state: Login UI done. Token refresh blocked...</span></pre>
+<span class="comment"># 2. Add as a Claude Code plugin — that's it.</span>
+<span class="prompt">&gt;</span> <span class="cmd">/plugin marketplace add</span> Rememora/rememora
+<span class="prompt">&gt;</span> <span class="cmd">/plugin install</span> rememora@rememora
+
+<span class="comment"># Claude now automatically saves decisions, searches</span>
+<span class="comment"># before implementing, and curates memories from every</span>
+<span class="comment"># session — no manual commands needed.</span></pre>
           </div>
         </div>
       </div>
@@ -657,9 +658,10 @@
     <div class="container text-center">
       <div class="reveal">
         <span class="section-label">Install</span>
-        <h2 class="section-title">Get started in <span class="gradient-text">seconds</span></h2>
+        <h2 class="section-title">Install the plugin, <span class="gradient-text">that's it</span></h2>
         <p class="section-subtitle">
-          One command to install, one command to configure all your agents.
+          Two commands. No configuration, no manual prompts, no learning curve.<br>
+          The plugin handles everything &mdash; your agents don't need to know any commands.
         </p>
       </div>
 
