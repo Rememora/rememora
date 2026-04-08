@@ -231,6 +231,18 @@ rememora setup --apply
 
 Auto-detects Claude Code, Codex, and Gemini CLI, then patches their config files with rememora instructions.
 
+## Desktop App
+
+A native desktop app built with Tauri for browsing memories visually.
+
+![Rememora Desktop Dashboard](docs/img/desktop-dashboard.png)
+
+```bash
+cd desktop
+pnpm install
+cargo tauri dev
+```
+
 ## Commands
 
 | Command | Description |
