@@ -159,16 +159,22 @@ rememora agent-loop --repo owner/repo --once
 
 ## Agent Setup
 
-### Claude Code (Recommended: Skill)
+### Claude Code (Recommended: Plugin)
 
-The fastest way to add Rememora to Claude Code is as a skill:
+Install Rememora as a Claude Code plugin for **fully autonomous operation**:
 
 ```bash
-# Copy the plugin to your Claude Code plugins directory
-cp -r plugin/ ~/.claude/plugins/rememora/
+# 1. Add the Rememora marketplace
+/plugin marketplace add Rememora/rememora
+
+# 2. Install the plugin
+/plugin install rememora@rememora
+
+# For project-wide install (shared via git):
+/plugin install rememora@rememora --scope project
 ```
 
-This gives you **fully autonomous operation** — no manual commands needed:
+This gives you hooks + skills that work automatically — no manual commands needed:
 
 | Component | What it does |
 |-----------|-------------|
@@ -179,7 +185,7 @@ This gives you **fully autonomous operation** — no manual commands needed:
 | **rememora-search skill** | Claude autonomously searches before implementations |
 | **`/rememora` command** | Manual save, search, or status check |
 
-After copying, restart Claude Code. The plugin auto-detects your project from the working directory.
+After installing, restart Claude Code. The plugin auto-detects your project from the working directory.
 
 ### Claude Code (Alternative: CLAUDE.md)
 
