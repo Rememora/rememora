@@ -198,7 +198,9 @@
 
       <!-- Agent Setup -->
       <h2 id="agent-setup">Agent Setup</h2>
-      <p>Rememora can auto-configure Claude Code, Codex, and Gemini CLI with a single command:</p>
+
+      <h3>Claude Code: Install as Skill (Recommended)</h3>
+      <p>The fastest way to add Rememora to Claude Code is as a skill. This gives you <strong>fully autonomous operation</strong> &mdash; no manual commands needed.</p>
 
       <div class="code-window">
         <div class="code-header">
@@ -207,16 +209,28 @@
           <button class="code-copy">Copy</button>
         </div>
         <div class="code-body">
-<pre><span class="comment"># Preview what would be configured</span>
-<span class="prompt">$</span> <span class="cmd">rememora</span> <span class="cmd">setup</span>
-
-<span class="comment"># Apply the configuration</span>
-<span class="prompt">$</span> <span class="cmd">rememora</span> <span class="cmd">setup</span> <span class="flag">--apply</span></pre>
+<pre><span class="comment"># Copy the plugin to your Claude Code plugins directory</span>
+<span class="prompt">$</span> <span class="cmd">cp</span> <span class="flag">-r</span> plugin/ ~/.claude/plugins/rememora/</pre>
         </div>
       </div>
 
-      <h3>Manual Setup: Claude Code</h3>
-      <p>Add to <code>~/.claude/CLAUDE.md</code>:</p>
+      <p>After copying, restart Claude Code. The plugin auto-detects your project from the working directory.</p>
+
+      <h4>What you get</h4>
+      <table>
+        <thead><tr><th>Component</th><th>Type</th><th>What it does</th></tr></thead>
+        <tbody>
+          <tr><td><code>SessionStart</code></td><td>Hook</td><td>Loads project context + starts rememora session</td></tr>
+          <tr><td><code>SessionEnd</code></td><td>Hook</td><td>Closes the active session</td></tr>
+          <tr><td><code>Stop</code></td><td>Hook</td><td>Curates memories from the session transcript after each turn</td></tr>
+          <tr><td><code>rememora-save</code></td><td>Skill</td><td>Claude autonomously saves decisions, bug fixes, patterns</td></tr>
+          <tr><td><code>rememora-search</code></td><td>Skill</td><td>Claude autonomously searches before implementations</td></tr>
+          <tr><td><code>/rememora</code></td><td>Command</td><td>Manual save, search, or status check</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Claude Code: Alternative (CLAUDE.md)</h3>
+      <p>If you prefer manual control instead of the plugin, add to <code>~/.claude/CLAUDE.md</code>:</p>
       <div class="code-window">
         <div class="code-header">
           <div class="code-dots"><span class="red"></span><span class="yellow"></span><span class="green"></span></div>
@@ -238,7 +252,7 @@ Before ending:
         </div>
       </div>
 
-      <h3>Manual Setup: Codex</h3>
+      <h3>Codex</h3>
       <p>Add to <code>~/.codex/config.toml</code>:</p>
       <div class="code-window">
         <div class="code-header">
@@ -256,8 +270,25 @@ Before ending: `rememora session end &lt;id&gt; --summary "..." ...`
         </div>
       </div>
 
-      <h3>Manual Setup: Gemini CLI</h3>
-      <p>Add to <code>~/.gemini/GEMINI.md</code> or your system instructions file using the same pattern.</p>
+      <h3>Gemini CLI</h3>
+      <p>Add to <code>~/.gemini/GEMINI.md</code> or your system instructions file using the same pattern as the Claude Code CLAUDE.md approach.</p>
+
+      <h3>Auto-Setup (All Agents)</h3>
+      <p>Rememora can also auto-detect and configure all installed agents at once:</p>
+      <div class="code-window">
+        <div class="code-header">
+          <div class="code-dots"><span class="red"></span><span class="yellow"></span><span class="green"></span></div>
+          <span class="code-title">terminal</span>
+          <button class="code-copy">Copy</button>
+        </div>
+        <div class="code-body">
+<pre><span class="comment"># Preview what would be configured</span>
+<span class="prompt">$</span> <span class="cmd">rememora</span> <span class="cmd">setup</span>
+
+<span class="comment"># Apply the configuration</span>
+<span class="prompt">$</span> <span class="cmd">rememora</span> <span class="cmd">setup</span> <span class="flag">--apply</span></pre>
+        </div>
+      </div>
 
       <!-- ==================== CORE CONCEPTS ==================== -->
 

@@ -654,25 +654,28 @@
 <pre><span class="comment"># 1. Install</span>
 <span class="prompt">$</span> <span class="cmd">brew install</span> Rememora/tap/rememora
 
-<span class="comment"># 2. Auto-configure your agents</span>
-<span class="prompt">$</span> <span class="cmd">rememora</span> <span class="cmd">setup</span> <span class="flag">--apply</span>
-<span class="output">  Detected: Claude Code, Codex
-  ✓ Patched ~/.claude/CLAUDE.md
-  ✓ Patched ~/.codex/config.toml
-  ✓ Added session hooks</span>
+<span class="comment"># 2. Add as a Claude Code skill (recommended)</span>
+<span class="prompt">$</span> <span class="cmd">cp</span> <span class="flag">-r</span> plugin/ ~/.claude/plugins/rememora/
+<span class="comment"># → Hooks + skills installed. Claude auto-saves &amp; searches memory.</span>
 
 <span class="comment"># 3. Register a project</span>
 <span class="prompt">$</span> <span class="cmd">rememora</span> <span class="cmd">project add</span> myapp <span class="flag">--path</span> . \
     <span class="flag">--description</span> <span class="string">"My awesome app"</span>
 
-<span class="comment"># 4. Start a session</span>
-<span class="prompt">$</span> <span class="cmd">rememora</span> <span class="cmd">session start</span> <span class="flag">--agent</span> claude-code \
-    <span class="flag">--project</span> myapp <span class="flag">--intent</span> <span class="string">"building auth"</span>
-
-<span class="comment"># You're set! Memories persist across sessions.</span></pre>
+<span class="comment"># 4. Start coding — memories persist across sessions.</span>
+<span class="comment"># Claude will automatically:</span>
+<span class="comment">#   • Load project context on session start</span>
+<span class="comment">#   • Save decisions, bug fixes, patterns</span>
+<span class="comment">#   • Search before non-trivial implementations</span>
+<span class="comment">#   • Curate memories from transcripts</span></pre>
           </div>
         </div>
       </div>
+
+      <p class="reveal" style="color: var(--text-muted); font-size: 0.85rem; margin-top: 16px; text-align: center;">
+        Or use <code style="font-family: var(--font-mono); color: var(--accent-1); background: rgba(108, 92, 231, 0.1); padding: 2px 6px; border-radius: 4px;">rememora setup --apply</code> to auto-configure Codex, Gemini CLI, and other agents.
+        <a href="docs.html#agent-setup" style="color: var(--accent-2);">See all setup options &rarr;</a>
+      </p>
     </div>
   </section>
 
