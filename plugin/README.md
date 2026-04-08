@@ -13,13 +13,13 @@ Persistent cross-agent memory for Claude Code. Automatically saves decisions, bu
 
 ```bash
 # 1. Add the Rememora marketplace
-/plugin marketplace add Rememora/rememora
+claude plugin marketplace add Rememora/rememora
 
 # 2. Install the plugin
-/plugin install rememora@rememora
+claude plugin install rememora@rememora
 
 # For project-wide install (shared via git):
-/plugin install rememora@rememora --scope project
+claude plugin install rememora@rememora --scope project
 ```
 
 ## Requirements

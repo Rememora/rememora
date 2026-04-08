@@ -36,11 +36,10 @@
         <span></span><span></span><span></span>
       </button>
       <ul class="nav-links">
+        <li><a href="#install">Install</a></li>
+        <li><a href="#desktop">Desktop</a></li>
         <li><a href="#features">Features</a></li>
         <li><a href="#how-it-works">How It Works</a></li>
-        <li><a href="#architecture">Architecture</a></li>
-        <li><a href="#desktop">Desktop</a></li>
-        <li><a href="#install">Install</a></li>
         <li><a href="docs.html">Docs</a></li>
         <li><a href="https://github.com/Rememora/rememora" class="nav-cta">GitHub</a></li>
       </ul>
@@ -91,8 +90,8 @@
 <span class="prompt">$</span> <span class="cmd">brew install</span> Rememora/tap/rememora
 
 <span class="comment"># 2. Add as a Claude Code plugin — that's it.</span>
-<span class="prompt">&gt;</span> <span class="cmd">/plugin marketplace add</span> Rememora/rememora
-<span class="prompt">&gt;</span> <span class="cmd">/plugin install</span> rememora@rememora
+<span class="prompt">$</span> <span class="cmd">claude plugin marketplace add</span> Rememora/rememora
+<span class="prompt">$</span> <span class="cmd">claude plugin install</span> rememora@rememora
 
 <span class="comment"># Claude now automatically saves decisions, searches</span>
 <span class="comment"># before implementing, and curates memories from every</span>
@@ -147,6 +146,96 @@
       </div>
     </div>
   </div>
+
+  <div class="section-divider"></div>
+
+  <!-- ===== Install (moved up) ===== -->
+  <section id="install">
+    <div class="container text-center">
+      <div class="reveal">
+        <span class="section-label">Install</span>
+        <h2 class="section-title">Install the plugin, <span class="gradient-text">that's it</span></h2>
+        <p class="section-subtitle">
+          Two commands. No configuration, no manual prompts, no learning curve.<br>
+          The plugin handles everything &mdash; your agents don't need to know any commands.
+        </p>
+      </div>
+
+      <div class="reveal" style="margin-bottom: 48px;">
+        <div class="install-command" style="margin-bottom: 16px;">
+          <span class="dollar">$</span>
+          <span class="text">brew install Rememora/tap/rememora</span>
+          <span class="copy-icon">&#x2398; Copy</span>
+        </div>
+        <p style="color: var(--text-muted); font-size: 0.85rem;">or <code style="font-family: var(--font-mono); color: var(--accent-1); background: rgba(108, 92, 231, 0.1); padding: 2px 6px; border-radius: 4px;">cargo install --path .</code> from source</p>
+      </div>
+
+      <div class="reveal">
+        <div class="code-window" style="max-width: 640px; margin: 0 auto;">
+          <div class="code-header">
+            <div class="code-dots">
+              <span class="red"></span><span class="yellow"></span><span class="green"></span>
+            </div>
+            <span class="code-title">quickstart.sh</span>
+            <button class="code-copy">Copy</button>
+          </div>
+          <div class="code-body">
+<pre><span class="comment"># 1. Install the CLI</span>
+<span class="prompt">$</span> <span class="cmd">brew install</span> Rememora/tap/rememora
+
+<span class="comment"># 2. Add as a Claude Code plugin</span>
+<span class="prompt">$</span> <span class="cmd">claude plugin marketplace add</span> Rememora/rememora
+<span class="prompt">$</span> <span class="cmd">claude plugin install</span> rememora@rememora
+
+<span class="comment"># 3. Register a project</span>
+<span class="prompt">$</span> <span class="cmd">rememora</span> <span class="cmd">project add</span> myapp <span class="flag">--path</span> . \
+    <span class="flag">--description</span> <span class="string">"My awesome app"</span>
+
+<span class="comment"># Done. Claude will automatically:</span>
+<span class="comment">#   • Load project context on session start</span>
+<span class="comment">#   • Save decisions, bug fixes, patterns</span>
+<span class="comment">#   • Search before non-trivial implementations</span>
+<span class="comment">#   • Curate memories from transcripts</span></pre>
+          </div>
+        </div>
+      </div>
+
+      <p class="reveal" style="color: var(--text-muted); font-size: 0.85rem; margin-top: 16px; text-align: center;">
+        Or use <code style="font-family: var(--font-mono); color: var(--accent-1); background: rgba(108, 92, 231, 0.1); padding: 2px 6px; border-radius: 4px;">rememora setup --apply</code> to auto-configure Codex, Gemini CLI, and other agents.
+        <a href="docs.html#agent-setup" style="color: var(--accent-2);">See all setup options &rarr;</a>
+      </p>
+    </div>
+  </section>
+
+  <div class="section-divider"></div>
+
+  <!-- ===== Desktop App (moved up) ===== -->
+  <section id="desktop">
+    <div class="container text-center">
+      <div class="reveal">
+        <span class="section-label">Desktop App</span>
+        <h2 class="section-title">Browse your memories <span class="gradient-text">visually</span></h2>
+        <p class="section-subtitle">
+          A native desktop app built with Tauri &mdash; dashboard, browser, and full-text search across all your memories.
+        </p>
+      </div>
+
+      <div class="reveal" style="margin-top: 32px;">
+        <img src="img/desktop-dashboard.png" alt="Rememora Desktop — Dashboard view showing memory stats, category distribution, recent memories and sessions" style="width: 100%; max-width: 960px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.06); box-shadow: 0 8px 32px rgba(0,0,0,0.4);" />
+      </div>
+
+      <div class="features-grid reveal" style="grid-template-columns: repeat(2, 1fr); max-width: 960px; margin: 48px auto 0;">
+        <div style="text-align: center;">
+          <img src="img/desktop-browse.png" alt="Browse view with project and category filters" style="width: 100%; border-radius: 10px; border: 1px solid rgba(255,255,255,0.06); box-shadow: 0 4px 16px rgba(0,0,0,0.3);" />
+          <p style="margin-top: 12px; color: var(--text-muted); font-size: 0.85rem;">Filter by project &amp; category</p>
+        </div>
+        <div style="text-align: center;">
+          <img src="img/desktop-search.png" alt="Search view with BM25 results" style="width: 100%; border-radius: 10px; border: 1px solid rgba(255,255,255,0.06); box-shadow: 0 4px 16px rgba(0,0,0,0.3);" />
+          <p style="margin-top: 12px; color: var(--text-muted); font-size: 0.85rem;">Full-text search with BM25 ranking</p>
+        </div>
+      </div>
+    </div>
+  </section>
 
   <div class="section-divider"></div>
 
@@ -546,36 +635,6 @@
 
   <div class="section-divider"></div>
 
-  <!-- ===== Desktop App ===== -->
-  <section id="desktop">
-    <div class="container text-center">
-      <div class="reveal">
-        <span class="section-label">Desktop App</span>
-        <h2 class="section-title">Browse your memories <span class="gradient-text">visually</span></h2>
-        <p class="section-subtitle">
-          A native desktop app built with Tauri &mdash; dashboard, browser, and full-text search across all your memories.
-        </p>
-      </div>
-
-      <div class="reveal" style="margin-top: 32px;">
-        <img src="img/desktop-dashboard.png" alt="Rememora Desktop — Dashboard view showing memory stats, category distribution, recent memories and sessions" style="width: 100%; max-width: 960px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.06); box-shadow: 0 8px 32px rgba(0,0,0,0.4);" />
-      </div>
-
-      <div class="features-grid reveal" style="grid-template-columns: repeat(2, 1fr); max-width: 960px; margin: 48px auto 0;">
-        <div style="text-align: center;">
-          <img src="img/desktop-browse.png" alt="Browse view with project and category filters" style="width: 100%; border-radius: 10px; border: 1px solid rgba(255,255,255,0.06); box-shadow: 0 4px 16px rgba(0,0,0,0.3);" />
-          <p style="margin-top: 12px; color: var(--text-muted); font-size: 0.85rem;">Filter by project &amp; category</p>
-        </div>
-        <div style="text-align: center;">
-          <img src="img/desktop-search.png" alt="Search view with BM25 results" style="width: 100%; border-radius: 10px; border: 1px solid rgba(255,255,255,0.06); box-shadow: 0 4px 16px rgba(0,0,0,0.3);" />
-          <p style="margin-top: 12px; color: var(--text-muted); font-size: 0.85rem;">Full-text search with BM25 ranking</p>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <div class="section-divider"></div>
-
   <!-- ===== Why Rememora ===== -->
   <section id="why">
     <div class="container text-center">
@@ -648,67 +707,6 @@
           </table>
         </div>
       </div>
-    </div>
-  </section>
-
-  <div class="section-divider"></div>
-
-  <!-- ===== Install ===== -->
-  <section id="install">
-    <div class="container text-center">
-      <div class="reveal">
-        <span class="section-label">Install</span>
-        <h2 class="section-title">Install the plugin, <span class="gradient-text">that's it</span></h2>
-        <p class="section-subtitle">
-          Two commands. No configuration, no manual prompts, no learning curve.<br>
-          The plugin handles everything &mdash; your agents don't need to know any commands.
-        </p>
-      </div>
-
-      <div class="reveal" style="margin-bottom: 48px;">
-        <div class="install-command" style="margin-bottom: 16px;">
-          <span class="dollar">$</span>
-          <span class="text">brew install Rememora/tap/rememora</span>
-          <span class="copy-icon">&#x2398; Copy</span>
-        </div>
-        <p style="color: var(--text-muted); font-size: 0.85rem;">or <code style="font-family: var(--font-mono); color: var(--accent-1); background: rgba(108, 92, 231, 0.1); padding: 2px 6px; border-radius: 4px;">cargo install --path .</code> from source</p>
-      </div>
-
-      <div class="reveal">
-        <div class="code-window" style="max-width: 640px; margin: 0 auto;">
-          <div class="code-header">
-            <div class="code-dots">
-              <span class="red"></span><span class="yellow"></span><span class="green"></span>
-            </div>
-            <span class="code-title">quickstart.sh</span>
-            <button class="code-copy">Copy</button>
-          </div>
-          <div class="code-body">
-<pre><span class="comment"># 1. Install the CLI</span>
-<span class="prompt">$</span> <span class="cmd">brew install</span> Rememora/tap/rememora
-
-<span class="comment"># 2. Add as a Claude Code plugin</span>
-<span class="prompt">&gt;</span> <span class="cmd">/plugin marketplace add</span> Rememora/rememora
-<span class="prompt">&gt;</span> <span class="cmd">/plugin install</span> rememora@rememora
-
-<span class="comment"># 3. Register a project</span>
-<span class="prompt">$</span> <span class="cmd">rememora</span> <span class="cmd">project add</span> myapp <span class="flag">--path</span> . \
-    <span class="flag">--description</span> <span class="string">"My awesome app"</span>
-
-<span class="comment"># 4. Start coding — memories persist across sessions.</span>
-<span class="comment"># Claude will automatically:</span>
-<span class="comment">#   • Load project context on session start</span>
-<span class="comment">#   • Save decisions, bug fixes, patterns</span>
-<span class="comment">#   • Search before non-trivial implementations</span>
-<span class="comment">#   • Curate memories from transcripts</span></pre>
-          </div>
-        </div>
-      </div>
-
-      <p class="reveal" style="color: var(--text-muted); font-size: 0.85rem; margin-top: 16px; text-align: center;">
-        Or use <code style="font-family: var(--font-mono); color: var(--accent-1); background: rgba(108, 92, 231, 0.1); padding: 2px 6px; border-radius: 4px;">rememora setup --apply</code> to auto-configure Codex, Gemini CLI, and other agents.
-        <a href="docs.html#agent-setup" style="color: var(--accent-2);">See all setup options &rarr;</a>
-      </p>
     </div>
   </section>
 
