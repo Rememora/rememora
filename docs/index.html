@@ -3,12 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Rememora — Persistent Memory for AI Coding Assistants</title>
-  <meta name="description" content="Cross-agent persistent memory for AI coding assistants. One SQLite database shared by Claude Code, Codex, and Gemini CLI. Fast, local-first, autonomous.">
+  <title>Rememora — Persistent Memory for AI Coding Agents</title>
+  <meta name="description" content="Cross-agent persistent memory for AI coding agents. One SQLite database shared by Claude Code, Codex, and Gemini CLI. Fast, local-first, autonomous.">
   <meta name="theme-color" content="#6c5ce7">
 
   <!-- Open Graph -->
-  <meta property="og:title" content="Rememora — Persistent Memory for AI Coding Assistants">
+  <meta property="og:title" content="Rememora — Persistent Memory for AI Coding Agents">
   <meta property="og:description" content="Cross-agent persistent memory. One SQLite database shared by Claude Code, Codex, and Gemini CLI.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://rememora.ai">
@@ -36,6 +36,7 @@
         <span></span><span></span><span></span>
       </button>
       <ul class="nav-links">
+        <li><a href="#problem">The Problem</a></li>
         <li><a href="#desktop">Desktop</a></li>
         <li><a href="#features">Features</a></li>
         <li><a href="#how-it-works">How It Works</a></li>
@@ -61,7 +62,7 @@
 
       <h1>
         Persistent memory for<br>
-        <span class="gradient-text">AI coding assistants</span>
+        <span class="gradient-text">AI coding agents</span>
       </h1>
 
       <p class="hero-description">
@@ -157,6 +158,35 @@
 
   <div class="section-divider"></div>
 
+  <!-- ===== The Problem ===== -->
+  <section id="problem">
+    <div class="container text-center">
+      <div class="reveal">
+        <span class="section-label">The Problem</span>
+        <h2 class="section-title">Your AI agents have <span class="gradient-text">amnesia</span></h2>
+        <p class="section-subtitle">
+          Every session starts from scratch. Switch agents mid-task and context is lost.
+          Come back after a week &mdash; your agent has forgotten everything.
+        </p>
+      </div>
+
+      <div class="features-grid-2 reveal" style="max-width: 800px; margin: 0 auto;">
+        <div class="glass-card">
+          <div class="card-icon pink">&#10007;</div>
+          <h3>Without Rememora</h3>
+          <p>Agents lose all context between sessions. You manually re-explain decisions, repeat yourself, and watch agents make mistakes you already corrected.</p>
+        </div>
+        <div class="glass-card" style="border-color: rgba(85, 239, 196, 0.2);">
+          <div class="card-icon mint">&#10003;</div>
+          <h3>With Rememora</h3>
+          <p>Every agent inherits full project history. Decisions, patterns, gotchas, and working state carry over seamlessly &mdash; even between different agents.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="section-divider"></div>
+
   <!-- ===== Desktop App ===== -->
   <section id="desktop">
     <div class="container text-center">
@@ -180,35 +210,6 @@
         <div style="text-align: center;">
           <img src="img/desktop-search.png" alt="Search view with BM25 results" style="width: 100%; border-radius: 10px; border: 1px solid rgba(255,255,255,0.06); box-shadow: 0 4px 16px rgba(0,0,0,0.3);" />
           <p style="margin-top: 12px; color: var(--text-muted); font-size: 0.85rem;">Full-text search with BM25 ranking</p>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <div class="section-divider"></div>
-
-  <!-- ===== The Problem ===== -->
-  <section id="problem">
-    <div class="container text-center">
-      <div class="reveal">
-        <span class="section-label">The Problem</span>
-        <h2 class="section-title">Your AI assistants have <span class="gradient-text">amnesia</span></h2>
-        <p class="section-subtitle">
-          Every session starts from scratch. Switch agents mid-task and context is lost.
-          Come back after a week &mdash; your assistant has forgotten everything.
-        </p>
-      </div>
-
-      <div class="features-grid-2 reveal" style="max-width: 800px; margin: 0 auto;">
-        <div class="glass-card">
-          <div class="card-icon pink">&#10007;</div>
-          <h3>Without Rememora</h3>
-          <p>Agents lose all context between sessions. You manually re-explain decisions, repeat yourself, and watch agents make mistakes you already corrected.</p>
-        </div>
-        <div class="glass-card" style="border-color: rgba(85, 239, 196, 0.2);">
-          <div class="card-icon mint">&#10003;</div>
-          <h3>With Rememora</h3>
-          <p>Every agent inherits full project history. Decisions, patterns, gotchas, and working state carry over seamlessly &mdash; even between different agents.</p>
         </div>
       </div>
     </div>
