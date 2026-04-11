@@ -13,7 +13,7 @@
       "author": {
         "name": "Rememora"
       },
-      "homepage": "https://rememora.dev",
+      "homepage": "https://rememora.ai",
       "repository": "https://github.com/Rememora/rememora",
       "license": "MIT",
       "keywords": ["memory", "rememora", "persistent", "cross-agent"]

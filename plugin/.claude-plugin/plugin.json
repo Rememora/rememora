@@ -6,7 +6,7 @@
     "name": "Rememora"
   },
   "license": "MIT",
-  "homepage": "https://rememora.dev",
+  "homepage": "https://rememora.ai",
   "repository": "https://github.com/Rememora/rememora",
   "keywords": ["memory", "context", "persistence", "cross-agent", "knowledge-base"],
   "requirements": {
