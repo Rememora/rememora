@@ -1,0 +1,848 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rememora Eval Report — instruction-mode-eval</title>
+<style>
+  :root {
+    --bg: #0f172a;
+    --surface: #1e293b;
+    --surface2: #334155;
+    --text: #e2e8f0;
+    --muted: #64748b;
+    --accent: #818cf8;
+    --green: #34d399;
+    --blue: #60a5fa;
+    --yellow: #fbbf24;
+    --red: #f87171;
+    --radius: 8px;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    padding: 2rem;
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+  h1 { font-size: 1.8rem; margin-bottom: 0.25rem; }
+  h2 { font-size: 1.3rem; margin: 2rem 0 1rem; color: var(--accent); border-bottom: 1px solid var(--surface2); padding-bottom: 0.5rem; }
+  h3 { font-size: 1.1rem; margin-bottom: 0.5rem; }
+  .subtitle { color: var(--muted); font-size: 0.9rem; margin-bottom: 2rem; }
+  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; vertical-align: middle; }
+
+  /* Summary table */
+  table { width: 100%; border-collapse: collapse; margin-bottom: 1.5rem; }
+  th { text-align: left; padding: 0.6rem 0.8rem; border-bottom: 2px solid var(--surface2); color: var(--muted); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; white-space: nowrap; }
+  td { padding: 0.6rem 0.8rem; border-bottom: 1px solid var(--surface); vertical-align: middle; }
+  tr:hover td { background: var(--surface); }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .desc { max-width: 250px; font-size: 0.85rem; color: var(--muted); }
+  .pass { color: var(--green); font-weight: bold; }
+  .fail { color: var(--red); font-weight: bold; }
+  .muted { color: var(--muted); font-size: 0.85rem; }
+
+  /* Bar charts in tables */
+  .bar-container { display: flex; align-items: center; gap: 8px; min-width: 120px; }
+  .bar { height: 18px; border-radius: 3px; min-width: 2px; transition: width 0.3s; }
+  .bar-label { font-size: 0.85rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+  /* Horizontal bar charts */
+  .chart { background: var(--surface); border-radius: var(--radius); padding: 1.2rem; margin-bottom: 1.5rem; }
+  .chart-row { display: flex; align-items: center; margin-bottom: 0.6rem; }
+  .chart-row:last-child { margin-bottom: 0; }
+  .chart-label { width: 180px; font-size: 0.85rem; flex-shrink: 0; }
+  .chart-bar-wrap { flex: 1; background: var(--surface2); border-radius: 4px; height: 24px; overflow: hidden; }
+  .chart-bar { height: 100%; border-radius: 4px; display: flex; align-items: center; justify-content: flex-end; padding-right: 8px; font-size: 0.8rem; font-weight: 600; color: var(--bg); min-width: fit-content; transition: width 0.3s; }
+
+  /* Detail sections */
+  .condition-detail { background: var(--surface); border-radius: var(--radius); padding: 1.5rem; margin-bottom: 1.5rem; }
+  .condition-detail .meta { color: var(--muted); font-size: 0.85rem; margin-bottom: 1rem; }
+  .detail-table { font-size: 0.85rem; }
+  .detail-table th { font-size: 0.75rem; }
+  .detail-table td { padding: 0.4rem 0.6rem; }
+
+  details { cursor: pointer; }
+  details summary { color: var(--blue); font-size: 0.85rem; }
+  .cmd-list { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.75rem; background: var(--bg); padding: 0.6rem; border-radius: 4px; margin-top: 0.4rem; white-space: pre-wrap; word-break: break-all; max-height: 200px; overflow-y: auto; }
+
+  /* Grid for charts */
+  .charts-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
+  @media (max-width: 900px) { .charts-grid { grid-template-columns: 1fr; } }
+
+  .card { background: var(--surface); border-radius: var(--radius); padding: 1.2rem; }
+  .card h3 { font-size: 0.95rem; margin-bottom: 1rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+
+  /* Stats row */
+  .stats { display: flex; gap: 1.5rem; margin-bottom: 2rem; flex-wrap: wrap; }
+  .stat { background: var(--surface); border-radius: var(--radius); padding: 1rem 1.5rem; flex: 1; min-width: 150px; }
+  .stat-value { font-size: 2rem; font-weight: 700; }
+  .stat-label { font-size: 0.8rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+
+  footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--surface2); color: var(--muted); font-size: 0.8rem; text-align: center; }
+</style>
+</head>
+<body>
+
+<h1>Rememora Eval Report</h1>
+<p class="subtitle">Sequence: <strong>instruction-mode-eval</strong> &middot; Generated: 2026-04-05T10:19:24.843Z &middot; Conditions: 6</p>
+
+<div class="stats">
+  <div class="stat">
+    <div class="stat-value">6</div>
+    <div class="stat-label">Conditions</div>
+  </div>
+  <div class="stat">
+    <div class="stat-value">10</div>
+    <div class="stat-label">Total Runs</div>
+  </div>
+  <div class="stat">
+    <div class="stat-value">0</div>
+    <div class="stat-label">Autonomous Saves</div>
+  </div>
+  <div class="stat">
+    <div class="stat-value">0</div>
+    <div class="stat-label">Autonomous Searches</div>
+  </div>
+</div>
+
+<h2>Condition Comparison</h2>
+<table>
+  <thead>
+    <tr>
+      <th>Condition</th><th>Runs</th><th>Completed</th><th>Rate</th><th>Autonomous Saves</th><th>Autonomous Searches</th><th>P-Saves</th><th>P-Search</th><th>KB/Task</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+        <td><span class="dot" style="background:#34d399"></span>Behavioral Triggers</td>
+        <td class="num">2</td>
+        <td class="num">5/16</td>
+        <td class="num">31%</td>
+        <td><div class="bar-container"><div class="bar" style="width:0.0%;background:#34d399"></div><span class="bar-label">0</span></div></td>
+        <td><div class="bar-container"><div class="bar" style="width:0.0%;background:#60a5fa"></div><span class="bar-label">0</span></div></td>
+        <td class="num">0</td>
+        <td class="num">0</td>
+        <td><div class="bar-container"><div class="bar" style="width:0.0%;background:#a78bfa"></div><span class="bar-label">0</span></div></td>
+      </tr>
+<tr>
+        <td><span class="dot" style="background:#a78bfa"></span>Full Hybrid</td>
+        <td class="num">2</td>
+        <td class="num">7/16</td>
+        <td class="num">44%</td>
+        <td><div class="bar-container"><div class="bar" style="width:0.0%;background:#34d399"></div><span class="bar-label">0</span></div></td>
+        <td><div class="bar-container"><div class="bar" style="width:0.0%;background:#60a5fa"></div><span class="bar-label">0</span></div></td>
+        <td class="num">0</td>
+        <td class="num">0</td>
+        <td><div class="bar-container"><div class="bar" style="width:0.0%;background:#a78bfa"></div><span class="bar-label">0</span></div></td>
+      </tr>
+<tr>
+        <td><span class="dot" style="background:#c084fc"></span>Full Hybrid (tmux)</td>
+        <td class="num">3</td>
+        <td class="num">14/24</td>
+        <td class="num">58%</td>
+        <td><div class="bar-container"><div class="bar" style="width:0.0%;background:#34d399"></div><span class="bar-label">0</span></div></td>
+        <td><div class="bar-container"><div class="bar" style="width:0.0%;background:#60a5fa"></div><span class="bar-label">0</span></div></td>
+        <td class="num">0</td>
+        <td class="num">0</td>
+        <td><div class="bar-container"><div class="bar" style="width:0.0%;background:#a78bfa"></div><span class="bar-label">0</span></div></td>
+      </tr>
+<tr>
+        <td><span class="dot" style="background:#fbbf24"></span>Hooks Only</td>
+        <td class="num">1</td>
+        <td class="num">0/8</td>
+        <td class="num">0%</td>
+        <td><div class="bar-container"><div class="bar" style="width:0.0%;background:#34d399"></div><span class="bar-label">0</span></div></td>
+        <td><div class="bar-container"><div class="bar" style="width:0.0%;background:#60a5fa"></div><span class="bar-label">0</span></div></td>
+        <td class="num">0</td>
+        <td class="num">0</td>
+        <td><div class="bar-container"><div class="bar" style="width:0.0%;background:#a78bfa"></div><span class="bar-label">0</span></div></td>
+      </tr>
+<tr>
+        <td><span class="dot" style="background:#94a3b8"></span>None (baseline)</td>
+        <td class="num">1</td>
+        <td class="num">0/8</td>
+        <td class="num">0%</td>
+        <td><div class="bar-container"><div class="bar" style="width:0.0%;background:#34d399"></div><span class="bar-label">0</span></div></td>
+        <td><div class="bar-container"><div class="bar" style="width:0.0%;background:#60a5fa"></div><span class="bar-label">0</span></div></td>
+        <td class="num">0</td>
+        <td class="num">0</td>
+        <td><div class="bar-container"><div class="bar" style="width:0.0%;background:#a78bfa"></div><span class="bar-label">0</span></div></td>
+      </tr>
+<tr>
+        <td><span class="dot" style="background:#60a5fa"></span>Reference Card</td>
+        <td class="num">1</td>
+        <td class="num">1/8</td>
+        <td class="num">13%</td>
+        <td><div class="bar-container"><div class="bar" style="width:0.0%;background:#34d399"></div><span class="bar-label">0</span></div></td>
+        <td><div class="bar-container"><div class="bar" style="width:0.0%;background:#60a5fa"></div><span class="bar-label">0</span></div></td>
+        <td class="num">0</td>
+        <td class="num">0</td>
+        <td><div class="bar-container"><div class="bar" style="width:0.0%;background:#a78bfa"></div><span class="bar-label">0</span></div></td>
+      </tr>
+  </tbody>
+</table>
+
+<h2>Autonomous Behavior Charts</h2>
+<div class="charts-grid">
+  <div class="card">
+    <h3>Autonomous Saves by Condition</h3>
+    <div class="chart-row">
+        <div class="chart-label">Behavioral Triggers</div>
+        <div class="chart-bar-wrap"><div class="chart-bar" style="width:0.0%;background:#34d399">0</div></div>
+      </div>
+<div class="chart-row">
+        <div class="chart-label">Full Hybrid</div>
+        <div class="chart-bar-wrap"><div class="chart-bar" style="width:0.0%;background:#a78bfa">0</div></div>
+      </div>
+<div class="chart-row">
+        <div class="chart-label">Full Hybrid (tmux)</div>
+        <div class="chart-bar-wrap"><div class="chart-bar" style="width:0.0%;background:#c084fc">0</div></div>
+      </div>
+<div class="chart-row">
+        <div class="chart-label">Hooks Only</div>
+        <div class="chart-bar-wrap"><div class="chart-bar" style="width:0.0%;background:#fbbf24">0</div></div>
+      </div>
+<div class="chart-row">
+        <div class="chart-label">None (baseline)</div>
+        <div class="chart-bar-wrap"><div class="chart-bar" style="width:0.0%;background:#94a3b8">0</div></div>
+      </div>
+<div class="chart-row">
+        <div class="chart-label">Reference Card</div>
+        <div class="chart-bar-wrap"><div class="chart-bar" style="width:0.0%;background:#60a5fa">0</div></div>
+      </div>
+  </div>
+  <div class="card">
+    <h3>Autonomous Searches by Condition</h3>
+    <div class="chart-row">
+        <div class="chart-label">Behavioral Triggers</div>
+        <div class="chart-bar-wrap"><div class="chart-bar" style="width:0.0%;background:#34d399">0</div></div>
+      </div>
+<div class="chart-row">
+        <div class="chart-label">Full Hybrid</div>
+        <div class="chart-bar-wrap"><div class="chart-bar" style="width:0.0%;background:#a78bfa">0</div></div>
+      </div>
+<div class="chart-row">
+        <div class="chart-label">Full Hybrid (tmux)</div>
+        <div class="chart-bar-wrap"><div class="chart-bar" style="width:0.0%;background:#c084fc">0</div></div>
+      </div>
+<div class="chart-row">
+        <div class="chart-label">Hooks Only</div>
+        <div class="chart-bar-wrap"><div class="chart-bar" style="width:0.0%;background:#fbbf24">0</div></div>
+      </div>
+<div class="chart-row">
+        <div class="chart-label">None (baseline)</div>
+        <div class="chart-bar-wrap"><div class="chart-bar" style="width:0.0%;background:#94a3b8">0</div></div>
+      </div>
+<div class="chart-row">
+        <div class="chart-label">Reference Card</div>
+        <div class="chart-bar-wrap"><div class="chart-bar" style="width:0.0%;background:#60a5fa">0</div></div>
+      </div>
+  </div>
+</div>
+
+<h2>Per-Condition Task Breakdown (Latest Run)</h2>
+<section class="condition-detail">
+        <h3><span class="dot" style="background:#34d399"></span>Behavioral Triggers</h3>
+        <p class="meta">2 run(s) &middot; 5/16 tasks completed &middot; completion rate: 31%</p>
+        <table class="detail-table">
+          <thead>
+            <tr>
+              <th></th><th>Task</th><th>Description</th><th>A-Saves</th><th>A-Search</th><th>KB</th><th>Latency</th><th>Save Commands</th><th>Search Commands</th>
+            </tr>
+          </thead>
+          <tbody><tr>
+            <td class="fail">&#10007;</td>
+            <td>setup-project</td>
+            <td class="desc">Set up a new Express API with TypeScript, choosing PostgreSQL for ACID transactions needed by payments.</td>
+            <td class="num">0</td>
+            <td class="num">0</td>
+            <td class="num">0&rarr;0</td>
+            <td class="num">1176.1s</td>
+            <td><span class="muted">0 saves</span></td>
+            <td><span class="muted">0 searches</span></td>
+          </tr>
+<tr>
+            <td class="fail">&#10007;</td>
+            <td>add-auth</td>
+            <td class="desc">Add JWT auth middleware using RS256 with rotating keys for the payment endpoints.</td>
+            <td class="num">0</td>
+            <td class="num">0</td>
+            <td class="num">0&rarr;0</td>
+            <td class="num">24695.3s</td>
+            <td><span class="muted">0 saves</span></td>
+            <td><span class="muted">0 searches</span></td>
+          </tr>
+<tr>
+            <td class="fail">&#10007;</td>
+            <td>users-crud</td>
+            <td class="desc">Create a /users CRUD endpoint connected to the database with auth protection.</td>
+            <td class="num">0</td>
+            <td class="num">0</td>
+            <td class="num">0&rarr;0</td>
+            <td class="num">973.2s</td>
+            <td><span class="muted">0 saves</span></td>
+            <td><span class="muted">0 searches</span></td>
+          </tr>
+<tr>
+            <td class="fail">&#10007;</td>
+            <td>fix-auth-bug</td>
+            <td class="desc">Fix a bug where the auth middleware silently swallows TokenExpiredError instead of returning 401.</td>
+            <td class="num">0</td>
+            <td class="num">0</td>
+            <td class="num">0&rarr;0</td>
+            <td class="num">10010.3s</td>
+            <td><span class="muted">0 saves</span></td>
+            <td><span class="muted">0 searches</span></td>
+          </tr>
+<tr>
+            <td class="pass">&#10003;</td>
+            <td>add-rate-limiting</td>
+            <td class="desc">Add rate limiting with a sliding window algorithm — 100 requests per minute per IP.</td>
+            <td class="num">0</td>
+            <td class="num">0</td>
+            <td class="num">0&rarr;0</td>
+            <td class="num">43.6s</td>
+            <td><span class="muted">0 saves</span></td>
+            <td><span class="muted">0 searches</span></td>
+          </tr>
+<tr>
+            <td class="pass">&#10003;</td>
+            <td>payments-endpoint</td>
+            <td class="desc">Create the /payments endpoint — the critical path that ties together all prior decisions.</td>
+            <td class="num">0</td>
+            <td class="num">0</td>
+            <td class="num">0&rarr;0</td>
+            <td class="num">206.5s</td>
+            <td><span class="muted">0 saves</span></td>
+            <td><span class="muted">0 searches</span></td>
+          </tr>
+<tr>
+            <td class="pass">&#10003;</td>
+            <td>fix-rate-limiter-tests</td>
+            <td class="desc">Fix the rate limiter causing false positives in tests due to persistent sliding window state.</td>
+            <td class="num">0</td>
+            <td class="num">0</td>
+            <td class="num">0&rarr;0</td>
+            <td class="num">67.5s</td>
+            <td><span class="muted">0 saves</span></td>
+            <td><span class="muted">0 searches</span></td>
+          </tr>
+<tr>
+            <td class="pass">&#10003;</td>
+            <td>health-check</td>
+            <td class="desc">Add a health check endpoint that reports database and auth service connectivity.</td>
+            <td class="num">0</td>
+            <td class="num">0</td>
+            <td class="num">0&rarr;0</td>
+            <td class="num">103.1s</td>
+            <td><span class="muted">0 saves</span></td>
+            <td><span class="muted">0 searches</span></td>
+          </tr></tbody>
+        </table>
+      </section>
+<section class="condition-detail">
+        <h3><span class="dot" style="background:#a78bfa"></span>Full Hybrid</h3>
+        <p class="meta">2 run(s) &middot; 7/16 tasks completed &middot; completion rate: 44%</p>
+        <table class="detail-table">
+          <thead>
+            <tr>
+              <th></th><th>Task</th><th>Description</th><th>A-Saves</th><th>A-Search</th><th>KB</th><th>Latency</th><th>Save Commands</th><th>Search Commands</th>
+            </tr>
+          </thead>
+          <tbody><tr>
+            <td class="fail">&#10007;</td>
+            <td>setup-project</td>
+            <td class="desc">Set up a new Express API with TypeScript, choosing PostgreSQL for ACID transactions needed by payments.</td>
+            <td class="num">0</td>
+            <td class="num">0</td>
+            <td class="num">0&rarr;0</td>
+            <td class="num">178.1s</td>
+            <td><span class="muted">0 saves</span></td>
+            <td><span class="muted">0 searches</span></td>
+          </tr>
+<tr>
+            <td class="pass">&#10003;</td>
+            <td>add-auth</td>
+            <td class="desc">Add JWT auth middleware using RS256 with rotating keys for the payment endpoints.</td>
+            <td class="num">0</td>
+            <td class="num">0</td>
+            <td class="num">0&rarr;0</td>
+            <td class="num">146.3s</td>
+            <td><span class="muted">0 saves</span></td>
+            <td><span class="muted">0 searches</span></td>
+          </tr>
+<tr>
+            <td class="pass">&#10003;</td>
+            <td>users-crud</td>
+            <td class="desc">Create a /users CRUD endpoint connected to the database with auth protection.</td>
+            <td class="num">0</td>
+            <td class="num">0</td>
+            <td class="num">0&rarr;0</td>
+            <td class="num">217.8s</td>
+            <td><span class="muted">0 saves</span></td>
+            <td><span class="muted">0 searches</span></td>
+          </tr>
+<tr>
+            <td class="pass">&#10003;</td>
+            <td>fix-auth-bug</td>
+            <td class="desc">Fix a bug where the auth middleware silently swallows TokenExpiredError instead of returning 401.</td>
+            <td class="num">0</td>
+            <td class="num">0</td>
+            <td class="num">0&rarr;0</td>
+            <td class="num">90.0s</td>
+            <td><span class="muted">0 saves</span></td>
+            <td><span class="muted">0 searches</span></td>
+          </tr>
+<tr>
+            <td class="pass">&#10003;</td>
+            <td>add-rate-limiting</td>
+            <td class="desc">Add rate limiting with a sliding window algorithm — 100 requests per minute per IP.</td>
+            <td class="num">0</td>
+            <td class="num">0</td>
+            <td class="num">0&rarr;0</td>
+            <td class="num">62.5s</td>
+            <td><span class="muted">0 saves</span></td>
+            <td><span class="muted">0 searches</span></td>
+          </tr>
+<tr>
+            <td class="pass">&#10003;</td>
+            <td>payments-endpoint</td>
+            <td class="desc">Create the /payments endpoint — the critical path that ties together all prior decisions.</td>
+            <td class="num">0</td>
+            <td class="num">0</td>
+            <td class="num">0&rarr;0</td>
+            <td class="num">825.6s</td>
+            <td><span class="muted">0 saves</span></td>
+            <td><span class="muted">0 searches</span></td>
+          </tr>
+<tr>
+            <td class="pass">&#10003;</td>
+            <td>fix-rate-limiter-tests</td>
+            <td class="desc">Fix the rate limiter causing false positives in tests due to persistent sliding window state.</td>
+            <td class="num">0</td>
+            <td class="num">0</td>
+            <td class="num">0&rarr;0</td>
+            <td class="num">75.7s</td>
+            <td><span class="muted">0 saves</span></td>
+            <td><span class="muted">0 searches</span></td>
+          </tr>
+<tr>
+            <td class="pass">&#10003;</td>
+            <td>health-check</td>
+            <td class="desc">Add a health check endpoint that reports database and auth service connectivity.</td>
+            <td class="num">0</td>
+            <td class="num">0</td>
+            <td class="num">0&rarr;0</td>
+            <td class="num">81.8s</td>
+            <td><span class="muted">0 saves</span></td>
+            <td><span class="muted">0 searches</span></td>
+          </tr></tbody>
+        </table>
+      </section>
+<section class="condition-detail">
+        <h3><span class="dot" style="background:#c084fc"></span>Full Hybrid (tmux)</h3>
+        <p class="meta">3 run(s) &middot; 14/24 tasks completed &middot; completion rate: 58%</p>
+        <table class="detail-table">
+          <thead>
+            <tr>
+              <th></th><th>Task</th><th>Description</th><th>A-Saves</th><th>A-Search</th><th>KB</th><th>Latency</th><th>Save Commands</th><th>Search Commands</th>
+            </tr>
+          </thead>
+          <tbody><tr>
+            <td class="pass">&#10003;</td>
+            <td>setup-project</td>
+            <td class="desc">Set up a new Express API with TypeScript, choosing PostgreSQL for ACID transactions needed by payments.</td>
+            <td class="num">0</td>
+            <td class="num">0</td>
+            <td class="num">0&rarr;0</td>
+            <td class="num">303.0s</td>
+            <td><span class="muted">0 saves</span></td>
+            <td><span class="muted">0 searches</span></td>
+          </tr>
+<tr>
+            <td class="pass">&#10003;</td>
+            <td>add-auth</td>
+            <td class="desc">Add JWT auth middleware using RS256 with rotating keys for the payment endpoints.</td>
+            <td class="num">0</td>
+            <td class="num">0</td>
+            <td class="num">0&rarr;0</td>
+            <td class="num">300.3s</td>
+            <td><span class="muted">0 saves</span></td>
+            <td><span class="muted">0 searches</span></td>
+          </tr>
+<tr>
+            <td class="pass">&#10003;</td>
+            <td>users-crud</td>
+            <td class="desc">Create a /users CRUD endpoint connected to the database with auth protection.</td>
+            <td class="num">0</td>
+            <td class="num">0</td>
+            <td class="num">0&rarr;0</td>
+            <td class="num">300.8s</td>
+            <td><span class="muted">0 saves</span></td>
+            <td><span class="muted">0 searches</span></td>
+          </tr>
+<tr>
+            <td class="pass">&#10003;</td>
+            <td>fix-auth-bug</td>
+            <td class="desc">Fix a bug where the auth middleware silently swallows TokenExpiredError instead of returning 401.</td>
+            <td class="num">0</td>
+            <td class="num">0</td>
+            <td class="num">0&rarr;0</td>
+            <td class="num">301.4s</td>
+            <td><span class="muted">0 saves</span></td>
+            <td><span class="muted">0 searches</span></td>
+          </tr>
+<tr>
+            <td class="pass">&#10003;</td>
+            <td>add-rate-limiting</td>
+            <td class="desc">Add rate limiting with a sliding window algorithm — 100 requests per minute per IP.</td>
+            <td class="num">0</td>
+            <td class="num">0</td>
+            <td class="num">0&rarr;0</td>
+            <td class="num">301.9s</td>
+            <td><span class="muted">0 saves</span></td>
+            <td><span class="muted">0 searches</span></td>
+          </tr>
+<tr>
+            <td class="pass">&#10003;</td>
+            <td>payments-endpoint</td>
+            <td class="desc">Create the /payments endpoint — the critical path that ties together all prior decisions.</td>
+            <td class="num">0</td>
+            <td class="num">0</td>
+            <td class="num">0&rarr;0</td>
+            <td class="num">300.6s</td>
+            <td><span class="muted">0 saves</span></td>
+            <td><span class="muted">0 searches</span></td>
+          </tr>
+<tr>
+            <td class="fail">&#10007;</td>
+            <td>fix-rate-limiter-tests</td>
+            <td class="desc">Fix the rate limiter causing false positives in tests due to persistent sliding window state.</td>
+            <td class="num">0</td>
+            <td class="num">0</td>
+            <td class="num">0&rarr;0</td>
+            <td class="num">0.0s</td>
+            <td><span class="muted">0 saves</span></td>
+            <td><span class="muted">0 searches</span></td>
+          </tr>
+<tr>
+            <td class="fail">&#10007;</td>
+            <td>health-check</td>
+            <td class="desc">Add a health check endpoint that reports database and auth service connectivity.</td>
+            <td class="num">0</td>
+            <td class="num">0</td>
+            <td class="num">0&rarr;0</td>
+            <td class="num">0.0s</td>
+            <td><span class="muted">0 saves</span></td>
+            <td><span class="muted">0 searches</span></td>
+          </tr></tbody>
+        </table>
+      </section>
+<section class="condition-detail">
+        <h3><span class="dot" style="background:#fbbf24"></span>Hooks Only</h3>
+        <p class="meta">1 run(s) &middot; 0/8 tasks completed &middot; completion rate: 0%</p>
+        <table class="detail-table">
+          <thead>
+            <tr>
+              <th></th><th>Task</th><th>Description</th><th>A-Saves</th><th>A-Search</th><th>KB</th><th>Latency</th><th>Save Commands</th><th>Search Commands</th>
+            </tr>
+          </thead>
+          <tbody><tr>
+            <td class="fail">&#10007;</td>
+            <td>setup-project</td>
+            <td class="desc">Set up a new Express API with TypeScript, choosing PostgreSQL for ACID transactions needed by payments.</td>
+            <td class="num">0</td>
+            <td class="num">0</td>
+            <td class="num">0&rarr;0</td>
+            <td class="num">17.3s</td>
+            <td><span class="muted">0 saves</span></td>
+            <td><span class="muted">0 searches</span></td>
+          </tr>
+<tr>
+            <td class="fail">&#10007;</td>
+            <td>add-auth</td>
+            <td class="desc">Add JWT auth middleware using RS256 with rotating keys for the payment endpoints.</td>
+            <td class="num">0</td>
+            <td class="num">0</td>
+            <td class="num">0&rarr;0</td>
+            <td class="num">304.5s</td>
+            <td><span class="muted">0 saves</span></td>
+            <td><span class="muted">0 searches</span></td>
+          </tr>
+<tr>
+            <td class="fail">&#10007;</td>
+            <td>users-crud</td>
+            <td class="desc">Create a /users CRUD endpoint connected to the database with auth protection.</td>
+            <td class="num">0</td>
+            <td class="num">0</td>
+            <td class="num">0&rarr;0</td>
+            <td class="num">310.9s</td>
+            <td><span class="muted">0 saves</span></td>
+            <td><span class="muted">0 searches</span></td>
+          </tr>
+<tr>
+            <td class="fail">&#10007;</td>
+            <td>fix-auth-bug</td>
+            <td class="desc">Fix a bug where the auth middleware silently swallows TokenExpiredError instead of returning 401.</td>
+            <td class="num">0</td>
+            <td class="num">0</td>
+            <td class="num">0&rarr;0</td>
+            <td class="num">311.1s</td>
+            <td><span class="muted">0 saves</span></td>
+            <td><span class="muted">0 searches</span></td>
+          </tr>
+<tr>
+            <td class="fail">&#10007;</td>
+            <td>add-rate-limiting</td>
+            <td class="desc">Add rate limiting with a sliding window algorithm — 100 requests per minute per IP.</td>
+            <td class="num">0</td>
+            <td class="num">0</td>
+            <td class="num">0&rarr;0</td>
+            <td class="num">309.9s</td>
+            <td><span class="muted">0 saves</span></td>
+            <td><span class="muted">0 searches</span></td>
+          </tr>
+<tr>
+            <td class="fail">&#10007;</td>
+            <td>payments-endpoint</td>
+            <td class="desc">Create the /payments endpoint — the critical path that ties together all prior decisions.</td>
+            <td class="num">0</td>
+            <td class="num">0</td>
+            <td class="num">0&rarr;0</td>
+            <td class="num">310.6s</td>
+            <td><span class="muted">0 saves</span></td>
+            <td><span class="muted">0 searches</span></td>
+          </tr>
+<tr>
+            <td class="fail">&#10007;</td>
+            <td>fix-rate-limiter-tests</td>
+            <td class="desc">Fix the rate limiter causing false positives in tests due to persistent sliding window state.</td>
+            <td class="num">0</td>
+            <td class="num">0</td>
+            <td class="num">0&rarr;0</td>
+            <td class="num">309.8s</td>
+            <td><span class="muted">0 saves</span></td>
+            <td><span class="muted">0 searches</span></td>
+          </tr>
+<tr>
+            <td class="fail">&#10007;</td>
+            <td>health-check</td>
+            <td class="desc">Add a health check endpoint that reports database and auth service connectivity.</td>
+            <td class="num">0</td>
+            <td class="num">0</td>
+            <td class="num">0&rarr;0</td>
+            <td class="num">310.7s</td>
+            <td><span class="muted">0 saves</span></td>
+            <td><span class="muted">0 searches</span></td>
+          </tr></tbody>
+        </table>
+      </section>
+<section class="condition-detail">
+        <h3><span class="dot" style="background:#94a3b8"></span>None (baseline)</h3>
+        <p class="meta">1 run(s) &middot; 0/8 tasks completed &middot; completion rate: 0%</p>
+        <table class="detail-table">
+          <thead>
+            <tr>
+              <th></th><th>Task</th><th>Description</th><th>A-Saves</th><th>A-Search</th><th>KB</th><th>Latency</th><th>Save Commands</th><th>Search Commands</th>
+            </tr>
+          </thead>
+          <tbody><tr>
+            <td class="fail">&#10007;</td>
+            <td>setup-project</td>
+            <td class="desc">Set up a new Express API with TypeScript, choosing PostgreSQL for ACID transactions needed by payments.</td>
+            <td class="num">0</td>
+            <td class="num">0</td>
+            <td class="num">0&rarr;0</td>
+            <td class="num">9.2s</td>
+            <td><span class="muted">0 saves</span></td>
+            <td><span class="muted">0 searches</span></td>
+          </tr>
+<tr>
+            <td class="fail">&#10007;</td>
+            <td>add-auth</td>
+            <td class="desc">Add JWT auth middleware using RS256 with rotating keys for the payment endpoints.</td>
+            <td class="num">0</td>
+            <td class="num">0</td>
+            <td class="num">0&rarr;0</td>
+            <td class="num">13.3s</td>
+            <td><span class="muted">0 saves</span></td>
+            <td><span class="muted">0 searches</span></td>
+          </tr>
+<tr>
+            <td class="fail">&#10007;</td>
+            <td>users-crud</td>
+            <td class="desc">Create a /users CRUD endpoint connected to the database with auth protection.</td>
+            <td class="num">0</td>
+            <td class="num">0</td>
+            <td class="num">0&rarr;0</td>
+            <td class="num">80.1s</td>
+            <td><span class="muted">0 saves</span></td>
+            <td><span class="muted">0 searches</span></td>
+          </tr>
+<tr>
+            <td class="fail">&#10007;</td>
+            <td>fix-auth-bug</td>
+            <td class="desc">Fix a bug where the auth middleware silently swallows TokenExpiredError instead of returning 401.</td>
+            <td class="num">0</td>
+            <td class="num">0</td>
+            <td class="num">0&rarr;0</td>
+            <td class="num">1168.0s</td>
+            <td><span class="muted">0 saves</span></td>
+            <td><span class="muted">0 searches</span></td>
+          </tr>
+<tr>
+            <td class="fail">&#10007;</td>
+            <td>add-rate-limiting</td>
+            <td class="desc">Add rate limiting with a sliding window algorithm — 100 requests per minute per IP.</td>
+            <td class="num">0</td>
+            <td class="num">0</td>
+            <td class="num">0&rarr;0</td>
+            <td class="num">2088.6s</td>
+            <td><span class="muted">0 saves</span></td>
+            <td><span class="muted">0 searches</span></td>
+          </tr>
+<tr>
+            <td class="fail">&#10007;</td>
+            <td>payments-endpoint</td>
+            <td class="desc">Create the /payments endpoint — the critical path that ties together all prior decisions.</td>
+            <td class="num">0</td>
+            <td class="num">0</td>
+            <td class="num">0&rarr;0</td>
+            <td class="num">122.5s</td>
+            <td><span class="muted">0 saves</span></td>
+            <td><span class="muted">0 searches</span></td>
+          </tr>
+<tr>
+            <td class="fail">&#10007;</td>
+            <td>fix-rate-limiter-tests</td>
+            <td class="desc">Fix the rate limiter causing false positives in tests due to persistent sliding window state.</td>
+            <td class="num">0</td>
+            <td class="num">0</td>
+            <td class="num">0&rarr;0</td>
+            <td class="num">460.7s</td>
+            <td><span class="muted">0 saves</span></td>
+            <td><span class="muted">0 searches</span></td>
+          </tr>
+<tr>
+            <td class="fail">&#10007;</td>
+            <td>health-check</td>
+            <td class="desc">Add a health check endpoint that reports database and auth service connectivity.</td>
+            <td class="num">0</td>
+            <td class="num">0</td>
+            <td class="num">0&rarr;0</td>
+            <td class="num">15847.3s</td>
+            <td><span class="muted">0 saves</span></td>
+            <td><span class="muted">0 searches</span></td>
+          </tr></tbody>
+        </table>
+      </section>
+<section class="condition-detail">
+        <h3><span class="dot" style="background:#60a5fa"></span>Reference Card</h3>
+        <p class="meta">1 run(s) &middot; 1/8 tasks completed &middot; completion rate: 13%</p>
+        <table class="detail-table">
+          <thead>
+            <tr>
+              <th></th><th>Task</th><th>Description</th><th>A-Saves</th><th>A-Search</th><th>KB</th><th>Latency</th><th>Save Commands</th><th>Search Commands</th>
+            </tr>
+          </thead>
+          <tbody><tr>
+            <td class="fail">&#10007;</td>
+            <td>setup-project</td>
+            <td class="desc">Set up a new Express API with TypeScript, choosing PostgreSQL for ACID transactions needed by payments.</td>
+            <td class="num">0</td>
+            <td class="num">0</td>
+            <td class="num">0&rarr;0</td>
+            <td class="num">932.2s</td>
+            <td><span class="muted">0 saves</span></td>
+            <td><span class="muted">0 searches</span></td>
+          </tr>
+<tr>
+            <td class="fail">&#10007;</td>
+            <td>add-auth</td>
+            <td class="desc">Add JWT auth middleware using RS256 with rotating keys for the payment endpoints.</td>
+            <td class="num">0</td>
+            <td class="num">0</td>
+            <td class="num">0&rarr;0</td>
+            <td class="num">3644.2s</td>
+            <td><span class="muted">0 saves</span></td>
+            <td><span class="muted">0 searches</span></td>
+          </tr>
+<tr>
+            <td class="fail">&#10007;</td>
+            <td>users-crud</td>
+            <td class="desc">Create a /users CRUD endpoint connected to the database with auth protection.</td>
+            <td class="num">0</td>
+            <td class="num">0</td>
+            <td class="num">0&rarr;0</td>
+            <td class="num">1020.7s</td>
+            <td><span class="muted">0 saves</span></td>
+            <td><span class="muted">0 searches</span></td>
+          </tr>
+<tr>
+            <td class="fail">&#10007;</td>
+            <td>fix-auth-bug</td>
+            <td class="desc">Fix a bug where the auth middleware silently swallows TokenExpiredError instead of returning 401.</td>
+            <td class="num">0</td>
+            <td class="num">0</td>
+            <td class="num">0&rarr;0</td>
+            <td class="num">4407.9s</td>
+            <td><span class="muted">0 saves</span></td>
+            <td><span class="muted">0 searches</span></td>
+          </tr>
+<tr>
+            <td class="fail">&#10007;</td>
+            <td>add-rate-limiting</td>
+            <td class="desc">Add rate limiting with a sliding window algorithm — 100 requests per minute per IP.</td>
+            <td class="num">0</td>
+            <td class="num">0</td>
+            <td class="num">0&rarr;0</td>
+            <td class="num">42.4s</td>
+            <td><span class="muted">0 saves</span></td>
+            <td><span class="muted">0 searches</span></td>
+          </tr>
+<tr>
+            <td class="fail">&#10007;</td>
+            <td>payments-endpoint</td>
+            <td class="desc">Create the /payments endpoint — the critical path that ties together all prior decisions.</td>
+            <td class="num">0</td>
+            <td class="num">0</td>
+            <td class="num">0&rarr;0</td>
+            <td class="num">78.7s</td>
+            <td><span class="muted">0 saves</span></td>
+            <td><span class="muted">0 searches</span></td>
+          </tr>
+<tr>
+            <td class="pass">&#10003;</td>
+            <td>fix-rate-limiter-tests</td>
+            <td class="desc">Fix the rate limiter causing false positives in tests due to persistent sliding window state.</td>
+            <td class="num">0</td>
+            <td class="num">0</td>
+            <td class="num">0&rarr;0</td>
+            <td class="num">43.8s</td>
+            <td><span class="muted">0 saves</span></td>
+            <td><span class="muted">0 searches</span></td>
+          </tr>
+<tr>
+            <td class="fail">&#10007;</td>
+            <td>health-check</td>
+            <td class="desc">Add a health check endpoint that reports database and auth service connectivity.</td>
+            <td class="num">0</td>
+            <td class="num">0</td>
+            <td class="num">0&rarr;0</td>
+            <td class="num">120.1s</td>
+            <td><span class="muted">0 saves</span></td>
+            <td><span class="muted">0 searches</span></td>
+          </tr></tbody>
+        </table>
+      </section>
+
+<footer>
+  Rememora Eval Benchmark &middot; <a href="https://github.com/Rememora/rememora" style="color:var(--accent)">github.com/Rememora/rememora</a>
+</footer>
+
+</body>
+</html>
