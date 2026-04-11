@@ -1,6 +1,6 @@
 [package]
 name = "rememora"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2021"
 description = "Cross-agent memory system for AI coding assistants"
 license = "MIT"
