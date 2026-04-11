@@ -77,9 +77,22 @@ pub fn curate(transcript: &str, project: &str, dry_run: bool) -> Result<Curation
 }
 
 /// Call a Claude Code subagent via `claude -p` with a specific model.
+///
+/// Uses `--tools Bash` to restrict the subagent to only the Bash tool
+/// (prevents file writes to auto-memory). Grants scoped bash access via
+/// `--allowedTools` so it can run `rememora` CLI commands without prompting.
 pub fn call_subagent(prompt: &str, model: &str) -> Result<String> {
     let output = Command::new("claude")
-        .args(["-p", prompt, "--model", model])
+        .args([
+            "-p",
+            prompt,
+            "--model",
+            model,
+            "--tools",
+            "Bash",
+            "--allowedTools",
+            "Bash(rememora:*)",
+        ])
         .output()
         .context("Failed to run 'claude' CLI. Is Claude Code installed?")?;
 
