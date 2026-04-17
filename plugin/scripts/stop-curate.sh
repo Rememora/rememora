@@ -33,28 +33,40 @@ fi
 # Detect project name from CWD
 PROJECT=$(basename "$CWD")
 
-# Debounce: skip if this session curated within the cooldown window.
-# Claude Code's Stop hook fires per agent turn, not per session — without this gate,
-# long sessions stampede `rememora curate` (and its `claude -p` signal-detector child)
-# dozens of times concurrently. Per-session lockfile = fresh bucket each new session,
-# auto-cleaned from /tmp on reboot. Set REMEMORA_CURATE_COOLDOWN_SECS=0 to disable.
+# Two gates guard the per-turn Stop-hook stampede of `rememora curate` (and its
+# `claude -p` signal-detector child).
+#
+# 1) Concurrency: at most one curate in-flight per session. Checked against the
+#    kernel via pgrep — the jsonl path carries SESSION_ID, so the match is
+#    unambiguous. This is the primary gate: it stays correct even when curate
+#    runtime exceeds the frequency cooldown.
+# 2) Frequency: at least COOLDOWN seconds between consecutive *finishes*. The
+#    stamp is touched after curate returns, so the window means what its name
+#    says (not start-to-start).
+#
+# Set REMEMORA_CURATE_COOLDOWN_SECS=0 to disable the frequency gate.
+if pgrep -f "rememora curate --file .*${SESSION_ID}" >/dev/null 2>&1; then
+  exit 0
+fi
+
 COOLDOWN="${REMEMORA_CURATE_COOLDOWN_SECS:-300}"
 LOCK_DIR="${TMPDIR:-/tmp}"
-LOCK="${LOCK_DIR%/}/rememora-curate-${SESSION_ID}.last"
+STAMP="${LOCK_DIR%/}/rememora-curate-${SESSION_ID}.last"
 
-if [ -f "$LOCK" ]; then
+if [ -f "$STAMP" ]; then
   # Portable mtime: BSD stat (macOS) first, GNU stat (Linux) fallback.
-  LAST=$(stat -f %m "$LOCK" 2>/dev/null || stat -c %Y "$LOCK" 2>/dev/null || echo 0)
+  LAST=$(stat -f %m "$STAMP" 2>/dev/null || stat -c %Y "$STAMP" 2>/dev/null || echo 0)
   NOW=$(date +%s)
   if [ $((NOW - LAST)) -lt "$COOLDOWN" ]; then
     exit 0
   fi
 fi
-touch "$LOCK"
 
-# Fork curation to background — must not block the agent
+# Fork curation to background — must not block the agent. Stamp updates on
+# completion so the cooldown gate measures idle time, not launch cadence.
 (
   rememora curate --file "$JSONL_PATH" --project "$PROJECT" 2>/dev/null || true
+  touch "$STAMP"
 ) &
 
 exit 0
