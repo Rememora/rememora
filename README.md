@@ -194,7 +194,7 @@ After installing, restart Claude Code. The plugin auto-detects your project from
 
 **Configuration:**
 
-- `REMEMORA_CURATE_COOLDOWN_SECS` (default: `300`) — minimum seconds between automatic curation runs from the Claude Code `Stop` hook, per session. The Stop hook fires after every agent turn, so without a cooldown, long sessions stampede `rememora curate` processes. Set to `0` to disable throttling. A final curation pass always runs at `SessionEnd` regardless of cooldown, so the tail of the session is never lost.
+- `REMEMORA_CURATE_COOLDOWN_SECS` (default: `300`) — minimum idle seconds between automatic curation runs from the Claude Code `Stop` hook, per session. The Stop hook fires after every agent turn. The plugin enforces **at most one in-flight `rememora curate` per session** via a kernel-level concurrency gate (`pgrep` on the session ID); this setting layers on top as a secondary frequency gate, bounding how long to wait after a curate *finishes* before another is allowed. Set to `0` to disable the cooldown — the concurrency gate still applies. A final curation pass always runs at `SessionEnd` regardless of cooldown, so the tail of the session is never lost.
 
 ### Claude Code (Alternative: CLAUDE.md)
 
