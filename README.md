@@ -192,6 +192,10 @@ This gives you hooks + skills that work automatically — no manual commands nee
 
 After installing, restart Claude Code. The plugin auto-detects your project from the working directory.
 
+**Configuration:**
+
+- `REMEMORA_CURATE_COOLDOWN_SECS` (default: `300`) — minimum seconds between automatic curation runs from the Claude Code `Stop` hook, per session. The Stop hook fires after every agent turn, so without a cooldown, long sessions stampede `rememora curate` processes. Set to `0` to disable throttling. A final curation pass always runs at `SessionEnd` regardless of cooldown, so the tail of the session is never lost.
+
 ### Claude Code (Alternative: CLAUDE.md)
 
 If you prefer manual control, add to `~/.claude/CLAUDE.md`:
