@@ -294,12 +294,10 @@ fn handle_key(app: &mut App, code: KeyCode, conn: &Connection) -> Result<()> {
                     app.detail_scroll = 0;
                 }
             }
-            KeyCode::Enter => {
+            KeyCode::Enter if !app.search_results.is_empty() => {
                 // Keep search results visible, exit input mode
-                if !app.search_results.is_empty() {
-                    app.search_active = false;
-                    app.focus = Panel::Detail;
-                }
+                app.search_active = false;
+                app.focus = Panel::Detail;
             }
             _ => {}
         }
@@ -327,12 +325,10 @@ fn handle_key(app: &mut App, code: KeyCode, conn: &Connection) -> Result<()> {
         KeyCode::Char('l') => {
             app.focus = app.focus.next();
         }
-        KeyCode::Esc => {
+        KeyCode::Esc if !app.search_results.is_empty() => {
             // Clear search results if any
-            if !app.search_results.is_empty() {
-                app.search_results.clear();
-                app.search_state.select(None);
-            }
+            app.search_results.clear();
+            app.search_state.select(None);
         }
         KeyCode::Char('j') | KeyCode::Down => match app.focus {
             Panel::Projects => {

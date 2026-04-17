@@ -7,7 +7,7 @@
   "plugins": [
     {
       "name": "rememora",
-      "source": "./",
+      "source": "./plugin",
       "description": "Persistent cross-agent memory for Claude Code. Auto-saves decisions, bug fixes, and patterns. Searches memory before implementations.",
       "version": "1.0.0",
       "author": {
