@@ -2,6 +2,8 @@
 //!
 //! Reads from the `agent_invocations` table (migration 004), grouped by
 //! caller / model / project / session / total, since a relative cutoff.
+//! By default the CLI uses `--since all` so it shows usage across all
+//! sessions, not just the current time window.
 
 use anyhow::{bail, Context, Result};
 use chrono::{Duration, Utc};
@@ -28,7 +30,7 @@ pub fn run(conn: &Connection, args: &UsageArgs, json_output: bool) -> Result<()>
         });
         println!("{}", serde_json::to_string_pretty(&out)?);
     } else {
-        print_table(&args.by, &rows);
+        print_table(&args.by, &args.since, &rows);
     }
 
     Ok(())
@@ -71,9 +73,13 @@ fn parse_group_by(s: &str) -> Result<GroupBy> {
     }
 }
 
-fn print_table(by: &str, rows: &[UsageAggregate]) {
+fn print_table(by: &str, since: &str, rows: &[UsageAggregate]) {
     if rows.is_empty() {
-        println!("No agent invocations recorded in this window.");
+        if since.trim().eq_ignore_ascii_case("all") || since.trim().is_empty() {
+            println!("No agent invocations recorded.");
+        } else {
+            println!("No agent invocations recorded in this window.");
+        }
         return;
     }
 

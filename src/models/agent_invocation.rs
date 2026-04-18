@@ -299,6 +299,30 @@ mod tests {
     }
 
     #[test]
+    fn all_time_total_spans_multiple_parent_sessions() {
+        let conn = db::open_memory().unwrap();
+
+        let mut first = sample(Caller::Curator, "sonnet", 0.05);
+        first.parent_session = Some("session-a".into());
+        insert(&conn, &first).unwrap();
+
+        let mut second = sample(Caller::SignalGate, "haiku", 0.01);
+        second.parent_session = Some("session-b".into());
+        insert(&conn, &second).unwrap();
+
+        let totals = aggregate(&conn, None, GroupBy::Total).unwrap();
+        assert_eq!(totals.len(), 1);
+        assert_eq!(totals[0].invocations, 2);
+        assert!((totals[0].cost_usd - 0.06).abs() < 1e-9);
+
+        let sessions = aggregate(&conn, None, GroupBy::ParentSession).unwrap();
+        let buckets: std::collections::HashSet<_> =
+            sessions.into_iter().map(|row| row.bucket).collect();
+        assert!(buckets.contains("session-a"));
+        assert!(buckets.contains("session-b"));
+    }
+
+    #[test]
     fn aggregate_by_caller_sorts_by_cost() {
         let conn = db::open_memory().unwrap();
         insert(&conn, &sample(Caller::SignalGate, "haiku", 0.01)).unwrap();

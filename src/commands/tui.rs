@@ -73,8 +73,9 @@ struct App {
     search_results: Vec<search::SearchResult>,
     search_state: ListState,
 
-    // Cost footer — total cost + call count over the last 7 days. `None`
-    // means we haven't been able to read the telemetry table (e.g. fresh DB).
+    // Cost footer — total cost + call count across all recorded sessions.
+    // `None` means we haven't been able to read the telemetry table (e.g.
+    // fresh DB).
     usage_footer: Option<UsageFooter>,
 
     // Quit flag
@@ -853,7 +854,7 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
     if let Some(u) = app.usage_footer {
         spans.push(Span::styled(
             format!(
-                " 7d: ${:.4} · {} calls · {}k in / {}k out ",
+                " all: ${:.4} · {} calls · {}k in / {}k out ",
                 u.cost_usd,
                 u.invocations,
                 u.input_tokens / 1000,
@@ -867,8 +868,7 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn load_usage_footer(conn: &Connection) -> Option<UsageFooter> {
-    let since = (chrono::Utc::now() - chrono::Duration::days(7)).to_rfc3339();
-    let rows = agent_invocation::aggregate(conn, Some(&since), GroupBy::Total).ok()?;
+    let rows = agent_invocation::aggregate(conn, None, GroupBy::Total).ok()?;
     let row = rows.into_iter().next()?;
     Some(UsageFooter {
         invocations: row.invocations,
