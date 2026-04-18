@@ -38,7 +38,7 @@ claude plugin install rememora@rememora --scope project
    - Codebase patterns or conventions
    - Important entities (services, APIs, configs)
 3. Before implementation, Claude **autonomously searches** for relevant prior knowledge
-4. After each agent turn, the **Stop hook** forks `rememora curate` against the session transcript to extract anything Claude missed. At most one curate runs in-flight per session (enforced by a `pgrep`-based concurrency gate); a secondary `REMEMORA_CURATE_COOLDOWN_SECS` (default `300`) frequency gate rate-limits consecutive runs
+4. After each agent turn, the **Stop hook** forks `rememora curate` against the session transcript to extract anything Claude missed. The curate process is fully detached — launched in its own session via `setsid` (or `nohup` + `disown` on stock macOS) with stdin/stdout/stderr redirected to `/dev/null`, so it cannot hold the hook's pipe and block Claude Code waiting for EOF. At most one curate runs in-flight per session (enforced by a `pgrep`-based concurrency gate); a secondary `REMEMORA_CURATE_COOLDOWN_SECS` (default `300`) frequency gate rate-limits consecutive runs
 5. On **session end**, the hook closes the active rememora session and runs a final curation pass so the tail of the session is never lost
 
 ## Plugin structure
