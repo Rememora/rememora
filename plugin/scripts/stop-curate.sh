@@ -68,11 +68,28 @@ if [ -f "$STAMP" ]; then
   fi
 fi
 
-# Fork curation to background — must not block the agent. Stamp updates on
-# completion so the cooldown gate measures idle time, not launch cadence.
-(
-  rememora curate --file "$JSONL_PATH" --project "$PROJECT" 2>/dev/null || true
-  touch "$STAMP"
-) &
+# Fork curation to a fully detached background process.
+#
+# The Stop hook's stdout is a pipe Claude Code reads until EOF. Plain `&`
+# backgrounds scheduling but does NOT close inherited file descriptors — the
+# curate subprocess keeps the pipe's write-end open, so Claude Code waits for
+# curate (and its `claude -p` children) to exit, blocking the next user turn
+# for as long as curation runs. Observed: 10–97 min hangs in live sessions.
+#
+# Fix: redirect all three std streams on the outer launch AND place curate in
+# its own session via setsid/nohup so no descendant holds the hook's pipe.
+if command -v setsid >/dev/null 2>&1; then
+  setsid bash -c '
+    rememora curate --file "$1" --project "$2" >/dev/null 2>&1 || true
+    touch "$3"
+  ' _ "$JSONL_PATH" "$PROJECT" "$STAMP" </dev/null >/dev/null 2>&1 &
+else
+  # Stock macOS has no setsid; nohup + disown achieves equivalent detachment.
+  nohup bash -c '
+    rememora curate --file "$1" --project "$2" >/dev/null 2>&1 || true
+    touch "$3"
+  ' _ "$JSONL_PATH" "$PROJECT" "$STAMP" </dev/null >/dev/null 2>&1 &
+  disown
+fi
 
 exit 0
