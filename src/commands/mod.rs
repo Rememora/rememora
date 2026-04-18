@@ -19,3 +19,4 @@ pub mod setup;
 pub mod status;
 pub mod supersede;
 pub mod tui;
+pub mod usage;

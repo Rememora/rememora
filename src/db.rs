@@ -5,6 +5,7 @@ use std::path::Path;
 const MIGRATION_001: &str = include_str!("migrations/001_initial.sql");
 const MIGRATION_002: &str = include_str!("migrations/002_embeddings.sql");
 const MIGRATION_003: &str = include_str!("migrations/003_curator.sql");
+const MIGRATION_004: &str = include_str!("migrations/004_agent_invocations.sql");
 
 /// Register sqlite-vec extension before opening connections.
 /// Must be called before any Connection::open calls.
@@ -118,6 +119,20 @@ fn migrate(conn: &Connection) -> Result<()> {
         conn.execute_batch(MIGRATION_003)?;
         conn.execute(
             "INSERT INTO _migrations (name, applied_at) VALUES ('003_curator', datetime('now'))",
+            [],
+        )?;
+    }
+
+    let applied_004: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM _migrations WHERE name = '004_agent_invocations')",
+        [],
+        |row| row.get(0),
+    )?;
+
+    if !applied_004 {
+        conn.execute_batch(MIGRATION_004)?;
+        conn.execute(
+            "INSERT INTO _migrations (name, applied_at) VALUES ('004_agent_invocations', datetime('now'))",
             [],
         )?;
     }

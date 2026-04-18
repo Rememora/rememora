@@ -15,6 +15,7 @@ use rusqlite::Connection;
 use std::io::stdout;
 
 use rememora::hierarchy::{self, ScoredContext};
+use rememora::models::agent_invocation::{self, GroupBy};
 use rememora::models::context::{self, ContextRecord};
 use rememora::models::project;
 use rememora::search;
@@ -72,8 +73,20 @@ struct App {
     search_results: Vec<search::SearchResult>,
     search_state: ListState,
 
+    // Cost footer — total cost + call count over the last 7 days. `None`
+    // means we haven't been able to read the telemetry table (e.g. fresh DB).
+    usage_footer: Option<UsageFooter>,
+
     // Quit flag
     quit: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct UsageFooter {
+    invocations: i64,
+    cost_usd: f64,
+    input_tokens: i64,
+    output_tokens: i64,
 }
 
 impl App {
@@ -107,6 +120,8 @@ impl App {
             memory_state.select(Some(0));
         }
 
+        let usage_footer = load_usage_footer(conn);
+
         Ok(Self {
             focus: Panel::Projects,
             projects,
@@ -121,6 +136,7 @@ impl App {
             search_query: String::new(),
             search_results: Vec::new(),
             search_state: ListState::default(),
+            usage_footer,
             quit: false,
         })
     }
@@ -823,7 +839,7 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
         Panel::Detail => "Detail",
     };
 
-    let bar = Line::from(vec![
+    let mut spans = vec![
         Span::styled(
             format!(" {focus_label} "),
             Style::default()
@@ -832,9 +848,34 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(hints, Style::default().fg(Color::DarkGray)),
-    ]);
+    ];
 
-    f.render_widget(Paragraph::new(bar), area);
+    if let Some(u) = app.usage_footer {
+        spans.push(Span::styled(
+            format!(
+                " 7d: ${:.4} · {} calls · {}k in / {}k out ",
+                u.cost_usd,
+                u.invocations,
+                u.input_tokens / 1000,
+                u.output_tokens / 1000,
+            ),
+            Style::default().fg(Color::DarkGray),
+        ));
+    }
+
+    f.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
+fn load_usage_footer(conn: &Connection) -> Option<UsageFooter> {
+    let since = (chrono::Utc::now() - chrono::Duration::days(7)).to_rfc3339();
+    let rows = agent_invocation::aggregate(conn, Some(&since), GroupBy::Total).ok()?;
+    let row = rows.into_iter().next()?;
+    Some(UsageFooter {
+        invocations: row.invocations,
+        cost_usd: row.cost_usd,
+        input_tokens: row.input_tokens,
+        output_tokens: row.output_tokens,
+    })
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────

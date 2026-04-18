@@ -104,7 +104,19 @@ pub fn run(conn: &Connection, args: &ConsolidateArgs, json_output: bool) -> Resu
         prompt
     };
 
-    let output = curator::call_subagent(&full_prompt, "sonnet")?;
+    let subagent_output = curator::call_subagent(&full_prompt, "sonnet")?;
+    let output = subagent_output.text;
+
+    // Record the consolidate subagent call so it appears in `rememora usage`.
+    rememora::models::agent_invocation::try_insert(
+        conn,
+        &rememora::models::agent_invocation::record_from_subagent(
+            rememora::models::agent_invocation::Caller::Consolidate,
+            project.map(str::to_string),
+            None,
+            &subagent_output.telemetry,
+        ),
+    );
 
     // Complete the consolidation run
     let actions_json = serde_json::json!({"output": &output[..output.len().min(1000)]}).to_string();

@@ -1,4 +1,20 @@
--- Curator infrastructure: watermarks, curation log, consolidation runs
+-- ─── Migration 003: curator infrastructure ──────────────────────────────────
+-- Backs the Stop-hook curator's three responsibilities:
+--   1. *Incremental* curation — never re-feed the signal gate or curator with
+--      content it has already seen. `watermarks` stores the byte offset we
+--      have consumed up to for each Claude Code session JSONL, keyed by file
+--      path. On every Stop hook we `parse_file(path, watermark.byte_offset)`
+--      and only the delta reaches the subagent.
+--   2. *Audit trail* — `curator_log` records every action the curator took
+--      (add/update/delete/noop) with the reason and the model that decided.
+--      Makes it possible to debug "why did the curator change this memory".
+--   3. *Consolidation tracking* — `consolidation_runs` brackets each evolve/
+--      merge pass with before/after counts, cluster count, and the trigger
+--      source, so we can tell consolidation cron runs from manual invocations.
+--
+-- Watermark advances on Signal::No too (see `src/commands/curate.rs`), which
+-- is what makes the Haiku signal gate cheap — it never re-evaluates stale
+-- turns.
 
 -- Tracks byte offset per session JSONL file for incremental curation
 CREATE TABLE IF NOT EXISTS watermarks (

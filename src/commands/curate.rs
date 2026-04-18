@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 use rememora::curator::{self, Signal};
 use rememora::jsonl;
+use rememora::models::agent_invocation::{self, Caller};
 use rememora::models::watermark;
 
 pub struct CurateArgs {
@@ -105,9 +106,27 @@ fn curate_file(
     }
 
     // Signal gate
-    let signal = curator::signal_gate(&transcript)?;
+    let gate = curator::signal_gate(&transcript)?;
 
-    if signal == Signal::No {
+    // Record the signal-gate call if the subagent actually ran (it short-
+    // circuits for transcripts shorter than MIN_TRANSCRIPT_CHARS).
+    let project_for_telemetry = args
+        .project
+        .clone()
+        .or_else(|| detect_project_from_path(path).map(str::to_string));
+    if let Some(t) = &gate.telemetry {
+        agent_invocation::try_insert(
+            conn,
+            &agent_invocation::record_from_subagent(
+                Caller::SignalGate,
+                project_for_telemetry.clone(),
+                None,
+                t,
+            ),
+        );
+    }
+
+    if gate.signal == Signal::No {
         // Update watermark even if no signal — don't re-process
         watermark::set(conn, &path_str, parse_result.new_offset, parse_result.lines_processed as u64)?;
         watermark::log_action(conn, &path_str, "noop", None, "No signal detected", "")?;
@@ -131,6 +150,19 @@ fn curate_file(
 
     // Run curator
     let result = curator::curate(&transcript, project, args.dry_run)?;
+
+    // Record the curator call.
+    if let Some(t) = &result.telemetry {
+        agent_invocation::try_insert(
+            conn,
+            &agent_invocation::record_from_subagent(
+                Caller::Curator,
+                Some(project.to_string()),
+                None,
+                t,
+            ),
+        );
+    }
 
     // Update watermark
     watermark::set(conn, &path_str, parse_result.new_offset, parse_result.lines_processed as u64)?;
@@ -162,7 +194,7 @@ fn curate_file(
     Ok(FileResult::Curated)
 }
 
-fn curate_stdin(_conn: &Connection, args: &CurateArgs, json_output: bool) -> Result<()> {
+fn curate_stdin(conn: &Connection, args: &CurateArgs, json_output: bool) -> Result<()> {
     let mut input = String::new();
     std::io::stdin()
         .read_to_string(&mut input)
@@ -187,8 +219,20 @@ fn curate_stdin(_conn: &Connection, args: &CurateArgs, json_output: bool) -> Res
 
     let transcript = jsonl::render_transcript(&parse_result.entries);
 
-    let signal = curator::signal_gate(&transcript)?;
-    if signal == Signal::No {
+    let gate = curator::signal_gate(&transcript)?;
+    let stdin_project = args.project.clone();
+    if let Some(t) = &gate.telemetry {
+        agent_invocation::try_insert(
+            conn,
+            &agent_invocation::record_from_subagent(
+                Caller::SignalGate,
+                stdin_project.clone(),
+                None,
+                t,
+            ),
+        );
+    }
+    if gate.signal == Signal::No {
         if json_output {
             println!("{{\"status\":\"no_signal\",\"message\":\"No signal detected\"}}");
         } else {
@@ -199,6 +243,18 @@ fn curate_stdin(_conn: &Connection, args: &CurateArgs, json_output: bool) -> Res
 
     let project = args.project.as_deref().unwrap_or("unknown");
     let result = curator::curate(&transcript, project, args.dry_run)?;
+
+    if let Some(t) = &result.telemetry {
+        agent_invocation::try_insert(
+            conn,
+            &agent_invocation::record_from_subagent(
+                Caller::Curator,
+                Some(project.to_string()),
+                None,
+                t,
+            ),
+        );
+    }
 
     if json_output {
         let output = serde_json::json!({
