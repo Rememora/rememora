@@ -21,6 +21,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      - name: Check unified project version
+        run: python3 scripts/version.py --check --tag "${GITHUB_REF_NAME}"
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
