@@ -336,6 +336,17 @@ enum Commands {
         format: String,
     },
 
+    /// Aggregate agent-invocation telemetry (tokens, cost, duration).
+    Usage {
+        /// Window to aggregate over. Accepts e.g. `7d`, `24h`, `30m`, `all`.
+        #[arg(long, default_value = "7d")]
+        since: String,
+
+        /// How to group: `total`, `caller`, `model`, `project`, `session`.
+        #[arg(long, default_value = "caller")]
+        by: String,
+    },
+
     /// Launch the Rememora Desktop app (Tauri)
     Desktop,
 }
@@ -723,5 +734,11 @@ fn main() -> Result<()> {
         Commands::Export { project, format } => {
             commands::export::run(&conn, project.as_deref(), &format)
         }
+
+        Commands::Usage { since, by } => commands::usage::run(
+            &conn,
+            &commands::usage::UsageArgs { since, by },
+            cli.json,
+        ),
     }
 }

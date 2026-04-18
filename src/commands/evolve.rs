@@ -3,6 +3,7 @@ use rusqlite::Connection;
 use std::collections::HashSet;
 
 use rememora::evolve::{self, MemoryCluster};
+use rememora::models::agent_invocation::{self, Caller};
 use rememora::models::context::{self, ContextRecord, InsertContext};
 use rememora::uri;
 
@@ -139,7 +140,7 @@ pub fn run(
     };
 
     for cluster in clusters.into_iter().take(cluster_count) {
-        let decision = consolidate_cluster(&api_key, &cluster)?;
+        let decision = consolidate_cluster(&api_key, &cluster, conn, project)?;
         let report = apply_decision(conn, &cluster, &decision, dry_run, project)?;
 
         match report.action.as_str() {
@@ -183,7 +184,13 @@ fn load_active_memories(
 }
 
 /// Call the Anthropic API to decide how to consolidate a cluster.
-fn consolidate_cluster(api_key: &str, cluster: &MemoryCluster) -> Result<LlmDecision> {
+fn consolidate_cluster(
+    api_key: &str,
+    cluster: &MemoryCluster,
+    conn: &Connection,
+    project: Option<&str>,
+) -> Result<LlmDecision> {
+    const EVOLVE_MODEL: &str = "claude-haiku-4-5-20251001";
     let mut prompt = String::from(CONSOLIDATION_PROMPT);
 
     for mem in &cluster.memories {
@@ -200,7 +207,7 @@ fn consolidate_cluster(api_key: &str, cluster: &MemoryCluster) -> Result<LlmDeci
     }
 
     let body = serde_json::json!({
-        "model": "claude-haiku-4-5-20251001",
+        "model": EVOLVE_MODEL,
         "max_tokens": 1024,
         "messages": [
             {"role": "user", "content": prompt}
@@ -215,6 +222,18 @@ fn consolidate_cluster(api_key: &str, cluster: &MemoryCluster) -> Result<LlmDeci
         .context("Failed to call Claude API for consolidation")?;
 
     let resp_body: serde_json::Value = resp.into_json().context("Failed to parse API response")?;
+
+    agent_invocation::try_insert(
+        conn,
+        &agent_invocation::record_from_anthropic_api(
+            Caller::Evolve,
+            EVOLVE_MODEL,
+            project.map(str::to_string),
+            None,
+            &resp_body,
+            false,
+        ),
+    );
 
     let content_text = resp_body["content"]
         .as_array()

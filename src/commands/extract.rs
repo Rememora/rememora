@@ -2,8 +2,11 @@ use anyhow::{bail, Context, Result};
 use rusqlite::Connection;
 use std::io::Read;
 
+use rememora::models::agent_invocation::{self, Caller};
 use rememora::models::context::{self, InsertContext};
 use rememora::uri;
+
+const EXTRACT_MODEL: &str = "claude-haiku-4-5-20251001";
 
 const EXTRACT_PROMPT: &str = r#"Extract key memories from the following text. Return a JSON array of objects with these fields:
 - "text": the core fact or knowledge (concise, one sentence)
@@ -58,7 +61,7 @@ pub fn run(
 
     // Call Claude API
     let body = serde_json::json!({
-        "model": "claude-haiku-4-5-20251001",
+        "model": EXTRACT_MODEL,
         "max_tokens": 4096,
         "messages": [
             {"role": "user", "content": prompt}
@@ -73,6 +76,19 @@ pub fn run(
         .context("Failed to call Claude API")?;
 
     let resp_body: serde_json::Value = resp.into_json().context("Failed to parse API response")?;
+
+    // Record telemetry — project for extract is the destination project, if any.
+    agent_invocation::try_insert(
+        conn,
+        &agent_invocation::record_from_anthropic_api(
+            Caller::Extract,
+            EXTRACT_MODEL,
+            project.map(str::to_string),
+            None,
+            &resp_body,
+            false,
+        ),
+    );
 
     // Extract text content from response
     let content_text = resp_body["content"]

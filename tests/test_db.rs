@@ -71,5 +71,5 @@ fn test_migrations_idempotent() {
     let count: i64 = conn
         .query_row("SELECT COUNT(*) FROM _migrations", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(count, 3);
+    assert_eq!(count, 4);
 }
