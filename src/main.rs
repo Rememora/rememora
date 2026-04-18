@@ -338,8 +338,9 @@ enum Commands {
 
     /// Aggregate agent-invocation telemetry (tokens, cost, duration).
     Usage {
-        /// Window to aggregate over. Accepts e.g. `7d`, `24h`, `30m`, `all`.
-        #[arg(long, default_value = "7d")]
+        /// Time range to aggregate over. Defaults to all recorded telemetry.
+        /// Accepts e.g. `7d`, `24h`, `30m`, `all`.
+        #[arg(long, default_value = "all")]
         since: String,
 
         /// How to group: `total`, `caller`, `model`, `project`, `session`.
