@@ -1,4 +1,10 @@
 #!/usr/bin/env bash
+# Do not curate our own children. `rememora curate` spawns `claude -p`
+# subprocesses for signal detection / AUDN curation; each child gets its own
+# session_id and fires its own Stop hook. Without this gate, curate recursively
+# curates itself.
+[ -n "${REMEMORA_CURATE_CHILD:-}" ] && exit 0
+
 # Rememora Stop hook — curates memories from the current session transcript.
 # Runs in the background after each Claude Code agent turn completes.
 # Must never block the agent — all work is forked to a subshell.

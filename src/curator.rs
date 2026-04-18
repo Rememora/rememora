@@ -82,17 +82,7 @@ pub fn curate(transcript: &str, project: &str, dry_run: bool) -> Result<Curation
 /// (prevents file writes to auto-memory). Grants scoped bash access via
 /// `--allowedTools` so it can run `rememora` CLI commands without prompting.
 pub fn call_subagent(prompt: &str, model: &str) -> Result<String> {
-    let output = Command::new("claude")
-        .args([
-            "-p",
-            prompt,
-            "--model",
-            model,
-            "--tools",
-            "Bash",
-            "--allowedTools",
-            "Bash(rememora:*)",
-        ])
+    let output = build_subagent_command(prompt, model)
         .output()
         .context("Failed to run 'claude' CLI. Is Claude Code installed?")?;
 
@@ -102,6 +92,24 @@ pub fn call_subagent(prompt: &str, model: &str) -> Result<String> {
     }
 
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+fn build_subagent_command(prompt: &str, model: &str) -> Command {
+    let mut cmd = Command::new("claude");
+    cmd.args([
+        "-p",
+        prompt,
+        "--model",
+        model,
+        "--tools",
+        "Bash",
+        "--allowedTools",
+        "Bash(rememora:*)",
+    ])
+    // Mark curate-spawned Claude Code children so their Stop hooks do not
+    // recursively curate the child session JSONL.
+    .env("REMEMORA_CURATE_CHILD", "1");
+    cmd
 }
 
 #[cfg(test)]
@@ -137,5 +145,15 @@ mod tests {
         let prompt = SIGNAL_GATE_PROMPT.replace("{transcript}", transcript);
         assert!(prompt.contains("some transcript"));
         assert!(!prompt.contains("{transcript}"));
+    }
+
+    #[test]
+    fn test_subagent_command_marks_curate_child() {
+        let cmd = build_subagent_command("test prompt", "haiku");
+        let env_value = cmd
+            .get_envs()
+            .find_map(|(key, value)| (key == "REMEMORA_CURATE_CHILD").then_some(value));
+
+        assert_eq!(env_value.flatten(), Some(std::ffi::OsStr::new("1")));
     }
 }
