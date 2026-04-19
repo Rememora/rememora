@@ -90,12 +90,19 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
+          # Any tag containing `-` (e.g. v1.3.0-rc.1, v1.3.0-beta.2) is
+          # flagged as a pre-release so `brew install rememora` — which
+          # reads the tap's stable formula — isn't affected.
+          prerelease: ${{ contains(github.ref_name, '-') }}
           files: |
             rememora-*.tar.gz
             rememora-*.sha256
 
   update-tap:
     needs: release
+    # Skip the Homebrew tap update for pre-release tags — the tap has one
+    # formula and would overwrite the stable version if we let RCs through.
+    if: ${{ !contains(github.ref_name, '-') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
