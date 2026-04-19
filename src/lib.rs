@@ -10,4 +10,5 @@ pub mod jsonl;
 pub mod models;
 pub mod propagate;
 pub mod search;
+pub mod stream;
 pub mod uri;

@@ -3,15 +3,20 @@ use rusqlite::Connection;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use rememora::curator::{self, Signal};
+use rememora::curator::{self, DefaultSubagent, Signal};
 use rememora::jsonl;
 use rememora::models::agent_invocation::{self, Caller};
 use rememora::models::watermark;
+use rememora::stream::{self, StreamOpts};
 
 pub struct CurateArgs {
     pub file: Option<String>,
     pub from_stdin: bool,
     pub auto: bool,
+    pub stream: bool,
+    pub session: Option<String>,
+    pub stream_flush_ms: u64,
+    pub stream_notify_secs: u64,
     pub dry_run: bool,
     pub reset_watermark: bool,
     pub project: Option<String>,
@@ -20,6 +25,10 @@ pub struct CurateArgs {
 pub fn run(conn: &Connection, args: &CurateArgs, json_output: bool) -> Result<()> {
     if args.reset_watermark {
         return reset_watermarks(conn, args, json_output);
+    }
+
+    if args.stream {
+        return run_stream(conn, args);
     }
 
     if args.from_stdin {
@@ -192,6 +201,22 @@ fn curate_file(
     }
 
     Ok(FileResult::Curated)
+}
+
+fn run_stream(conn: &Connection, args: &CurateArgs) -> Result<()> {
+    let stdin = std::io::stdin();
+    let reader = std::io::BufReader::new(stdin);
+    let opts = StreamOpts {
+        session_id: args.session.clone(),
+        project: args.project.clone(),
+        watermark_path: args.session.as_ref().map(|s| format!("stream:{s}")),
+        flush_ms: args.stream_flush_ms,
+        notify_secs: args.stream_notify_secs,
+        flush_bytes: stream::DEFAULT_FLUSH_BYTES,
+        dry_run: args.dry_run,
+    };
+    let subagent = DefaultSubagent;
+    stream::run(opts, reader, std::io::stdout(), &subagent, Some(conn))
 }
 
 fn curate_stdin(conn: &Connection, args: &CurateArgs, json_output: bool) -> Result<()> {

@@ -236,16 +236,35 @@ enum Commands {
     /// Curate memories from Claude Code session transcripts
     Curate {
         /// Path to a specific JSONL file
-        #[arg(long)]
+        #[arg(long, conflicts_with_all = ["from_stdin", "auto", "stream", "reset_watermark"])]
         file: Option<String>,
 
         /// Read JSONL from stdin
-        #[arg(long)]
+        #[arg(long, conflicts_with_all = ["auto", "stream", "reset_watermark"])]
         from_stdin: bool,
 
         /// Auto-discover Claude Code session files
-        #[arg(long)]
+        #[arg(long, conflicts_with_all = ["stream", "reset_watermark"])]
         auto: bool,
+
+        /// Run as a long-lived streaming producer (Claude Code `monitors`
+        /// entry point). Reads JSONL from stdin incrementally, gates +
+        /// curates on fresh-byte deltas, emits rate-limited notifications.
+        #[arg(long)]
+        stream: bool,
+
+        /// Session id used when streaming (emitted in the startup banner
+        /// and recorded as the parent session on telemetry rows).
+        #[arg(long)]
+        session: Option<String>,
+
+        /// Flush interval for the streaming curator in milliseconds.
+        #[arg(long, default_value_t = rememora::stream::DEFAULT_FLUSH_MS)]
+        stream_flush_ms: u64,
+
+        /// Minimum seconds between stdout notifications in streaming mode.
+        #[arg(long, default_value_t = rememora::stream::DEFAULT_NOTIFY_SECS)]
+        stream_notify_secs: u64,
 
         /// Show what would be done without modifying memory
         #[arg(long)]
@@ -672,6 +691,10 @@ fn main() -> Result<()> {
             file,
             from_stdin,
             auto,
+            stream,
+            session,
+            stream_flush_ms,
+            stream_notify_secs,
             dry_run,
             reset_watermark,
             project,
@@ -681,6 +704,10 @@ fn main() -> Result<()> {
                 file,
                 from_stdin,
                 auto,
+                stream,
+                session,
+                stream_flush_ms,
+                stream_notify_secs,
                 dry_run,
                 reset_watermark,
                 project,

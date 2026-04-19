@@ -1,0 +1,10 @@
+{
+  "monitors": [
+    {
+      "name": "curate",
+      "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/curate-monitor.sh",
+      "description": "Incremental rememora curator (streams session JSONL, emits rate-limited save notifications).",
+      "when": "always"
+    }
+  ]
+}

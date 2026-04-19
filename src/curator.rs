@@ -20,6 +20,28 @@ pub enum Signal {
     No,
 }
 
+/// Injection point for unit tests that need to exercise curator-driven code
+/// paths (e.g. the streaming curator) without spending real Haiku/Sonnet
+/// tokens. The default implementation shells out to `claude -p`; tests supply
+/// their own fake. Keeping this behind a trait lets the production code path
+/// stay identical to pre-trait behavior.
+pub trait Subagent: Send + Sync {
+    fn signal_gate(&self, transcript: &str) -> Result<SignalGateResult>;
+    fn curate(&self, transcript: &str, project: &str, dry_run: bool) -> Result<CurationResult>;
+}
+
+/// Production `Subagent` — uses `claude -p` via the free functions below.
+pub struct DefaultSubagent;
+
+impl Subagent for DefaultSubagent {
+    fn signal_gate(&self, transcript: &str) -> Result<SignalGateResult> {
+        signal_gate(transcript)
+    }
+    fn curate(&self, transcript: &str, project: &str, dry_run: bool) -> Result<CurationResult> {
+        curate(transcript, project, dry_run)
+    }
+}
+
 /// Parsed telemetry from `claude -p --output-format json`'s final `result`
 /// entry. Any field may be missing if the subagent errored before emitting it.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
