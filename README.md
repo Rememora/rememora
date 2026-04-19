@@ -257,7 +257,8 @@ cargo tauri dev
 | Command | Description |
 |---------|-------------|
 | `rememora save "..." --category <cat>` | Save a memory |
-| `rememora search "query"` | Search memories (BM25 + optional vector) |
+| `rememora search "query" [--format compact\|context\|full]` | Search memories (BM25 + optional vector) |
+| `rememora timeline --anchor <uri> [--before N] [--after N]` | Chronological (or hotness-ranked) slice around an anchor |
 | `rememora context --project <name>` | Load full project context (L0 + L1) |
 | `rememora context --auto` | Auto-detect project from cwd |
 | `rememora context --cheatsheet` | Compact top-5 summary |
@@ -284,6 +285,44 @@ cargo tauri dev
 | `rememora export --project <name>` | Export as JSON or markdown |
 
 All commands support `--json` for structured output.
+
+## Progressive Disclosure: search → timeline → get
+
+Retrieving a single memory at full fidelity eats tokens fast. Rememora splits retrieval into three cheap steps so agents can filter before paying the full cost:
+
+```bash
+# 1. Filter — one line per hit, ~75 tokens each
+rememora search "auth flow" --project myapp --format compact
+# [case] Bug fixed: token refresh race … — rememora://…/bug-fixed-token-refresh-race (rank=-3.82)
+# [decision] Chose JWT over session cookies … — rememora://…/chose-jwt-over-session-cookies  (rank=-3.41)
+# [pattern] Auth middleware composition … — rememora://…/auth-middleware-composition       (rank=-3.05)
+
+# 2. Zoom — chronological slice around an anchor to understand what surrounded the decision
+rememora timeline --anchor "rememora://projects/myapp/memories/decision/chose-jwt-over-session-cookies" \
+    --before 3 --after 3
+# Before
+# - [case] Investigated session-cookie CSRF hardening … — 2026-03-14T…
+# - [event] Benchmarked JWT verify latency in middleware … — 2026-03-15T…
+# - [pattern] Double-submit cookie pattern for CSRF … — 2026-03-15T…
+# Anchor
+# - [decision] Chose JWT over session cookies … — 2026-03-16T…
+# After
+# - [case] Refresh-token rotation leak caught in review — 2026-03-18T…
+# …
+
+# 3. Fetch — full content (L2) of a single URI when you're sure you want it
+rememora get "rememora://projects/myapp/memories/decision/chose-jwt-over-session-cookies"
+```
+
+Output formats for `search`:
+
+| `--format` | Shape | Typical use |
+|---|---|---|
+| `full` (default) | Multi-line per hit with name + URI | Human in terminal |
+| `compact` | One line per hit with score, ~75 tok/hit | Agent filtering |
+| `context` | One line per hit, byte-capped (2 KB) | `UserPromptSubmit` hook injection |
+
+Timeline ordering: `--by ts` (default, creation time) or `--by hotness` (importance × recency × active_count). Project scope: explicit `--project` wins; otherwise inferred from the anchor URI.
 
 ## Auto-Extract Memories
 

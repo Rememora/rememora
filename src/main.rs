@@ -87,6 +87,35 @@ enum Commands {
         /// Maximum propagation hops (default 2)
         #[arg(long, default_value = "2")]
         propagate_depth: usize,
+
+        /// Output format: full (default markdown), compact (one line per hit,
+        /// ~75 tokens), or context (length-capped for prompt injection)
+        #[arg(long, default_value = "full")]
+        format: String,
+    },
+
+    /// Chronological slice of contexts around an anchor URI.
+    /// Part of the progressive-disclosure flow: search → timeline → get.
+    Timeline {
+        /// Anchor URI (e.g. rememora://projects/foo/memories/decision/x)
+        #[arg(long)]
+        anchor: String,
+
+        /// Number of contexts before the anchor
+        #[arg(long, default_value = "3")]
+        before: usize,
+
+        /// Number of contexts after the anchor
+        #[arg(long, default_value = "3")]
+        after: usize,
+
+        /// Scope filter; defaults to the anchor's own project.
+        #[arg(long)]
+        project: Option<String>,
+
+        /// Ordering: ts (creation time, default) or hotness
+        #[arg(long, default_value = "ts")]
+        by: String,
     },
 
     /// Get project context (L0 map + L1 top memories)
@@ -516,19 +545,45 @@ fn main() -> Result<()> {
             propagate,
             propagate_decay,
             propagate_depth,
-        } => commands::search::run(
-            &conn,
-            &commands::search::SearchArgs {
-                query,
-                project,
-                category,
-                limit,
-                propagate,
-                propagate_decay,
-                propagate_depth,
-            },
-            cli.json,
-        ),
+            format,
+        } => {
+            let fmt = commands::search::SearchFormat::parse(&format)?;
+            commands::search::run(
+                &conn,
+                &commands::search::SearchArgs {
+                    query,
+                    project,
+                    category,
+                    limit,
+                    propagate,
+                    propagate_decay,
+                    propagate_depth,
+                    format: fmt,
+                },
+                cli.json,
+            )
+        }
+
+        Commands::Timeline {
+            anchor,
+            before,
+            after,
+            project,
+            by,
+        } => {
+            let order = commands::timeline::TimelineOrder::parse(&by)?;
+            commands::timeline::run(
+                &conn,
+                &commands::timeline::TimelineArgs {
+                    anchor,
+                    before,
+                    after,
+                    project,
+                    by: order,
+                },
+                cli.json,
+            )
+        }
 
         Commands::Context { project, auto, cheatsheet } => {
             commands::context::run(&conn, project.as_deref(), auto, cheatsheet)
