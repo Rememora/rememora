@@ -22,6 +22,11 @@ INPUT=$(cat 2>/dev/null || true)
 PROMPT=$(echo "$INPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('prompt',''))" 2>/dev/null || echo "")
 CWD=$(echo "$INPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('cwd',''))" 2>/dev/null || echo "")
 
+# Strip FTS5-reserved punctuation. The query is passed unescaped to SQLite's
+# FTS5 MATCH and chars like `?`, `:`, `(`, `)`, `"`, `*`, `-` carry query
+# semantics that break on natural-language prompts. Collapse whitespace too.
+PROMPT=$(printf '%s' "$PROMPT" | tr -d '?:"()*-' | tr -s '[:space:]' ' ' | sed 's/^ //; s/ $//')
+
 # Skip on empty / overly-short prompts — FTS5 on 1–2 chars returns noise.
 if [ "${#PROMPT}" -lt 6 ]; then
   exit 0
