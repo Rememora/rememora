@@ -3,6 +3,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use rememora::curator::{parse_subagent_output, SubagentOutput};
+use rememora::db;
+use rememora::models::agent_invocation::{self, Caller};
+
 // GitHub Project board IDs for Rememora/rememora project #3
 const PROJECT_ID: &str = "PVT_kwDOCB405M4BSdN1";
 const STATUS_FIELD_ID: &str = "PVTSSF_lADOCB405M4BSdN1zg__B7M";
@@ -71,6 +75,17 @@ pub fn run(args: &AgentRunArgs) -> Result<()> {
     let session_id = start_session(args.issue, &issue.title)?;
     println!("Rememora session: {session_id}");
 
+    // Open a DB handle so we can record one `agent_invocations` row per
+    // `claude -p` attempt. Non-fatal if the DB is unavailable — telemetry
+    // must not block the agent run.
+    let conn = db::open(&db::default_db_path()).ok();
+    if conn.is_none() {
+        eprintln!(
+            "warn: could not open rememora DB at {}; agent_invocations will not be recorded",
+            db::default_db_path().display()
+        );
+    }
+
     // 5. Quality loop: run claude, check quality, retry if needed
     let mut last_error = String::new();
     let mut success = false;
@@ -92,8 +107,19 @@ pub fn run(args: &AgentRunArgs) -> Result<()> {
         println!("Spawning Claude CLI...");
         let claude_output = match run_claude(&worktree_path, &prompt, args) {
             Ok(output) => {
+                // Record the invocation before quality checks so every attempt
+                // lands a row, even if quality later rejects the result.
+                if let Some(ref c) = conn {
+                    let record = agent_invocation::record_from_subagent(
+                        Caller::AgentRun,
+                        Some("rememora".to_string()),
+                        Some(session_id.clone()),
+                        &output.telemetry,
+                    );
+                    agent_invocation::try_insert(c, &record);
+                }
                 println!("Claude finished. Running quality checks...");
-                output
+                output.text
             }
             Err(e) => {
                 last_error = format!("Claude CLI failed: {e}");
@@ -487,10 +513,12 @@ Fix these issues. Make sure `cargo test` passes and `cargo clippy -- -D warnings
     )
 }
 
-fn run_claude(worktree: &Path, prompt: &str, args: &AgentRunArgs) -> Result<String> {
+fn run_claude(worktree: &Path, prompt: &str, args: &AgentRunArgs) -> Result<SubagentOutput> {
     let mut cmd = Command::new("claude");
     cmd.arg("-p").arg(prompt);
-    cmd.arg("--output-format").arg("text");
+    // `--output-format json` lets us capture usage, cost, duration, and
+    // session id alongside the agent's reply (parsed below).
+    cmd.arg("--output-format").arg("json");
     cmd.current_dir(worktree);
 
     if let Some(ref model) = args.model {
@@ -515,7 +543,9 @@ fn run_claude(worktree: &Path, prompt: &str, args: &AgentRunArgs) -> Result<Stri
         bail!("claude exited with error: {stderr}");
     }
 
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let model_hint = args.model.as_deref().unwrap_or("sonnet");
+    parse_subagent_output(&stdout, model_hint)
 }
 
 fn run_quality_checks(worktree: &Path) -> Result<QualityResult> {
