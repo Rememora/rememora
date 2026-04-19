@@ -21,9 +21,22 @@ if [ -n "$CWD" ] && [ -n "$SESSION_ID" ]; then
   PROJECT=$(basename "$CWD")
 
   if [ -f "$JSONL_PATH" ]; then
-    (
-      rememora curate --file "$JSONL_PATH" --project "$PROJECT" 2>/dev/null || true
-    ) &
+    # Fully detach the final-pass curate. Plain `&` backgrounds scheduling
+    # but does NOT close inherited file descriptors — a curate subprocess
+    # that lingers past SessionEnd could keep the hook's pipe write-end
+    # open and cause the same FD-leak blocking we fixed in stop-curate.sh.
+    # Apply the same setsid (Linux) / nohup + disown (macOS) detachment and
+    # redirect all three std streams on the outer launch.
+    if command -v setsid >/dev/null 2>&1; then
+      setsid bash -c '
+        rememora curate --file "$1" --project "$2" >/dev/null 2>&1 || true
+      ' _ "$JSONL_PATH" "$PROJECT" </dev/null >/dev/null 2>&1 &
+    else
+      nohup bash -c '
+        rememora curate --file "$1" --project "$2" >/dev/null 2>&1 || true
+      ' _ "$JSONL_PATH" "$PROJECT" </dev/null >/dev/null 2>&1 &
+      disown
+    fi
   fi
 
   LOCK_DIR="${TMPDIR:-/tmp}"

@@ -92,4 +92,9 @@ else
   disown
 fi
 
+# Suppress the "running Stop hook..." footer in Claude Code. suppressOutput
+# is required — `{"continue":true}` alone has been observed to cause an
+# infinite Stop-hook loop in other plugins (claude-mem #1288).
+echo '{"continue":true,"suppressOutput":true}'
+
 exit 0
