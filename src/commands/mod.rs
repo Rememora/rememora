@@ -21,3 +21,4 @@ pub mod supersede;
 pub mod timeline;
 pub mod tui;
 pub mod usage;
+pub mod watch_transcript;

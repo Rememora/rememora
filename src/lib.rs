@@ -7,6 +7,7 @@ pub mod format;
 pub mod hierarchy;
 pub mod hotness;
 pub mod jsonl;
+pub mod jsonl_codex;
 pub mod models;
 pub mod propagate;
 pub mod search;

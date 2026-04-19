@@ -262,6 +262,29 @@ enum Commands {
         once: bool,
     },
 
+    /// Curate memories from a non-Claude agent's session JSONL (Phase 1: Codex only)
+    WatchTranscript {
+        /// Agent kind. Phase 1 only supports `codex`.
+        #[arg(long)]
+        agent: String,
+
+        /// Path to the rollout JSONL (e.g. ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl)
+        #[arg(long)]
+        path: std::path::PathBuf,
+
+        /// Poll the file for new content every ~500ms. Not a daemon; runs until Ctrl+C.
+        #[arg(long)]
+        follow: bool,
+
+        /// Project scope override. Defaults to session_meta.cwd basename, then file stem.
+        #[arg(long)]
+        project: Option<String>,
+
+        /// Show what the curator would do without modifying memory.
+        #[arg(long)]
+        dry_run: bool,
+    },
+
     /// Curate memories from Claude Code session transcripts
     Curate {
         /// Path to a specific JSONL file
@@ -739,6 +762,24 @@ fn main() -> Result<()> {
                 dry_run,
                 reset_watermark,
                 project,
+            },
+            cli.json,
+        ),
+
+        Commands::WatchTranscript {
+            agent,
+            path,
+            follow,
+            project,
+            dry_run,
+        } => commands::watch_transcript::run(
+            &conn,
+            &commands::watch_transcript::WatchTranscriptArgs {
+                agent,
+                path,
+                follow,
+                project,
+                dry_run,
             },
             cli.json,
         ),
