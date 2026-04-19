@@ -14,7 +14,9 @@
 //! Signal gate + curator are invoked via the [`crate::curator::Subagent`]
 //! trait, which lets tests substitute a fake that doesn't spend tokens.
 
+use std::fs::OpenOptions;
 use std::io::{BufRead, Write};
+use std::path::PathBuf;
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -48,6 +50,10 @@ pub struct StreamOpts {
     pub notify_secs: u64,
     pub flush_bytes: usize,
     pub dry_run: bool,
+    /// Optional append-log. When set, every flush outcome is written as a
+    /// `<rfc3339> <kind>` line. Used during stage-2 dogfood to tally
+    /// notification volume and signal/no-signal ratios post-hoc.
+    pub notify_log: Option<PathBuf>,
 }
 
 impl Default for StreamOpts {
@@ -60,6 +66,7 @@ impl Default for StreamOpts {
             notify_secs: DEFAULT_NOTIFY_SECS,
             flush_bytes: DEFAULT_FLUSH_BYTES,
             dry_run: false,
+            notify_log: None,
         }
     }
 }
@@ -182,11 +189,28 @@ impl<'a> StreamState<'a> {
         };
 
         self.persist_watermark(parse.lines_processed as u64)?;
+        self.append_notify_log(outcome);
         self.buffer.clear();
         self.bytes_since_flush = 0;
         self.last_flush_at = now;
 
         Ok(outcome)
+    }
+
+    fn append_notify_log(&self, outcome: FlushOutcome) {
+        let Some(path) = self.opts.notify_log.as_ref() else {
+            return;
+        };
+        let kind = match outcome {
+            FlushOutcome::Nothing => return,
+            FlushOutcome::NoSignal => "no_signal",
+            FlushOutcome::Curated => "curated",
+        };
+        // Best-effort: a broken log file must not break the stream.
+        let Ok(mut f) = OpenOptions::new().create(true).append(true).open(path) else {
+            return;
+        };
+        let _ = writeln!(f, "{} {kind}", chrono::Utc::now().to_rfc3339());
     }
 
     /// Flush any pending bucket summary. Called at shutdown.
@@ -555,6 +579,32 @@ mod tests {
         let fake2 = FakeSubagent::new(Signal::No);
         let state2 = StreamState::new(opts, &fake2, Some(&conn), Instant::now());
         assert_eq!(state2.total_bytes(), mid.byte_offset);
+    }
+
+    #[test]
+    fn notify_log_appends_one_line_per_non_empty_flush() {
+        let dir = tempfile::tempdir().unwrap();
+        let log_path = dir.path().join("notify.log");
+
+        let fake = FakeSubagent::new(Signal::No);
+        let opts = StreamOpts {
+            notify_log: Some(log_path.clone()),
+            ..StreamOpts::default()
+        };
+        let mut state = StreamState::new(opts, &fake, None, Instant::now());
+        state.push_line(&user_line("hello"));
+        state.flush(&mut Vec::new(), Instant::now()).unwrap();
+        // Empty flush should not add a log line.
+        state.flush(&mut Vec::new(), Instant::now()).unwrap();
+
+        let logged = std::fs::read_to_string(&log_path).unwrap();
+        let lines: Vec<&str> = logged.lines().collect();
+        assert_eq!(lines.len(), 1, "expected 1 log line, got: {logged:?}");
+        assert!(
+            lines[0].ends_with(" no_signal"),
+            "expected no_signal kind, got {:?}",
+            lines[0]
+        );
     }
 
     #[test]

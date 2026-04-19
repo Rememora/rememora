@@ -39,6 +39,13 @@ fi
 # Detect project name from CWD
 PROJECT=$(basename "$CWD")
 
+# Issue #65 stage-2 dogfood bridge: if a monitors-based streaming curator is
+# already processing this session's JSONL, don't double-curate. Removed in
+# stage 4 when the Stop-hook curator is retired.
+if pgrep -f "rememora curate --stream.*${SESSION_ID}" >/dev/null 2>&1; then
+  exit 0
+fi
+
 # Two gates guard the per-turn Stop-hook stampede of `rememora curate` (and its
 # `claude -p` signal-detector child).
 #

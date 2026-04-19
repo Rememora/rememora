@@ -17,6 +17,7 @@ pub struct CurateArgs {
     pub session: Option<String>,
     pub stream_flush_ms: u64,
     pub stream_notify_secs: u64,
+    pub notify_log: Option<String>,
     pub dry_run: bool,
     pub reset_watermark: bool,
     pub project: Option<String>,
@@ -214,6 +215,7 @@ fn run_stream(conn: &Connection, args: &CurateArgs) -> Result<()> {
         notify_secs: args.stream_notify_secs,
         flush_bytes: stream::DEFAULT_FLUSH_BYTES,
         dry_run: args.dry_run,
+        notify_log: args.notify_log.as_ref().map(std::path::PathBuf::from),
     };
     let subagent = DefaultSubagent;
     stream::run(opts, reader, std::io::stdout(), &subagent, Some(conn))

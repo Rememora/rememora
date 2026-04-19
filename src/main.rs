@@ -266,6 +266,12 @@ enum Commands {
         #[arg(long, default_value_t = rememora::stream::DEFAULT_NOTIFY_SECS)]
         stream_notify_secs: u64,
 
+        /// Append-log for streaming-mode instrumentation. Writes one
+        /// `<rfc3339> <outcome>` line per flush (outcome ∈ no_signal,
+        /// curated). Used during stage-2 dogfood.
+        #[arg(long)]
+        notify_log: Option<String>,
+
         /// Show what would be done without modifying memory
         #[arg(long)]
         dry_run: bool,
@@ -695,6 +701,7 @@ fn main() -> Result<()> {
             session,
             stream_flush_ms,
             stream_notify_secs,
+            notify_log,
             dry_run,
             reset_watermark,
             project,
@@ -708,6 +715,7 @@ fn main() -> Result<()> {
                 session,
                 stream_flush_ms,
                 stream_notify_secs,
+                notify_log,
                 dry_run,
                 reset_watermark,
                 project,
