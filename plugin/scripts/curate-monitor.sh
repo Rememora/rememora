@@ -54,6 +54,13 @@ if [ -n "$SESSION_ID" ]; then
   SESSION_ARG=(--session "$SESSION_ID")
 fi
 
+# Stage-2 metrics: if REMEMORA_NOTIFY_LOG is set, pass it through so the
+# stream appends per-flush outcomes. Empty-string disables.
+NOTIFY_LOG_ARG=()
+if [ -n "${REMEMORA_NOTIFY_LOG:-}" ]; then
+  NOTIFY_LOG_ARG=(--notify-log "$REMEMORA_NOTIFY_LOG")
+fi
+
 # --- Supervise --------------------------------------------------------------
 
 # Bounded restart loop: if the pipeline crashes 5 times within 60 s, back off
@@ -65,7 +72,8 @@ while true; do
   # `tail -F -n 0` starts at EOF and follows appends across rotations.
   # SIGPIPE from Claude Code closing the monitor propagates to tail.
   tail -F -n 0 "$JSONL_PATH" \
-    | rememora curate --stream --project "$PROJECT" "${SESSION_ARG[@]}"
+    | rememora curate --stream --project "$PROJECT" \
+        "${SESSION_ARG[@]}" "${NOTIFY_LOG_ARG[@]}"
 
   status=$?
   # Claude Code closing stdin (SIGPIPE / 141) is a clean exit for us.
