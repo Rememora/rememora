@@ -2,6 +2,9 @@
 # Rememora SessionStart hook — loads project context and starts a session.
 # Runs automatically on every Claude Code session start/resume.
 
+# Kill-switch: set REMEMORA_DISABLE_HOOKS=1 to disable all Rememora hooks.
+[ -n "${REMEMORA_DISABLE_HOOKS:-}" ] && exit 0
+
 set -euo pipefail
 
 # Check if rememora is available

@@ -29,6 +29,21 @@ claude plugin install rememora@rememora --scope project
 - `rememora` CLI installed and on PATH (`cargo install rememora` or via Homebrew)
 - A registered project: `rememora project add <name> --path <cwd>`
 
+## Escape hatches
+
+If a Rememora hook misbehaves and you need to turn everything off quickly, set the kill-switch in the shell that launches Claude Code:
+
+```bash
+export REMEMORA_DISABLE_HOOKS=1
+```
+
+All three hook scripts (`session-start.sh`, `session-end.sh`, `stop-curate.sh`) check this env var at the top and early-exit 0 when set. `unset REMEMORA_DISABLE_HOOKS` to re-enable.
+
+Other tunables:
+
+- `REMEMORA_CURATE_COOLDOWN_SECS` (default `300`): minimum seconds between curate runs per session. Set to `0` to disable the frequency gate. The kernel-level `pgrep` concurrency gate is independent and always active.
+- `REMEMORA_CURATE_CHILD`: set internally by `rememora curate` on its `claude -p` subprocesses so those children's Stop hooks don't recursively curate. Not intended for user override.
+
 ## How it works
 
 1. On **session start**, the hook runs `rememora context --auto` and injects prior knowledge

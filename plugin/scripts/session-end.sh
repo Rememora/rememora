@@ -3,6 +3,10 @@
 # Runs once per Claude Code session end; pairs with stop-curate.sh's per-turn cooldown
 # by guaranteeing the tail of the session is captured even if the last Stop hook was
 # inside the cooldown window.
+
+# Kill-switch: set REMEMORA_DISABLE_HOOKS=1 to disable all Rememora hooks.
+[ -n "${REMEMORA_DISABLE_HOOKS:-}" ] && exit 0
+
 set -euo pipefail
 
 if ! command -v rememora &>/dev/null; then
