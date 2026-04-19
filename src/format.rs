@@ -268,3 +268,73 @@ pub fn scored_contexts_to_json(contexts: &[ScoredContext]) -> String {
         .collect();
     serde_json::to_string_pretty(&items).unwrap_or_default()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn result_with(uri: &str, category: &str, abstract_text: &str) -> SearchResult {
+        SearchResult {
+            context: ContextRecord {
+                id: uri.to_string(),
+                uri: uri.to_string(),
+                parent_uri: None,
+                context_type: "preference".to_string(),
+                category: Some(category.to_string()),
+                name: "name".to_string(),
+                abstract_text: abstract_text.to_string(),
+                overview: String::new(),
+                content: String::new(),
+                tags: String::new(),
+                source_agent: None,
+                source_session: None,
+                importance: 0.5,
+                active_count: 0,
+                created_at: String::new(),
+                updated_at: String::new(),
+                superseded_by: None,
+            },
+            rank: 1.0,
+        }
+    }
+
+    #[test]
+    fn context_format_empty_results_returns_empty_string() {
+        let out = search_results_to_context(&[]);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn context_format_caps_total_output_under_byte_budget() {
+        // Many long-abstract results; ensure we never exceed CONTEXT_BYTE_CAP.
+        let results: Vec<SearchResult> = (0..50)
+            .map(|i| result_with(&format!("rememora://a{i}"), "case", &"A".repeat(300)))
+            .collect();
+        let out = search_results_to_context(&results);
+        assert!(
+            out.len() <= CONTEXT_BYTE_CAP,
+            "expected output under cap, got {} bytes",
+            out.len()
+        );
+    }
+
+    #[test]
+    fn context_format_uses_context_type_when_category_missing() {
+        let mut r = result_with("rememora://x", "_unused_", "abs");
+        r.context.category = None;
+        r.context.context_type = "pattern".into();
+        let out = search_results_to_context(std::slice::from_ref(&r));
+        assert!(
+            out.contains("[pattern]"),
+            "expected fallback category [pattern] in: {out}"
+        );
+    }
+
+    #[test]
+    fn context_format_truncates_long_abstracts_with_ellipsis() {
+        let long = "x".repeat(500);
+        let r = result_with("rememora://foo", "decision", &long);
+        let out = search_results_to_context(std::slice::from_ref(&r));
+        assert!(out.contains('…'), "expected ellipsis in: {out}");
+    }
+}
