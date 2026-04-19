@@ -136,6 +136,112 @@ fn search_for_nonexistent_term_returns_empty() {
 }
 
 // ---------------------------------------------------------------------------
+// Output formats: compact + context
+// ---------------------------------------------------------------------------
+
+#[test]
+fn compact_format_is_one_line_per_hit_with_category_uri_and_rank() {
+    // Given: two memories that should match a query
+    let conn = db_with_memories(&[
+        memory("Redis caching")
+            .project("testproj")
+            .category("decision")
+            .content("Picked Redis over Memcached for caching"),
+        memory("Redis connection pool")
+            .project("testproj")
+            .category("entity")
+            .content("Shared Redis pool lives in src/cache"),
+    ]);
+
+    // When: searching and rendering the compact format
+    let results = rememora::search::search(&conn, "redis", None, None, 10).unwrap();
+    assert!(!results.is_empty(), "expected search hits");
+
+    let rendered = rememora::format::search_results_to_compact(&results);
+    let lines: Vec<&str> = rendered.lines().collect();
+
+    // Then: one line per hit, each line carries category tag + URI + rank token
+    assert_eq!(lines.len(), results.len());
+    for (line, result) in lines.iter().zip(results.iter()) {
+        let cat = result.context.category.as_deref().unwrap_or("");
+        assert!(
+            line.starts_with(&format!("[{}]", cat)),
+            "line should start with category tag, got: {line}"
+        );
+        assert!(line.contains(&result.context.uri), "line should include URI: {line}");
+        assert!(line.contains("rank="), "line should include rank token: {line}");
+    }
+}
+
+#[test]
+fn compact_format_trims_overly_long_abstracts() {
+    // Given: a memory with an intentionally very long abstract
+    let huge = "x".repeat(2000);
+    let conn = db_with_memories(&[
+        memory("bloated abstract")
+            .project("testproj")
+            .abstract_text(&huge)
+            .content("anything"),
+    ]);
+
+    // When: searching and rendering compact
+    let results = rememora::search::search(&conn, "bloated", None, None, 10).unwrap();
+    let rendered = rememora::format::search_results_to_compact(&results);
+
+    // Then: no line keeps the full 2000-char abstract
+    for line in rendered.lines() {
+        assert!(
+            line.chars().count() < 400,
+            "compact line should be trimmed, got {} chars",
+            line.chars().count()
+        );
+    }
+}
+
+#[test]
+fn context_format_is_length_capped_for_prompt_injection() {
+    // Given: many memories so that an uncapped render would blow the budget
+    let builders: Vec<_> = (0..50)
+        .map(|i| {
+            memory(&format!("match-{i}"))
+                .project("testproj")
+                .content("prompt-injection budget test")
+        })
+        .collect();
+    let conn = db_with_memories(&builders);
+
+    // When: searching and rendering context-mode
+    let results =
+        rememora::search::search(&conn, "prompt injection budget", None, None, 50).unwrap();
+    assert!(!results.is_empty());
+    let rendered = rememora::format::search_results_to_context(&results);
+
+    // Then: overall byte count stays well under the inline-prompt cap
+    assert!(
+        rendered.len() <= 1200,
+        "context format should be capped under 1200 bytes, got {}",
+        rendered.len()
+    );
+    // And every line carries a bracketed category prefix
+    for line in rendered.lines() {
+        assert!(line.starts_with('['), "context line should start with [cat], got: {line}");
+    }
+}
+
+#[test]
+fn context_format_empty_when_no_results() {
+    // Given: an empty DB
+    let conn = db_with_memories(&[]);
+
+    // When: searching for something that won't match, then rendering context-mode
+    let results = rememora::search::search(&conn, "anything", None, None, 10).unwrap();
+    let rendered = rememora::format::search_results_to_context(&results);
+
+    // Then: empty string (no spurious header)
+    assert!(rendered.is_empty());
+}
+
+// ---------------------------------------------------------------------------
 // Active count bumping
 // ---------------------------------------------------------------------------
 

@@ -92,6 +92,88 @@ pub fn search_results_to_markdown(results: &[SearchResult]) -> String {
     md
 }
 
+/// Target line length for compact search output (~75 tokens).
+const COMPACT_LINE_LEN: usize = 140;
+/// Overall byte cap for context-mode search output (prompt injection safety).
+const CONTEXT_BYTE_CAP: usize = 1200;
+/// Per-line abstract length for context-mode.
+const CONTEXT_LINE_LEN: usize = 100;
+
+fn truncate_ellipsis(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        return s.to_string();
+    }
+    let mut out: String = s.chars().take(max.saturating_sub(1)).collect();
+    out.push('…');
+    out
+}
+
+fn pick_abstract(ctx: &crate::models::context::ContextRecord) -> &str {
+    if !ctx.abstract_text.is_empty() {
+        &ctx.abstract_text
+    } else {
+        &ctx.name
+    }
+}
+
+/// Compact progressive-disclosure output: one line per hit, ~75 tokens each.
+///
+/// Shape: `[category] abstract — rememora://... (rank=-1.23)`
+///
+/// Designed for agents to filter before fetching: enough signal to decide
+/// whether to drill into `timeline` or `get`, without spending the token
+/// budget that the default markdown format would.
+pub fn search_results_to_compact(results: &[SearchResult]) -> String {
+    if results.is_empty() {
+        return "No results found.\n".to_string();
+    }
+
+    let mut out = String::new();
+    for result in results {
+        let ctx = &result.context;
+        let cat = ctx.category.as_deref().unwrap_or(&ctx.context_type);
+        let abstract_text = pick_abstract(ctx);
+        // Budget for the abstract = target line length minus the fixed overhead
+        // (category tag, separator, URI, rank). Clamp to a floor so short URIs
+        // don't yield absurdly long abstracts.
+        let overhead = cat.len() + ctx.uri.len() + 20;
+        let abs_budget = COMPACT_LINE_LEN.saturating_sub(overhead).max(40);
+        let abs_short = truncate_ellipsis(abstract_text, abs_budget);
+        out.push_str(&format!(
+            "[{}] {} — {} (rank={:.2})\n",
+            cat, abs_short, ctx.uri, result.rank
+        ));
+    }
+
+    out
+}
+
+/// Length-capped context output for inline prompt injection.
+///
+/// Shape: `[category] short-abstract` lines. Overall byte count is bounded by
+/// `CONTEXT_BYTE_CAP` so that a misbehaving DB cannot blow a prompt hook's
+/// context budget.
+pub fn search_results_to_context(results: &[SearchResult]) -> String {
+    if results.is_empty() {
+        return String::new();
+    }
+
+    let mut out = String::new();
+    for result in results {
+        let ctx = &result.context;
+        let cat = ctx.category.as_deref().unwrap_or(&ctx.context_type);
+        let abstract_text = pick_abstract(ctx);
+        let abs_short = truncate_ellipsis(abstract_text, CONTEXT_LINE_LEN);
+        let line = format!("[{}] {}\n", cat, abs_short);
+        if out.len() + line.len() > CONTEXT_BYTE_CAP {
+            break;
+        }
+        out.push_str(&line);
+    }
+
+    out
+}
+
 pub fn context_record_to_markdown(ctx: &ContextRecord) -> String {
     let mut md = String::new();
     let cat = ctx.category.as_deref().unwrap_or(&ctx.context_type);
