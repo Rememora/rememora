@@ -20,3 +20,4 @@ pub mod status;
 pub mod supersede;
 pub mod tui;
 pub mod usage;
+pub mod watch_transcript;
