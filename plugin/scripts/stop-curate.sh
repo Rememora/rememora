@@ -5,6 +5,9 @@
 # curates itself.
 [ -n "${REMEMORA_CURATE_CHILD:-}" ] && exit 0
 
+# Kill-switch: set REMEMORA_DISABLE_HOOKS=1 to disable all Rememora hooks.
+[ -n "${REMEMORA_DISABLE_HOOKS:-}" ] && exit 0
+
 # Rememora Stop hook — curates memories from the current session transcript.
 # Runs in the background after each Claude Code agent turn completes.
 # Must never block the agent — all work is forked to a subshell.
