@@ -65,6 +65,7 @@
         <ul class="docs-sidebar-links">
           <li><a href="#cmd-save">save</a></li>
           <li><a href="#cmd-search">search</a></li>
+          <li><a href="#cmd-timeline">timeline</a></li>
           <li><a href="#cmd-context">context</a></li>
           <li><a href="#cmd-session">session</a></li>
           <li><a href="#cmd-project">project</a></li>
@@ -417,7 +418,7 @@ Before ending: `rememora session end &lt;id&gt; --summary "..." ...`
       </table>
 
       <h2 id="cmd-search">search</h2>
-      <p>Search memories using BM25 full-text search (or hybrid with vector if enabled).</p>
+      <p>Search memories using BM25 full-text search (or hybrid with vector if enabled). <code>--format</code> controls the output shape — pick <code>compact</code> when an agent is filtering before zooming in with <code>timeline</code> / <code>get</code>.</p>
       <div class="code-window">
         <div class="code-header">
           <div class="code-dots"><span class="red"></span><span class="yellow"></span><span class="green"></span></div>
@@ -429,9 +430,87 @@ Before ending: `rememora session end &lt;id&gt; --summary "..." ...`
     <span class="flag">--project</span> &lt;name&gt; \
     <span class="flag">--category</span> &lt;category&gt; \
     <span class="flag">--limit</span> &lt;n&gt; \
+    <span class="flag">--format</span> &lt;full|compact|context&gt; \
     <span class="flag">--json</span></pre>
         </div>
       </div>
+      <table>
+        <thead><tr><th><code>--format</code></th><th>Shape</th><th>Typical use</th></tr></thead>
+        <tbody>
+          <tr><td><code>full</code> (default)</td><td>Multi-line per hit with name, URI, metadata</td><td>Human in terminal</td></tr>
+          <tr><td><code>compact</code></td><td>One line per hit with score, ~75 tok/hit</td><td>Agent filtering before a <code>timeline</code> / <code>get</code></td></tr>
+          <tr><td><code>context</code></td><td>One line per hit, byte-capped (2 KB)</td><td><code>UserPromptSubmit</code> hook injection</td></tr>
+        </tbody>
+      </table>
+      <div class="code-window">
+        <div class="code-header">
+          <div class="code-dots"><span class="red"></span><span class="yellow"></span><span class="green"></span></div>
+          <span class="code-title">example — compact filter view</span>
+          <span></span>
+        </div>
+        <div class="code-body">
+<pre><span class="prompt">$</span> <span class="cmd">rememora</span> <span class="cmd">search</span> <span class="string">"auth flow"</span> <span class="flag">--project</span> myapp <span class="flag">--format</span> compact
+[case] Bug fixed: token refresh race … — rememora://…/bug-fixed-token-refresh-race (rank=-3.82)
+[decision] Chose JWT over session cookies … — rememora://…/chose-jwt-over-session-cookies  (rank=-3.41)
+[pattern] Auth middleware composition … — rememora://…/auth-middleware-composition       (rank=-3.05)</pre>
+        </div>
+      </div>
+
+      <h2 id="cmd-timeline">timeline</h2>
+      <p>Chronological (or hotness-ranked) slice around an anchor URI. The middle step in the progressive-disclosure flow: <code>search</code> (filter) → <code>timeline</code> (zoom) → <code>get</code> (full content). Lets an agent see what memories surrounded a decision without pulling full content for every hit.</p>
+      <div class="code-window">
+        <div class="code-header">
+          <div class="code-dots"><span class="red"></span><span class="yellow"></span><span class="green"></span></div>
+          <span class="code-title">usage</span>
+          <button class="code-copy">Copy</button>
+        </div>
+        <div class="code-body">
+<pre><span class="cmd">rememora</span> <span class="cmd">timeline</span> <span class="flag">--anchor</span> &lt;rememora://...&gt; \
+    <span class="flag">--before</span> &lt;n&gt; \
+    <span class="flag">--after</span> &lt;n&gt; \
+    <span class="flag">--project</span> &lt;name&gt; \
+    <span class="flag">--by</span> &lt;ts|hotness&gt; \
+    <span class="flag">--json</span></pre>
+        </div>
+      </div>
+      <table>
+        <thead><tr><th>Flag</th><th>Default</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td><code>--anchor</code></td><td>required</td><td>The rememora:// URI to center the slice on</td></tr>
+          <tr><td><code>--before</code></td><td><code>3</code></td><td>Number of memories before the anchor</td></tr>
+          <tr><td><code>--after</code></td><td><code>3</code></td><td>Number of memories after the anchor</td></tr>
+          <tr><td><code>--project</code></td><td>inferred</td><td>Scope. Inferred from the anchor URI if omitted</td></tr>
+          <tr><td><code>--by</code></td><td><code>ts</code></td><td>Ordering — <code>ts</code> (creation time) or <code>hotness</code> (importance blended with recency + access count)</td></tr>
+        </tbody>
+      </table>
+      <div class="code-window">
+        <div class="code-header">
+          <div class="code-dots"><span class="red"></span><span class="yellow"></span><span class="green"></span></div>
+          <span class="code-title">example — zoom around a decision</span>
+          <span></span>
+        </div>
+        <div class="code-body">
+<pre><span class="prompt">$</span> <span class="cmd">rememora</span> <span class="cmd">timeline</span> \
+    <span class="flag">--anchor</span> <span class="string">"rememora://projects/myapp/memories/decision/chose-jwt-over-session-cookies"</span> \
+    <span class="flag">--before</span> 3 <span class="flag">--after</span> 3
+
+<span class="comment"># Timeline around `rememora://.../chose-jwt-over-session-cookies`</span>
+
+## Before
+- [case] Investigated session-cookie CSRF hardening … — 2026-03-14T…
+- [event] Benchmarked JWT verify latency in middleware … — 2026-03-15T…
+- [pattern] Double-submit cookie pattern for CSRF … — 2026-03-15T…
+
+## Anchor
+**- [decision] Chose JWT over session cookies … — 2026-03-16T…**
+
+## After
+- [case] Refresh-token rotation leak caught in review — 2026-03-18T…
+- [case] Bug fixed: token refresh race … — 2026-03-19T…
+- [pattern] Auth middleware composition … — 2026-03-20T…</pre>
+        </div>
+      </div>
+      <p><strong>Progressive disclosure.</strong> A typical agent retrieval now costs ~75 tokens per filter hit, ~200 tokens for a slice of surrounding context, and only pays full content cost when it calls <code>rememora get &lt;uri&gt;</code> on the one memory it actually needs. Compare: pre-PR #80, every <code>search</code> hit pulled the full overview block.</p>
 
       <h2 id="cmd-context">context</h2>
       <p>Load full project context — memories, last session, working state. The primary entry point for agents at session start.</p>
