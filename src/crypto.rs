@@ -17,11 +17,14 @@ pub fn is_db_encrypted(path: &Path) -> bool {
     }
 }
 
-/// Resolve the encryption key using a three-tier strategy:
+/// Resolve the encryption key without any interactive prompt:
 /// 1. REMEMORA_KEY environment variable
 /// 2. OS keychain
-/// 3. Interactive terminal prompt (only if `prompt` is true)
-pub fn resolve_key(prompt: bool) -> Result<Option<String>> {
+///
+/// Returns `Ok(None)` when neither source has a key. This is the entry point
+/// for non-interactive callers (GUI apps, hooks, background workers) that
+/// must not block on stdin.
+pub fn resolve_key_no_prompt() -> Result<Option<String>> {
     // 1. Environment variable
     if let Ok(key) = std::env::var("REMEMORA_KEY") {
         if !key.is_empty() {
@@ -36,6 +39,18 @@ pub fn resolve_key(prompt: bool) -> Result<Option<String>> {
         Err(e) => {
             eprintln!("Warning: keychain access failed: {e}");
         }
+    }
+
+    Ok(None)
+}
+
+/// Resolve the encryption key using a three-tier strategy:
+/// 1. REMEMORA_KEY environment variable
+/// 2. OS keychain
+/// 3. Interactive terminal prompt (only if `prompt` is true)
+pub fn resolve_key(prompt: bool) -> Result<Option<String>> {
+    if let Some(key) = resolve_key_no_prompt()? {
+        return Ok(Some(key));
     }
 
     // 3. Interactive prompt
@@ -109,4 +124,24 @@ pub fn keychain_delete() -> Result<()> {
 /// Prompt the user for a key via the terminal.
 fn prompt_for_key(prompt: &str) -> Result<String> {
     rpassword::prompt_password(prompt).context("Failed to read password from terminal")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `resolve_key_no_prompt` must return the env var when it is set, without
+    /// touching the keychain. This is the path GUI callers (the desktop app)
+    /// rely on to stay non-interactive.
+    #[test]
+    fn resolve_key_no_prompt_reads_env_var() {
+        // Use a unique value so we do not collide with any real developer env.
+        let sentinel = "env-key-sentinel-for-tests";
+        // Safety: tests in this crate do not run concurrently against the same
+        // env var name; `cargo test` serialises within a process per test fn.
+        std::env::set_var("REMEMORA_KEY", sentinel);
+        let result = resolve_key_no_prompt().expect("resolve_key_no_prompt");
+        std::env::remove_var("REMEMORA_KEY");
+        assert_eq!(result.as_deref(), Some(sentinel));
+    }
 }
