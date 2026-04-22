@@ -402,6 +402,45 @@ enum Commands {
 
     /// Launch the Rememora Desktop app (Tauri)
     Desktop,
+
+    /// Local-first telemetry export (OTEL / OTLP).
+    Telemetry {
+        #[command(subcommand)]
+        action: TelemetryAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum TelemetryAction {
+    /// Emit OTEL-compatible JSON spans from `agent_invocations` to stdout.
+    ///
+    /// One row becomes one span. Trace IDs group attempts sharing a
+    /// rememora session; span IDs are derived from the row ULID. The
+    /// default format is JSON Lines (one span per line) so the output can
+    /// be piped into `jq`, `tee`, or an OTLP JSON-file importer. Passing
+    /// `--format otlp` emits a single OTLP HTTP/JSON document instead.
+    ExportOtlp {
+        /// Time range: `7d`, `24h`, `30m`, `all`, or an ISO8601 timestamp.
+        #[arg(long, default_value = "all")]
+        since: String,
+
+        /// Only export this caller (e.g. agent_run, curator, signal_gate).
+        #[arg(long)]
+        caller: Option<String>,
+
+        /// Only export rows for this project.
+        #[arg(long)]
+        project: Option<String>,
+
+        /// Only export rows with this exact parent_session id.
+        #[arg(long)]
+        parent_session: Option<String>,
+
+        /// Output format: `jsonl` (default, one span per line) or `otlp`
+        /// (single OTLP HTTP/JSON document).
+        #[arg(long, default_value = "jsonl")]
+        format: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -837,5 +876,24 @@ fn main() -> Result<()> {
             &commands::usage::UsageArgs { since, by },
             cli.json,
         ),
+
+        Commands::Telemetry { action } => match action {
+            TelemetryAction::ExportOtlp {
+                since,
+                caller,
+                project,
+                parent_session,
+                format,
+            } => commands::telemetry::export_otlp(
+                &conn,
+                &commands::telemetry::TelemetryExportArgs {
+                    since,
+                    caller,
+                    project,
+                    parent_session,
+                    format,
+                },
+            ),
+        },
     }
 }

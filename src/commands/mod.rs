@@ -18,6 +18,7 @@ pub mod session;
 pub mod setup;
 pub mod status;
 pub mod supersede;
+pub mod telemetry;
 pub mod timeline;
 pub mod tui;
 pub mod usage;
