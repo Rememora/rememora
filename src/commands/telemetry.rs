@@ -9,8 +9,8 @@
 //!
 //! Two shapes are supported:
 //!   * `jsonl` (default) — one compact OTLP span JSON object per line.
-//!   * `otlp`            — a single OTLP HTTP/JSON document wrapping every
-//!                         span under `resourceSpans[0].scopeSpans[0]`.
+//!   * `otlp` — a single OTLP HTTP/JSON document wrapping every span under
+//!     `resourceSpans[0].scopeSpans[0]`.
 //!
 //! This verb intentionally re-parses `--since` locally rather than reaching
 //! into `commands::usage::parse_since`, so `usage.rs`'s surface stays stable.
