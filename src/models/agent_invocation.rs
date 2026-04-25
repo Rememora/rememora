@@ -9,7 +9,7 @@
 //! Readers are `rememora usage` (aggregation) and the TUI cost tile.
 
 use anyhow::Result;
-use rusqlite::{params, Connection};
+use rusqlite::{params, params_from_iter, types::Value as SqlValue, Connection};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -266,6 +266,112 @@ pub fn aggregate(
     Ok(rows)
 }
 
+// ── Row listing (for telemetry export) ──────────────────────────────
+
+/// Full row shape for `agent_invocations`. Mirrors the table columns plus
+/// the row id. Used by the OTEL export layer which needs the raw per-row
+/// data rather than grouped aggregates.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InvocationRow {
+    pub id: String,
+    pub ts: String,
+    pub caller: String,
+    pub model: String,
+    pub project: Option<String>,
+    pub parent_session: Option<String>,
+    pub child_session: Option<String>,
+    pub duration_ms: Option<i64>,
+    pub duration_api_ms: Option<i64>,
+    pub num_turns: Option<i64>,
+    pub input_tokens: Option<i64>,
+    pub output_tokens: Option<i64>,
+    pub cache_read_tokens: Option<i64>,
+    pub cache_creation_tokens: Option<i64>,
+    pub cost_usd: Option<f64>,
+    pub stop_reason: Option<String>,
+    pub terminal_reason: Option<String>,
+    pub is_error: bool,
+}
+
+/// Optional filters for `list_invocations`. `None` means "no predicate on
+/// this column". `since` is an ISO8601/RFC3339 string (inclusive).
+#[derive(Debug, Clone, Default)]
+pub struct InvocationFilter {
+    pub since: Option<String>,
+    pub caller: Option<String>,
+    pub project: Option<String>,
+    pub parent_session: Option<String>,
+}
+
+/// List raw invocation rows, ordered ts ASC, matching every non-None filter.
+pub fn list_invocations(
+    conn: &Connection,
+    filter: &InvocationFilter,
+) -> Result<Vec<InvocationRow>> {
+    let mut clauses: Vec<&'static str> = Vec::new();
+    let mut args: Vec<SqlValue> = Vec::new();
+
+    if let Some(ts) = filter.since.as_deref() {
+        clauses.push("ts >= ?");
+        args.push(SqlValue::Text(ts.to_string()));
+    }
+    if let Some(c) = filter.caller.as_deref() {
+        clauses.push("caller = ?");
+        args.push(SqlValue::Text(c.to_string()));
+    }
+    if let Some(p) = filter.project.as_deref() {
+        clauses.push("project = ?");
+        args.push(SqlValue::Text(p.to_string()));
+    }
+    if let Some(s) = filter.parent_session.as_deref() {
+        clauses.push("parent_session = ?");
+        args.push(SqlValue::Text(s.to_string()));
+    }
+
+    let where_sql = if clauses.is_empty() {
+        String::new()
+    } else {
+        format!(" WHERE {}", clauses.join(" AND "))
+    };
+
+    let sql = format!(
+        "SELECT id, ts, caller, model, project, parent_session, child_session,
+                duration_ms, duration_api_ms, num_turns,
+                input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                cost_usd, stop_reason, terminal_reason, is_error
+         FROM agent_invocations{where_sql}
+         ORDER BY ts ASC"
+    );
+
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt
+        .query_map(params_from_iter(args.iter()), |row| {
+            Ok(InvocationRow {
+                id: row.get(0)?,
+                ts: row.get(1)?,
+                caller: row.get(2)?,
+                model: row.get(3)?,
+                project: row.get(4)?,
+                parent_session: row.get(5)?,
+                child_session: row.get(6)?,
+                duration_ms: row.get(7)?,
+                duration_api_ms: row.get(8)?,
+                num_turns: row.get(9)?,
+                input_tokens: row.get(10)?,
+                output_tokens: row.get(11)?,
+                cache_read_tokens: row.get(12)?,
+                cache_creation_tokens: row.get(13)?,
+                cost_usd: row.get(14)?,
+                stop_reason: row.get(15)?,
+                terminal_reason: row.get(16)?,
+                is_error: row.get::<_, i64>(17)? != 0,
+            })
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+
+    Ok(rows)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -351,6 +457,77 @@ mod tests {
         let recent = aggregate(&conn, Some("2020-01-01T00:00:00Z"), GroupBy::Total).unwrap();
         assert_eq!(recent[0].invocations, 1);
         assert!((recent[0].cost_usd - 0.20).abs() < 1e-9);
+    }
+
+    #[test]
+    fn list_invocations_filters_by_caller_project_and_session() {
+        let conn = db::open_memory().unwrap();
+
+        let mut a = sample(Caller::Curator, "sonnet", 0.10);
+        a.project = Some("alpha".into());
+        a.parent_session = Some("s-1".into());
+        insert(&conn, &a).unwrap();
+
+        let mut b = sample(Caller::SignalGate, "haiku", 0.02);
+        b.project = Some("beta".into());
+        b.parent_session = Some("s-1".into());
+        insert(&conn, &b).unwrap();
+
+        let mut c = sample(Caller::Extract, "sonnet", 0.05);
+        c.project = Some("alpha".into());
+        c.parent_session = Some("s-2".into());
+        insert(&conn, &c).unwrap();
+
+        // All rows.
+        let all = list_invocations(&conn, &InvocationFilter::default()).unwrap();
+        assert_eq!(all.len(), 3);
+
+        // Caller filter.
+        let curators = list_invocations(
+            &conn,
+            &InvocationFilter {
+                caller: Some("curator".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(curators.len(), 1);
+        assert_eq!(curators[0].caller, "curator");
+
+        // Project filter.
+        let alpha = list_invocations(
+            &conn,
+            &InvocationFilter {
+                project: Some("alpha".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(alpha.len(), 2);
+
+        // Parent-session filter.
+        let s1 = list_invocations(
+            &conn,
+            &InvocationFilter {
+                parent_session: Some("s-1".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(s1.len(), 2);
+
+        // Combined filter.
+        let combo = list_invocations(
+            &conn,
+            &InvocationFilter {
+                project: Some("alpha".into()),
+                parent_session: Some("s-1".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(combo.len(), 1);
+        assert_eq!(combo[0].caller, "curator");
     }
 
     #[test]
