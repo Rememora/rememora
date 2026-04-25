@@ -398,6 +398,22 @@ enum Commands {
         /// How to group: `total`, `caller`, `model`, `project`, `session`.
         #[arg(long, default_value = "caller")]
         by: String,
+
+        /// Aggregate plugin hook invocations (recursion-gate outcomes)
+        /// instead of LLM telemetry. Group is always (hook, outcome).
+        #[arg(long)]
+        hooks: bool,
+
+        /// When `--hooks` is set, restrict to a single hook (e.g. `stop-curate`).
+        #[arg(long)]
+        hook: Option<String>,
+    },
+
+    /// Internal/experimental commands for instrumentation.
+    /// Schema and flags may change between versions.
+    Debug {
+        #[command(subcommand)]
+        action: DebugAction,
     },
 
     /// Launch the Rememora Desktop app (Tauri)
@@ -407,6 +423,39 @@ enum Commands {
     Telemetry {
         #[command(subcommand)]
         action: TelemetryAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum DebugAction {
+    /// Record a plugin hook gate-outcome event into `hook_invocations`.
+    /// Used by `plugin/scripts/stop-curate.sh`. Schema is experimental —
+    /// do not depend on column shape.
+    RecordHookEvent {
+        /// Hook name (currently only `stop-curate`).
+        #[arg(long)]
+        hook: String,
+
+        /// Gate outcome: `env_var_short_circuit`, `pgrep_short_circuit`,
+        /// `cooldown_short_circuit`, or `passed_through`.
+        #[arg(long)]
+        outcome: String,
+
+        /// Claude Code session_id (optional).
+        #[arg(long)]
+        session_id: Option<String>,
+
+        /// Parent session id, if applicable (optional).
+        #[arg(long)]
+        parent_session: Option<String>,
+
+        /// Cooldown stamp state: `fresh`, `within_window`, `expired`, `unknown`.
+        #[arg(long)]
+        cooldown_state: Option<String>,
+
+        /// Free-form JSON for forward-compat fields (optional).
+        #[arg(long)]
+        extra: Option<String>,
     },
 }
 
@@ -871,11 +920,42 @@ fn main() -> Result<()> {
             commands::export::run(&conn, project.as_deref(), &format)
         }
 
-        Commands::Usage { since, by } => commands::usage::run(
+        Commands::Usage {
+            since,
+            by,
+            hooks,
+            hook,
+        } => commands::usage::run(
             &conn,
-            &commands::usage::UsageArgs { since, by },
+            &commands::usage::UsageArgs {
+                since,
+                by,
+                hooks,
+                hook,
+            },
             cli.json,
         ),
+
+        Commands::Debug { action } => match action {
+            DebugAction::RecordHookEvent {
+                hook,
+                outcome,
+                session_id,
+                parent_session,
+                cooldown_state,
+                extra,
+            } => commands::debug_hook::record(
+                &conn,
+                &commands::debug_hook::RecordHookEventArgs {
+                    hook,
+                    outcome,
+                    session_id,
+                    parent_session,
+                    cooldown_state,
+                    extra,
+                },
+            ),
+        },
 
         Commands::Telemetry { action } => match action {
             TelemetryAction::ExportOtlp {

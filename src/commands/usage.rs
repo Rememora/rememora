@@ -10,16 +10,23 @@ use chrono::{Duration, Utc};
 use rusqlite::Connection;
 
 use rememora::models::agent_invocation::{self, GroupBy, UsageAggregate};
+use rememora::models::hook_invocation::{self, HookAggregate};
 
 pub struct UsageArgs {
     pub since: String,
     pub by: String,
+    pub hooks: bool,
+    pub hook: Option<String>,
 }
 
 pub fn run(conn: &Connection, args: &UsageArgs, json_output: bool) -> Result<()> {
     let since = parse_since(&args.since).context("invalid --since value")?;
-    let group_by = parse_group_by(&args.by).context("invalid --by value")?;
 
+    if args.hooks {
+        return run_hooks(conn, args, since.as_deref(), json_output);
+    }
+
+    let group_by = parse_group_by(&args.by).context("invalid --by value")?;
     let rows = agent_invocation::aggregate(conn, since.as_deref(), group_by)?;
 
     if json_output {
@@ -31,6 +38,28 @@ pub fn run(conn: &Connection, args: &UsageArgs, json_output: bool) -> Result<()>
         println!("{}", serde_json::to_string_pretty(&out)?);
     } else {
         print_table(&args.by, &args.since, &rows);
+    }
+
+    Ok(())
+}
+
+fn run_hooks(
+    conn: &Connection,
+    args: &UsageArgs,
+    since: Option<&str>,
+    json_output: bool,
+) -> Result<()> {
+    let rows = hook_invocation::aggregate_by_outcome(conn, since, args.hook.as_deref())?;
+
+    if json_output {
+        let out = serde_json::json!({
+            "since": args.since,
+            "hook": args.hook,
+            "rows": rows,
+        });
+        println!("{}", serde_json::to_string_pretty(&out)?);
+    } else {
+        print_hooks_table(&args.since, &rows);
     }
 
     Ok(())
@@ -138,6 +167,36 @@ fn print_table(by: &str, since: &str, rows: &[UsageAggregate]) {
     }
 }
 
+fn print_hooks_table(since: &str, rows: &[HookAggregate]) {
+    if rows.is_empty() {
+        if since.trim().eq_ignore_ascii_case("all") || since.trim().is_empty() {
+            println!("No hook invocations recorded.");
+        } else {
+            println!("No hook invocations recorded in this window.");
+        }
+        return;
+    }
+
+    println!("{:<16} {:<28} {:>8}", "hook", "outcome", "calls");
+    println!("{}", "-".repeat(56));
+
+    let mut total = 0i64;
+    for row in rows {
+        total += row.count;
+        println!(
+            "{:<16} {:<28} {:>8}",
+            truncate(&row.hook, 16),
+            truncate(&row.outcome, 28),
+            row.count,
+        );
+    }
+
+    if rows.len() > 1 {
+        println!("{}", "-".repeat(56));
+        println!("{:<16} {:<28} {:>8}", "TOTAL", "", total);
+    }
+}
+
 fn truncate(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
         s.to_string()
@@ -179,5 +238,33 @@ mod tests {
         assert_eq!(parse_group_by("session").unwrap(), GroupBy::ParentSession);
         assert_eq!(parse_group_by("total").unwrap(), GroupBy::Total);
         assert!(parse_group_by("weird").is_err());
+    }
+
+    #[test]
+    fn hooks_branch_aggregates_by_outcome() {
+        use rememora::db;
+        use rememora::models::hook_invocation::{self, HookEventRecord};
+
+        let conn = db::open_memory().unwrap();
+        for outcome in ["passed_through", "passed_through", "pgrep_short_circuit"] {
+            hook_invocation::insert(
+                &conn,
+                &HookEventRecord {
+                    hook: "stop-curate",
+                    outcome,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        }
+
+        let args = UsageArgs {
+            since: "all".into(),
+            by: "caller".into(),
+            hooks: true,
+            hook: None,
+        };
+        // Smoke: must not panic and must return Ok.
+        run(&conn, &args, true).unwrap();
     }
 }
