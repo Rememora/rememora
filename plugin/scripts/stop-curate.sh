@@ -1,11 +1,32 @@
 #!/usr/bin/env bash
+# Telemetry helper for recursion-gate observability (#82). Always backgrounded
+# and stream-redirected so a stuck DB or missing binary cannot block Claude
+# Code. Returns 0 unconditionally — the hook MUST never fail on telemetry.
+_emit() {
+  local outcome="$1"
+  local cooldown_state="${2:-unknown}"
+  local sid="${SESSION_ID:-}"
+  command -v rememora >/dev/null 2>&1 || return 0
+  (rememora debug record-hook-event \
+      --hook stop-curate \
+      --outcome "$outcome" \
+      ${sid:+--session-id "$sid"} \
+      --cooldown-state "$cooldown_state" \
+      </dev/null >/dev/null 2>&1 &) || true
+  return 0
+}
+
 # Do not curate our own children. `rememora curate` spawns `claude -p`
 # subprocesses for signal detection / AUDN curation; each child gets its own
 # session_id and fires its own Stop hook. Without this gate, curate recursively
 # curates itself.
-[ -n "${REMEMORA_CURATE_CHILD:-}" ] && exit 0
+if [ -n "${REMEMORA_CURATE_CHILD:-}" ]; then
+  _emit env_var_short_circuit unknown
+  exit 0
+fi
 
 # Kill-switch: set REMEMORA_DISABLE_HOOKS=1 to disable all Rememora hooks.
+# Not instrumented — kill-switch is user config, not a recursion gate.
 [ -n "${REMEMORA_DISABLE_HOOKS:-}" ] && exit 0
 
 # Rememora Stop hook — curates memories from the current session transcript.
@@ -54,22 +75,36 @@ PROJECT=$(basename "$CWD")
 #    says (not start-to-start).
 #
 # Set REMEMORA_CURATE_COOLDOWN_SECS=0 to disable the frequency gate.
-if pgrep -f "rememora curate --file .*${SESSION_ID}" >/dev/null 2>&1; then
-  exit 0
-fi
-
 COOLDOWN="${REMEMORA_CURATE_COOLDOWN_SECS:-300}"
 LOCK_DIR="${TMPDIR:-/tmp}"
 STAMP="${LOCK_DIR%/}/rememora-curate-${SESSION_ID}.last"
 
+# Compute cooldown_state up front so every emit point can reference it.
+# fresh         → no stamp file yet
+# within_window → stamp exists and is younger than COOLDOWN
+# expired       → stamp exists and is older than COOLDOWN
+COOLDOWN_STATE=fresh
 if [ -f "$STAMP" ]; then
-  # Portable mtime: BSD stat (macOS) first, GNU stat (Linux) fallback.
   LAST=$(stat -f %m "$STAMP" 2>/dev/null || stat -c %Y "$STAMP" 2>/dev/null || echo 0)
   NOW=$(date +%s)
   if [ $((NOW - LAST)) -lt "$COOLDOWN" ]; then
-    exit 0
+    COOLDOWN_STATE=within_window
+  else
+    COOLDOWN_STATE=expired
   fi
 fi
+
+if pgrep -f "rememora curate --file .*${SESSION_ID}" >/dev/null 2>&1; then
+  _emit pgrep_short_circuit "$COOLDOWN_STATE"
+  exit 0
+fi
+
+if [ "$COOLDOWN_STATE" = "within_window" ]; then
+  _emit cooldown_short_circuit within_window
+  exit 0
+fi
+
+_emit passed_through "$COOLDOWN_STATE"
 
 # Fork curation to a fully detached background process.
 #
