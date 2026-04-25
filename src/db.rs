@@ -179,6 +179,92 @@ fn apply_encryption_key(conn: &Connection, path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Error cases for `open_readonly_no_prompt`, designed for GUI callers that
+/// need to render a precise, actionable message rather than a generic failure.
+#[derive(Debug)]
+pub enum OpenReadonlyError {
+    /// The DB file does not exist at `path`.
+    DbMissing,
+    /// The DB file exists but is plain SQLite (no cipher applied). Viewer v0
+    /// expects the CLI to have set up an encrypted DB.
+    DbUnencrypted,
+    /// The DB is encrypted but no key is available in env or keychain.
+    /// The user needs to run the CLI first (`rememora init` flow) to populate
+    /// the keychain entry.
+    KeychainMissing,
+    /// Any other failure (SQLite open failure, bad cipher, IO, etc.).
+    Other(anyhow::Error),
+}
+
+impl std::fmt::Display for OpenReadonlyError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            OpenReadonlyError::DbMissing => write!(
+                f,
+                "Rememora database not found at the expected path. \
+                 Run `rememora init` in a terminal first."
+            ),
+            OpenReadonlyError::DbUnencrypted => write!(
+                f,
+                "Rememora database is present but unencrypted. \
+                 Run `rememora encrypt` in a terminal to migrate it."
+            ),
+            OpenReadonlyError::KeychainMissing => write!(
+                f,
+                "Rememora database is encrypted but no key was found in \
+                 REMEMORA_KEY or the OS keychain. Run `rememora init` in a \
+                 terminal first so the desktop app can decrypt the database."
+            ),
+            OpenReadonlyError::Other(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+impl std::error::Error for OpenReadonlyError {}
+
+/// Open the DB for **read-only, non-interactive** access.
+///
+/// Contract vs `open`:
+/// - Never prompts on stdin — safe to call from a GUI/non-terminal process.
+/// - Requires the DB to already exist; returns `DbMissing` otherwise.
+/// - Requires the DB to already be encrypted; `DbUnencrypted` otherwise.
+///   (A viewer should not silently migrate the user's DB.)
+/// - Requires the key to be available via env or keychain; `KeychainMissing`
+///   otherwise.
+/// - Does **not** run migrations — a viewer must not mutate the DB schema,
+///   even transiently.
+/// - Applies the same runtime PRAGMAs (`journal_mode=WAL`, `foreign_keys`,
+///   `busy_timeout`, `cache_size`, `synchronous=NORMAL`) so concurrent
+///   reads against the CLI's WAL are well-behaved.
+pub fn open_readonly_no_prompt(path: &Path) -> Result<Connection, OpenReadonlyError> {
+    use crate::crypto;
+
+    #[cfg(feature = "embed-candle")]
+    register_vec_extension();
+
+    if !path.exists() {
+        return Err(OpenReadonlyError::DbMissing);
+    }
+
+    let encrypted = crypto::is_db_encrypted(path);
+    if !encrypted {
+        return Err(OpenReadonlyError::DbUnencrypted);
+    }
+
+    let key = crypto::resolve_key_no_prompt()
+        .map_err(OpenReadonlyError::Other)?
+        .ok_or(OpenReadonlyError::KeychainMissing)?;
+
+    let conn = Connection::open(path).map_err(|e| OpenReadonlyError::Other(e.into()))?;
+    // `pragma_update` for "key" must be the very first statement.
+    conn.pragma_update(None, "key", &key)
+        .map_err(|e| OpenReadonlyError::Other(e.into()))?;
+
+    configure(&conn).map_err(OpenReadonlyError::Other)?;
+    // Intentionally skip migrate(): viewer is read-only.
+    Ok(conn)
+}
+
 pub fn default_db_path() -> std::path::PathBuf {
     if let Ok(p) = std::env::var("REMEMORA_DB") {
         return std::path::PathBuf::from(p);
@@ -187,4 +273,35 @@ pub fn default_db_path() -> std::path::PathBuf {
     path.push(".rememora");
     path.push("rememora.db");
     path
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn open_readonly_returns_db_missing_for_nonexistent_path() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("does-not-exist.db");
+        let err = open_readonly_no_prompt(&path).unwrap_err();
+        assert!(
+            matches!(err, OpenReadonlyError::DbMissing),
+            "expected DbMissing, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn open_readonly_returns_db_unencrypted_for_plain_db() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("plain.db");
+        // Create a plain (unencrypted) SQLite DB using `open_with_options`.
+        let conn = open_with_options(&path, true).expect("create plain db");
+        drop(conn);
+
+        let err = open_readonly_no_prompt(&path).unwrap_err();
+        assert!(
+            matches!(err, OpenReadonlyError::DbUnencrypted),
+            "expected DbUnencrypted, got {err:?}"
+        );
+    }
 }
