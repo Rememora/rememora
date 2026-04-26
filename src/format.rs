@@ -30,6 +30,8 @@ pub fn context_to_markdown(assembly: &ContextAssembly) -> String {
         md.push('\n');
     }
 
+    let global_mode = assembly.project_name.is_none();
+
     // L0 abstracts — memory map
     if !assembly.l0_abstracts.is_empty() {
         md.push_str("## Memory Map (L0)\n\n");
@@ -39,10 +41,18 @@ pub fn context_to_markdown(assembly: &ContextAssembly) -> String {
                 .category
                 .as_deref()
                 .unwrap_or(&scored.context.context_type);
-            md.push_str(&format!(
-                "- [{}] {} (importance: {:.1})\n",
-                cat, scored.context.abstract_text, scored.context.importance
-            ));
+            if global_mode {
+                let proj = project_label_for(&scored.context.uri);
+                md.push_str(&format!(
+                    "- [{}] [{}] {} (importance: {:.1})\n",
+                    proj, cat, scored.context.abstract_text, scored.context.importance
+                ));
+            } else {
+                md.push_str(&format!(
+                    "- [{}] {} (importance: {:.1})\n",
+                    cat, scored.context.abstract_text, scored.context.importance
+                ));
+            }
         }
         md.push('\n');
     }
@@ -59,16 +69,41 @@ pub fn context_to_markdown(assembly: &ContextAssembly) -> String {
                 .category
                 .as_deref()
                 .unwrap_or(&scored.context.context_type);
-            md.push_str(&format!("### [{}] {}\n\n", cat, scored.context.name));
+            if global_mode {
+                let proj = project_label_for(&scored.context.uri);
+                md.push_str(&format!(
+                    "### [{}] [{}] {}\n\n",
+                    proj, cat, scored.context.name
+                ));
+            } else {
+                md.push_str(&format!("### [{}] {}\n\n", cat, scored.context.name));
+            }
             md.push_str(&format!("{}\n\n", scored.context.overview));
         }
     }
 
     if assembly.l0_abstracts.is_empty() && assembly.latest_session.is_none() {
-        md.push_str("*No memories or sessions found for this project.*\n");
+        if global_mode {
+            md.push_str("*No memories found in the database.*\n");
+        } else {
+            md.push_str("*No memories or sessions found for this project.*\n");
+        }
     }
 
     md
+}
+
+/// Render a short label for the project a context belongs to, used in
+/// Global-mode context output. Falls back to `global` for global-scoped
+/// memories and `?` for unparseable URIs.
+fn project_label_for(uri: &str) -> String {
+    if let Some(name) = crate::uri::extract_project(uri) {
+        return name;
+    }
+    if uri.starts_with("rememora://global/") {
+        return "global".to_string();
+    }
+    "?".to_string()
 }
 
 pub fn search_results_to_markdown(results: &[SearchResult]) -> String {

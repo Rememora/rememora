@@ -18,7 +18,14 @@ pub struct ScoredContext {
     pub score: f64,
 }
 
-/// Get L0 map: all global preferences + project contexts as abstracts
+/// Get L0 map: scored, ranked abstracts.
+///
+/// - When `project` is `Some(...)`, returns global preferences plus the
+///   project's own contexts (the original behavior).
+/// - When `project` is `None` (Global mode — typically `context --auto` from
+///   an unregistered cwd), aggregates across **every** project plus globals
+///   so the user sees memories from the rest of their workspace instead of an
+///   empty page. Issue #104.
 pub fn get_l0_map(conn: &Connection, project: Option<&str>) -> Result<Vec<ScoredContext>> {
     let mut all = Vec::new();
 
@@ -32,12 +39,31 @@ pub fn get_l0_map(conn: &Connection, project: Option<&str>) -> Result<Vec<Scored
         }
     }
 
-    // Project-scoped contexts
-    if let Some(proj) = project {
-        let project_contexts = context::list_by_scope(conn, None, None, Some(proj), 100)?;
-        for ctx in project_contexts {
-            let score = compute_score(&ctx);
-            all.push(ScoredContext { context: ctx, score });
+    match project {
+        Some(proj) => {
+            // Project-scoped contexts
+            let project_contexts = context::list_by_scope(conn, None, None, Some(proj), 100)?;
+            for ctx in project_contexts {
+                let score = compute_score(&ctx);
+                all.push(ScoredContext { context: ctx, score });
+            }
+        }
+        None => {
+            // Global mode: aggregate across every registered project so the
+            // L0 page is informative even when cwd is not a known project.
+            // We pull a generous cap (200) and let the score-sort below
+            // surface the highest-signal entries.
+            let everything = context::list_by_scope(conn, Some("memory"), None, None, 200)?;
+            // Skip globals already added above (avoid duplicates).
+            let already: std::collections::HashSet<String> =
+                all.iter().map(|s| s.context.id.clone()).collect();
+            for ctx in everything {
+                if already.contains(&ctx.id) {
+                    continue;
+                }
+                let score = compute_score(&ctx);
+                all.push(ScoredContext { context: ctx, score });
+            }
         }
     }
 
