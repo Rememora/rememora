@@ -604,6 +604,22 @@ pub fn run(apply: bool) -> Result<()> {
         .filter(|(_, a)| !matches!(a, Action::AlreadyConfigured))
         .collect();
 
+    // Deploy bundled plugin hook scripts to `~/.rememora/hooks/` BEFORE the
+    // "already configured" early-return — otherwise users who upgrade the
+    // rememora CLI (Homebrew, cargo install, marketplace plugin) would end up
+    // running the *old* shell scripts indefinitely, since their settings.json
+    // already points at canonical hook paths and the old per-agent action is
+    // `AlreadyConfigured` (issue #115). `deploy_hook_scripts` is idempotent
+    // (overwrites in place) so it's safe to run on every `--apply`.
+    let hooks_dir = default_hooks_dir();
+    if apply {
+        deploy_hook_scripts(&hooks_dir)?;
+        cliclack::log::success(format!(
+            "Deployed hook scripts to {}",
+            tilde_path(&hooks_dir),
+        ))?;
+    }
+
     if pending.is_empty() {
         cliclack::outro("All agents already configured.")?;
         return Ok(());
@@ -626,18 +642,6 @@ pub fn run(apply: bool) -> Result<()> {
         cliclack::outro("Setup cancelled.")?;
         return Ok(());
     }
-
-    // Deploy bundled plugin hook scripts to `~/.rememora/hooks/` BEFORE we
-    // mutate any agent's settings.json, so that the moment the new inline
-    // commands point at those scripts, the scripts are already in place
-    // (issue #111). Idempotent — overwrites the existing files so the
-    // scripts upgrade in lockstep with the CLI binary.
-    let hooks_dir = default_hooks_dir();
-    deploy_hook_scripts(&hooks_dir)?;
-    cliclack::log::success(format!(
-        "Deployed hook scripts to {}",
-        tilde_path(&hooks_dir),
-    ))?;
 
     // Apply changes
     for (agent, action) in &actions {
