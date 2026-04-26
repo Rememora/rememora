@@ -52,6 +52,16 @@ if [[ "${PURGE}" -eq 1 ]]; then
             echo "[down] volume ${v} not present"
         fi
     done
+
+    # Issue #106: the sandbox container regenerates its SSH host key on
+    # every fresh boot. Stale entries in ~/.ssh/known_hosts.rememora-sandbox
+    # cause `ssh` to abort with HOST KEY VERIFICATION FAILED on the next
+    # `up.sh + login.sh` cycle. Drop the file so the next login starts clean.
+    KNOWN_HOSTS="${HOME}/.ssh/known_hosts.rememora-sandbox"
+    if [[ -f "${KNOWN_HOSTS}" ]]; then
+        rm -f "${KNOWN_HOSTS}"
+        echo "[down] removed stale ${KNOWN_HOSTS}"
+    fi
 fi
 
 echo "[down] done."

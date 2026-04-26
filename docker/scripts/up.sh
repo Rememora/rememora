@@ -43,6 +43,17 @@ if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
     docker rm -f "${CONTAINER_NAME}" >/dev/null
 fi
 
+# Issue #106: the sandbox container regenerates its SSH host key whenever it
+# is rebuilt or its named volume is wiped. A stale entry in
+# ~/.ssh/known_hosts.rememora-sandbox would make the next `login.sh` abort
+# with HOST KEY VERIFICATION FAILED. Always drop the file before booting so
+# the first `ssh-keyscan` after startup wins fresh.
+KNOWN_HOSTS="${HOME}/.ssh/known_hosts.rememora-sandbox"
+if [[ -f "${KNOWN_HOSTS}" ]]; then
+    rm -f "${KNOWN_HOSTS}"
+    echo "[up] removed stale ${KNOWN_HOSTS}"
+fi
+
 echo "[up] starting ${CONTAINER_NAME} on port ${PORT}"
 docker run -d \
     --name "${CONTAINER_NAME}" \

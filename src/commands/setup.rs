@@ -6,17 +6,23 @@ const REMEMORA_HOOK_MARKER: &str = "rememora context --auto";
 const REMEMORA_CURATE_MARKER: &str = "rememora curate";
 const REMEMORA_PROMPT_HOOK_MARKER: &str = "rememora search --limit 3";
 
+/// Embedded canonical hook manifest — single source of truth for hook *shape*.
+///
+/// `setup --apply` parses this at runtime to recover the envelope structure
+/// (top-level `hooks.<Name>` is an array of `{matcher?, hooks: [{type, command}]}`)
+/// expected by Claude Code's settings.json. It deliberately does NOT use the
+/// embedded plugin commands — those reference `${CLAUDE_PLUGIN_ROOT}` which
+/// only resolves in the marketplace plugin install. We replace each leaf
+/// `command` with the standalone CLI form used by Homebrew/cargo installs.
+const PLUGIN_HOOKS_MANIFEST: &str = include_str!("../../plugin/hooks/hooks.json");
+
 /// Canonical Rememora hook list written by `setup --apply`.
 ///
 /// This is the single source of truth for which hooks setup wires into each
-/// agent's `settings.json`. It mirrors `plugin/.claude-plugin/hooks.json` in
-/// shape, but resolves to standalone shell commands (no `${CLAUDE_PLUGIN_ROOT}`)
-/// so users on the CLI-only install path get the same behavior as plugin
-/// users.
-///
-/// TODO(#101): drive this list from `plugin/hooks/hooks.json` at build time
-/// (e.g. via `include_str!` + serde) so we cannot drift from the manifest.
-/// For now the `setup_writes_canonical_hook_set` test asserts the keys match.
+/// agent's `settings.json`. The *shape* (matcher, envelope) comes from
+/// `plugin/hooks/hooks.json` (embedded above); the *commands* are inline
+/// standalone forms so CLI-only installs (Homebrew, cargo) get identical
+/// behavior without needing the plugin tree on disk.
 struct HookSpec {
     /// Top-level hook event name (`SessionStart`, `UserPromptSubmit`, ...).
     event: &'static str,
@@ -28,9 +34,10 @@ struct HookSpec {
 }
 
 fn rememora_hooks() -> &'static [HookSpec] {
-    // Keep this list in lock-step with `plugin/.claude-plugin/hooks.json`.
-    // Order matters only for human-readable diffs; settings.json itself is
-    // a JSON object.
+    // The events listed here must each have a matching entry in
+    // `plugin/hooks/hooks.json` (validated by `setup_hooks_match_manifest_subset`).
+    // We deliberately exclude `Setup`: it's a marketplace-only event whose
+    // command depends on `${CLAUDE_PLUGIN_ROOT}` and has no CLI-install analogue.
     &[
         HookSpec {
             event: "SessionStart",
@@ -62,6 +69,57 @@ fn rememora_hooks() -> &'static [HookSpec] {
             command: "bash -c '(rememora curate --auto 2>/dev/null || true) &'",
         },
     ]
+}
+
+/// Substrings whose presence in a hook's `command` field marks the entry as
+/// rememora-managed. Used by the migration path in `write_hooks` to identify
+/// and replace older flat-shape (or otherwise broken) rememora entries that
+/// pre-date this version of setup.
+///
+/// Keep this in sync with the markers used by `rememora_hooks()` plus any
+/// historical command fragments we know we shipped (e.g. `rememora session`).
+const REMEMORA_COMMAND_TOKENS: &[&str] = &[
+    "rememora context",
+    "rememora search",
+    "rememora session",
+    "rememora curate",
+];
+
+fn is_rememora_command(cmd: &str) -> bool {
+    REMEMORA_COMMAND_TOKENS.iter().any(|t| cmd.contains(t))
+}
+
+/// Look up the `matcher` value for an event in the embedded manifest, if any.
+/// Returns `None` for events that have no matcher (e.g. SessionEnd, Stop).
+/// Panics if the manifest cannot be parsed — that's a build-time invariant.
+fn manifest_matcher_for(event: &str) -> Option<String> {
+    let parsed: serde_json::Value = serde_json::from_str(PLUGIN_HOOKS_MANIFEST)
+        .expect("embedded plugin/hooks/hooks.json must be valid JSON");
+    parsed
+        .get("hooks")
+        .and_then(|h| h.get(event))
+        .and_then(|arr| arr.as_array())
+        .and_then(|arr| arr.first())
+        .and_then(|entry| entry.get("matcher"))
+        .and_then(|m| m.as_str())
+        .map(|s| s.to_string())
+}
+
+/// Build the canonical envelope-shape JSON entry for a single hook spec:
+/// `{"matcher"?: "...", "hooks": [{"type": "command", "command": "..."}]}`.
+fn build_envelope_entry(spec: &HookSpec) -> serde_json::Value {
+    let mut obj = serde_json::Map::new();
+    if let Some(matcher) = manifest_matcher_for(spec.event) {
+        obj.insert("matcher".to_string(), serde_json::Value::String(matcher));
+    }
+    obj.insert(
+        "hooks".to_string(),
+        serde_json::json!([{
+            "type": "command",
+            "command": spec.command,
+        }]),
+    );
+    serde_json::Value::Object(obj)
 }
 
 // ---------------------------------------------------------------------------
@@ -244,13 +302,43 @@ fn already_configured(path: &PathBuf) -> bool {
 }
 
 fn hooks_already_configured(path: &PathBuf) -> bool {
-    // We require *all* canonical hook markers to be present; if any are
-    // missing (e.g. an older install pre-dating UserPromptSubmit), the
-    // hooks file should be re-touched so setup wires the missing ones.
+    // Healthy state requires (a) every canonical hook to be present AND
+    // (b) every rememora-managed entry to live inside the canonical
+    // envelope (`{hooks: [{type, command}]}`). The second clause is the
+    // migration trigger for #107: pre-fix installs wrote flat-shape
+    // `{type, command}` entries which Claude Code silently rejects.
     let Ok(content) = std::fs::read_to_string(path) else {
         return false;
     };
-    rememora_hooks().iter().all(|h| content.contains(h.marker))
+    let Ok(root) = serde_json::from_str::<serde_json::Value>(&content) else {
+        return false;
+    };
+    let Some(hooks) = root.get("hooks").and_then(|h| h.as_object()) else {
+        return false;
+    };
+    for spec in rememora_hooks() {
+        let Some(arr) = hooks.get(spec.event).and_then(|v| v.as_array()) else {
+            return false;
+        };
+        let canonical_match = arr.iter().any(|entry| {
+            entry
+                .get("hooks")
+                .and_then(|h| h.as_array())
+                .map(|inner| {
+                    inner.iter().any(|leaf| {
+                        leaf.get("command")
+                            .and_then(|c| c.as_str())
+                            .map(|s| s.contains(spec.marker))
+                            .unwrap_or(false)
+                    })
+                })
+                .unwrap_or(false)
+        });
+        if !canonical_match {
+            return false;
+        }
+    }
+    true
 }
 
 fn tilde_path(path: &std::path::Path) -> String {
@@ -262,10 +350,22 @@ fn tilde_path(path: &std::path::Path) -> String {
     path.display().to_string()
 }
 
-/// Merge rememora hooks into an existing settings.json, preserving all other content.
+/// Merge rememora hooks into an existing settings.json, preserving all
+/// non-rememora user content.
 ///
-/// Iterates `rememora_hooks()` so adding/removing a hook is a one-line change
-/// and the unit test stays in lock-step with what setup actually writes.
+/// Writes each hook in Claude Code's canonical envelope shape:
+/// ```json
+/// "<EventName>": [
+///   { "matcher": "...", "hooks": [{ "type": "command", "command": "..." }] }
+/// ]
+/// ```
+///
+/// Migration for #107: any entry whose `command` (or any nested
+/// `hooks[].command`) looks rememora-managed (per `is_rememora_command`) is
+/// removed and replaced with the canonical envelope. Non-rememora entries
+/// in the same event array are preserved untouched. This heals settings.json
+/// files written by the broken pre-fix `setup --apply` (which produced
+/// flat-shape `{type, command}` entries that Claude Code silently rejected).
 fn write_hooks(path: &PathBuf) -> Result<()> {
     let mut root: serde_json::Value = if path.exists() {
         let content = std::fs::read_to_string(path)?;
@@ -297,18 +397,15 @@ fn write_hooks(path: &PathBuf) -> Result<()> {
             // alone rather than clobbering user state.
             continue;
         };
-        let already = arr.iter().any(|h| {
-            h.get("command")
-                .and_then(|c| c.as_str())
-                .map(|s| s.contains(spec.marker))
-                .unwrap_or(false)
-        });
-        if !already {
-            arr.push(serde_json::json!({
-                "type": "command",
-                "command": spec.command,
-            }));
-        }
+
+        // Strip every rememora-managed entry (flat-shape OR envelope-shape)
+        // so the migration pass cannot leave duplicates. Non-rememora
+        // entries — user-managed hooks pointing at unrelated commands —
+        // stay where they are.
+        arr.retain(|item| !entry_is_rememora_managed(item));
+
+        // Append the canonical envelope.
+        arr.push(build_envelope_entry(spec));
     }
 
     // Write back with pretty formatting
@@ -319,6 +416,28 @@ fn write_hooks(path: &PathBuf) -> Result<()> {
     std::fs::write(path, formatted)?;
 
     Ok(())
+}
+
+/// Detect whether an entry inside `settings.json -> hooks -> <Event>`
+/// is rememora-managed. Handles both shapes we may encounter:
+///   * legacy/broken flat: `{"type": "command", "command": "rememora ..."}`
+///   * canonical envelope: `{"matcher"?: ..., "hooks": [{"type", "command": "rememora ..."}, ...]}`
+fn entry_is_rememora_managed(item: &serde_json::Value) -> bool {
+    if let Some(cmd) = item.get("command").and_then(|c| c.as_str()) {
+        if is_rememora_command(cmd) {
+            return true;
+        }
+    }
+    if let Some(inner) = item.get("hooks").and_then(|h| h.as_array()) {
+        for leaf in inner {
+            if let Some(cmd) = leaf.get("command").and_then(|c| c.as_str()) {
+                if is_rememora_command(cmd) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 pub fn run(apply: bool) -> Result<()> {
@@ -583,15 +702,28 @@ enum Action {
 mod tests {
     use super::*;
 
-    /// `setup --apply` must wire exactly the canonical hook list. Asserting the
-    /// keys here keeps `rememora_hooks()` honest: the moment someone forgets
-    /// to wire a new hook into setup, this test fails.
+    /// Helper: walk a hook event array and return all leaf `command` strings
+    /// (i.e. the `hooks[].command` reachable through the envelope).
+    fn collect_envelope_commands(arr: &[serde_json::Value]) -> Vec<String> {
+        let mut out = Vec::new();
+        for entry in arr {
+            if let Some(inner) = entry.get("hooks").and_then(|h| h.as_array()) {
+                for leaf in inner {
+                    if let Some(c) = leaf.get("command").and_then(|c| c.as_str()) {
+                        out.push(c.to_string());
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// `setup --apply` must wire exactly the canonical hook list.
     #[test]
     fn rememora_hooks_includes_user_prompt_submit() {
         // Issue #101 regression guard — UserPromptSubmit (FTS5 injection)
         // shipped in PR #87 but was missing from `setup --apply` for several
-        // releases. If this assert ever fails, the hook list silently drifted
-        // again.
+        // releases.
         let events: Vec<&str> = rememora_hooks().iter().map(|h| h.event).collect();
         assert!(
             events.contains(&"UserPromptSubmit"),
@@ -603,21 +735,42 @@ mod tests {
     fn rememora_hooks_match_expected_set() {
         let mut events: Vec<&str> = rememora_hooks().iter().map(|h| h.event).collect();
         events.sort();
-        // Compare against an explicit list rather than the plugin manifest
-        // file: the manifest uses `${CLAUDE_PLUGIN_ROOT}` paths that only
-        // resolve under the plugin install. These are the four standalone
-        // hooks setup is responsible for.
+        // Setup intentionally excludes the manifest's `Setup` hook
+        // (marketplace-only, requires `${CLAUDE_PLUGIN_ROOT}`).
         assert_eq!(
             events,
             vec!["SessionEnd", "SessionStart", "Stop", "UserPromptSubmit"],
         );
     }
 
-    /// `write_hooks` must produce a JSON object whose top-level `hooks` keys
-    /// match the canonical list — even when the file does not yet exist. This
-    /// is the end-to-end contract setup gives to its caller.
+    /// Drift guard: every event in `rememora_hooks()` must also appear in the
+    /// embedded plugin manifest. The manifest may include additional events
+    /// (currently `Setup`) that we deliberately skip.
     #[test]
-    fn write_hooks_creates_complete_hook_set_on_fresh_path() {
+    fn setup_hooks_match_manifest_subset() {
+        let parsed: serde_json::Value =
+            serde_json::from_str(PLUGIN_HOOKS_MANIFEST).expect("manifest parses");
+        let manifest_events: std::collections::HashSet<String> = parsed
+            .get("hooks")
+            .and_then(|h| h.as_object())
+            .expect("manifest has hooks object")
+            .keys()
+            .cloned()
+            .collect();
+
+        for spec in rememora_hooks() {
+            assert!(
+                manifest_events.contains(spec.event),
+                "rememora_hooks() lists {} but it is absent from plugin/hooks/hooks.json (drift)",
+                spec.event,
+            );
+        }
+    }
+
+    /// `write_hooks` must emit canonical envelope shape — Claude Code rejects
+    /// flat `{type, command}` entries silently, which is the root cause of #107.
+    #[test]
+    fn write_hooks_emits_canonical_envelope_shape() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.json");
         write_hooks(&path).expect("write_hooks");
@@ -629,23 +782,99 @@ mod tests {
             .and_then(|v| v.as_object())
             .expect("hooks object present");
 
+        // Top-level keys must be exactly the four hook events setup writes.
+        let mut keys: Vec<&str> = hooks.keys().map(|s| s.as_str()).collect();
+        keys.sort();
+        assert_eq!(
+            keys,
+            vec!["SessionEnd", "SessionStart", "Stop", "UserPromptSubmit"],
+        );
+
         for spec in rememora_hooks() {
             let arr = hooks
                 .get(spec.event)
                 .and_then(|v| v.as_array())
                 .unwrap_or_else(|| panic!("{} array missing", spec.event));
-            let has_marker = arr.iter().any(|h| {
-                h.get("command")
-                    .and_then(|c| c.as_str())
-                    .map(|s| s.contains(spec.marker))
-                    .unwrap_or(false)
-            });
-            assert!(has_marker, "{} hook missing rememora command", spec.event);
+            assert_eq!(arr.len(), 1, "{} should have a single envelope", spec.event);
+
+            let entry = &arr[0];
+            // Every envelope entry must have a `hooks` array of `{type: command, command: ...}`.
+            let inner = entry
+                .get("hooks")
+                .and_then(|h| h.as_array())
+                .unwrap_or_else(|| panic!("{} envelope missing inner hooks array", spec.event));
+            assert_eq!(inner.len(), 1, "{} should have one inner leaf", spec.event);
+            let leaf = &inner[0];
+            assert_eq!(
+                leaf.get("type").and_then(|t| t.as_str()),
+                Some("command"),
+                "{} leaf must be type=command",
+                spec.event,
+            );
+            let cmd = leaf
+                .get("command")
+                .and_then(|c| c.as_str())
+                .unwrap_or_else(|| panic!("{} leaf missing command string", spec.event));
+            assert!(
+                cmd.contains(spec.marker),
+                "{} leaf command does not contain marker {:?}: {}",
+                spec.event,
+                spec.marker,
+                cmd,
+            );
+
+            // Flat-shape fields must NOT appear at envelope level.
+            assert!(
+                entry.get("type").is_none(),
+                "{} envelope must not have top-level `type` (flat shape leaked)",
+                spec.event,
+            );
+            assert!(
+                entry.get("command").is_none(),
+                "{} envelope must not have top-level `command` (flat shape leaked)",
+                spec.event,
+            );
         }
     }
 
-    /// Re-running `write_hooks` against an already-configured settings.json
-    /// must be a no-op: each hook entry should appear exactly once.
+    /// SessionStart in the plugin manifest carries a `matcher` value Claude
+    /// Code uses to scope the hook. Setup must propagate it.
+    #[test]
+    fn write_hooks_propagates_session_start_matcher() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        write_hooks(&path).unwrap();
+
+        let parsed: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let entry = &parsed
+            .get("hooks")
+            .and_then(|h| h.get("SessionStart"))
+            .and_then(|v| v.as_array())
+            .unwrap()[0];
+
+        assert_eq!(
+            entry.get("matcher").and_then(|m| m.as_str()),
+            Some("startup|clear|compact|resume"),
+        );
+
+        // Other events (SessionEnd, Stop, UserPromptSubmit) have no matcher in
+        // the manifest — the field must be absent on those envelopes.
+        for ev in ["SessionEnd", "Stop", "UserPromptSubmit"] {
+            let e = &parsed
+                .get("hooks")
+                .and_then(|h| h.get(ev))
+                .and_then(|v| v.as_array())
+                .unwrap()[0];
+            assert!(
+                e.get("matcher").is_none(),
+                "{ev} envelope should not have a matcher",
+            );
+        }
+    }
+
+    /// Re-running `write_hooks` must be idempotent: each event ends up with
+    /// exactly one envelope entry, no duplicate rememora commands.
     #[test]
     fn write_hooks_is_idempotent() {
         let dir = tempfile::tempdir().unwrap();
@@ -653,25 +882,112 @@ mod tests {
         write_hooks(&path).unwrap();
         write_hooks(&path).unwrap();
 
-        let raw = std::fs::read_to_string(&path).unwrap();
-        let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        let parsed: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         let hooks = parsed.get("hooks").and_then(|v| v.as_object()).unwrap();
 
         for spec in rememora_hooks() {
-            let arr = hooks
-                .get(spec.event)
-                .and_then(|v| v.as_array())
-                .unwrap_or_else(|| panic!("{} array missing", spec.event));
-            let count = arr
-                .iter()
-                .filter(|h| {
-                    h.get("command")
-                        .and_then(|c| c.as_str())
-                        .map(|s| s.contains(spec.marker))
-                        .unwrap_or(false)
-                })
-                .count();
-            assert_eq!(count, 1, "{} duplicated by repeat write_hooks", spec.event);
+            let arr = hooks.get(spec.event).and_then(|v| v.as_array()).unwrap();
+            assert_eq!(arr.len(), 1, "{} duplicated after re-run", spec.event);
+            let cmds = collect_envelope_commands(arr);
+            let count = cmds.iter().filter(|c| c.contains(spec.marker)).count();
+            assert_eq!(count, 1, "{} marker duplicated after re-run", spec.event);
         }
+    }
+
+    /// Migration: a settings.json written by the broken pre-#107 setup —
+    /// flat-shape `{type, command}` entries directly under each event — must
+    /// be healed in place on the next `setup --apply`. User-managed
+    /// non-rememora entries in the same arrays must be preserved.
+    #[test]
+    fn write_hooks_migrates_flat_shape_to_envelope() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+
+        // Seed the file with the exact flat shape the broken setup produced,
+        // plus a couple of non-rememora user-managed entries we must preserve.
+        let broken = serde_json::json!({
+            "permissions": { "allow": ["Bash(ls:*)"] },
+            "hooks": {
+                "SessionStart": [
+                    { "type": "command", "command": "rememora context --auto 2>/dev/null || true" },
+                    { "type": "command", "command": "echo user-hook-please-keep" }
+                ],
+                "UserPromptSubmit": [
+                    { "type": "command", "command": "bash -c 'rememora search --limit 3 --format context blah'" }
+                ],
+                "SessionEnd": [
+                    { "type": "command", "command": "rememora session end-active --auto-summary 2>/dev/null || true" }
+                ],
+                "Stop": [
+                    { "type": "command", "command": "bash -c '(rememora curate --auto 2>/dev/null || true) &'" }
+                ]
+            }
+        });
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, serde_json::to_string_pretty(&broken).unwrap()).unwrap();
+
+        write_hooks(&path).expect("migration write_hooks");
+
+        let parsed: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+
+        // Non-hooks settings must survive untouched.
+        assert_eq!(
+            parsed
+                .get("permissions")
+                .and_then(|p| p.get("allow"))
+                .and_then(|a| a.as_array())
+                .map(|a| a.len()),
+            Some(1),
+            "non-hooks settings clobbered by migration",
+        );
+
+        let hooks = parsed.get("hooks").and_then(|v| v.as_object()).unwrap();
+
+        // Each event has exactly one rememora envelope entry now…
+        for spec in rememora_hooks() {
+            let arr = hooks.get(spec.event).and_then(|v| v.as_array()).unwrap();
+            let envelopes: Vec<_> = arr
+                .iter()
+                .filter(|e| e.get("hooks").is_some())
+                .collect();
+            assert_eq!(
+                envelopes.len(),
+                1,
+                "{} should have exactly one envelope entry post-migration",
+                spec.event,
+            );
+            // …and it must be canonical-shape (no top-level type/command).
+            let env = envelopes[0];
+            assert!(env.get("type").is_none(), "{} migrated entry still flat", spec.event);
+            assert!(
+                env.get("command").is_none(),
+                "{} migrated entry still flat",
+                spec.event,
+            );
+            // The flat-shape rememora entry must be gone (no entry has a
+            // top-level `command` containing rememora tokens).
+            for entry in arr {
+                if let Some(cmd) = entry.get("command").and_then(|c| c.as_str()) {
+                    assert!(
+                        !is_rememora_command(cmd),
+                        "{} still has flat-shape rememora entry: {}",
+                        spec.event,
+                        cmd,
+                    );
+                }
+            }
+        }
+
+        // Non-rememora user hook on SessionStart must be preserved.
+        let ss = hooks.get("SessionStart").and_then(|v| v.as_array()).unwrap();
+        let preserved = ss.iter().any(|e| {
+            e.get("command")
+                .and_then(|c| c.as_str())
+                .map(|s| s.contains("user-hook-please-keep"))
+                .unwrap_or(false)
+        });
+        assert!(preserved, "user-managed non-rememora hook was clobbered");
     }
 }
