@@ -331,15 +331,24 @@ fn prompt_for_key(prompt: &str) -> Result<String> {
 mod tests {
     use super::*;
 
+    /// Cargo runs unit tests in this module concurrently by default. Several
+    /// tests below mutate `REMEMORA_KEY` / `REMEMORA_DB` / `REMEMORA_TEST_NO_KEYCHAIN`
+    /// and call code paths (`default_key_file_path`, `resolve_key_no_prompt`,
+    /// `persist_key_with`) that read those vars. Without serialization, two
+    /// tests can stomp each other: A sets `REMEMORA_DB=tmpA`, B overwrites it
+    /// with `tmpB`, A then writes its key file under `tmpB` and the assertion
+    /// `path.starts_with(tmpA)` fails. Acquire this guard at the top of any
+    /// env-touching test.
+    static ENV_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     /// `resolve_key_no_prompt` must return the env var when it is set, without
     /// touching the keychain. This is the path GUI callers (the desktop app)
     /// rely on to stay non-interactive.
     #[test]
     fn resolve_key_no_prompt_reads_env_var() {
+        let _guard = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
         // Use a unique value so we do not collide with any real developer env.
         let sentinel = "env-key-sentinel-for-tests";
-        // Safety: tests in this crate do not run concurrently against the same
-        // env var name; `cargo test` serialises within a process per test fn.
         std::env::set_var("REMEMORA_KEY", sentinel);
         let result = resolve_key_no_prompt().expect("resolve_key_no_prompt");
         std::env::remove_var("REMEMORA_KEY");
@@ -353,6 +362,7 @@ mod tests {
     /// (issue #100).
     #[test]
     fn resolve_key_no_prompt_reads_file_when_env_unset() {
+        let _guard = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
         let dir = tempfile::tempdir().expect("tempdir");
         let db_path = dir.path().join("rememora.db");
         let key_path = dir.path().join("key");
@@ -395,6 +405,7 @@ mod tests {
     /// to writing the key file rather than reporting Keychain success.
     #[test]
     fn persist_key_with_falls_back_when_readback_returns_none() {
+        let _guard = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
         let dir = tempfile::tempdir().expect("tempdir");
         let db_path = dir.path().join("rememora.db");
         let prev_no_kc = std::env::var("REMEMORA_TEST_NO_KEYCHAIN").ok();
@@ -444,6 +455,7 @@ mod tests {
     /// any file fallback.
     #[test]
     fn persist_key_with_uses_keychain_when_readback_matches() {
+        let _guard = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
         use std::sync::Mutex;
         static SLOT: Mutex<Option<String>> = Mutex::new(None);
 
@@ -492,6 +504,7 @@ mod tests {
     /// callers from polluting the user's `~/.rememora/`.
     #[test]
     fn default_key_file_path_tracks_remora_db_env() {
+        let _guard = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
         let prev = std::env::var("REMEMORA_DB").ok();
         std::env::set_var("REMEMORA_DB", "/tmp/rememora-key-path-test/scratch.db");
         let p = default_key_file_path();
