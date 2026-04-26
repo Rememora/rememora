@@ -8,6 +8,81 @@ pub struct SearchResult {
     pub rank: f64,
 }
 
+/// Strip ASCII control chars (incl. NUL) and trim whitespace.
+fn sanitize_input(query: &str) -> String {
+    query
+        .chars()
+        .filter(|c| !c.is_control() || *c == '\t')
+        .collect::<String>()
+        .trim()
+        .to_string()
+}
+
+/// Tokens that, if present as standalone words, signal the user is writing
+/// FTS5 query syntax. Detection is case-sensitive — FTS5 itself only treats
+/// uppercase OR/AND/NOT/NEAR as operators.
+fn looks_like_fts5_syntax(q: &str) -> bool {
+    if q.contains('(') || q.contains(')') || q.contains('"') {
+        return true;
+    }
+    if q.contains('*') {
+        // prefix queries: a token ending with `*`
+        if q.split_whitespace().any(|t| t.ends_with('*') && t.len() > 1) {
+            return true;
+        }
+    }
+    for tok in q.split_whitespace() {
+        if matches!(tok, "OR" | "AND" | "NOT" | "NEAR") {
+            return true;
+        }
+    }
+    false
+}
+
+/// Pure bag-of-words OR query — the safe fallback. Drops tokens that are pure
+/// FTS5 punctuation so the resulting expression is always parseable.
+fn safe_or_query(q: &str) -> Option<String> {
+    let toks: Vec<String> = q
+        .split_whitespace()
+        .map(|t| {
+            t.chars()
+                .filter(|c| !matches!(c, '(' | ')' | '"' | '*' | ':'))
+                .collect::<String>()
+        })
+        .filter(|t| !t.is_empty())
+        .map(|t| {
+            // Wrap each token in double quotes to defang any leftover FTS5
+            // operators (e.g. a bare "OR" token in the bag would otherwise
+            // be re-interpreted as the operator on retry).
+            format!("\"{}\"", t.replace('"', ""))
+        })
+        .collect();
+    if toks.is_empty() {
+        None
+    } else {
+        Some(toks.join(" OR "))
+    }
+}
+
+/// Build the primary FTS5 query string from the user's input.
+///
+/// - If the user wrote operator syntax (OR/AND/NOT/NEAR/parens/quotes/prefix
+///   `*`), pass it through verbatim — power users get full FTS5 power.
+/// - Otherwise, default to an OR-join across the bag of words to preserve the
+///   prior implicit-OR recall behavior.
+///
+/// Returns `None` for empty / whitespace-only queries.
+fn build_fts_query(query: &str) -> Option<String> {
+    let cleaned = sanitize_input(query);
+    if cleaned.is_empty() {
+        return None;
+    }
+    if looks_like_fts5_syntax(&cleaned) {
+        return Some(cleaned);
+    }
+    safe_or_query(&cleaned)
+}
+
 pub fn search(
     conn: &Connection,
     query: &str,
@@ -15,17 +90,50 @@ pub fn search(
     category: Option<&str>,
     limit: usize,
 ) -> Result<Vec<SearchResult>> {
-    // Build FTS5 query — escape special characters
-    let fts_query = query
-        .replace('"', "\"\"")
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" OR ");
-
-    if fts_query.is_empty() {
+    let Some(fts_query) = build_fts_query(query) else {
         return Ok(vec![]);
+    };
+    match search_with_fts(conn, &fts_query, project, category, limit) {
+        Ok(rows) => Ok(rows),
+        Err(e) => {
+            // Defense-in-depth: if FTS5 rejected the user's syntax, retry
+            // with a guaranteed-safe OR-of-bag-of-words form. This covers
+            // unbalanced parens, lone double-quotes, malformed NEAR, etc.
+            if is_fts5_syntax_error(&e) {
+                let cleaned = sanitize_input(query);
+                if let Some(fallback) = safe_or_query(&cleaned) {
+                    if fallback != fts_query {
+                        return search_with_fts(conn, &fallback, project, category, limit);
+                    }
+                }
+                return Ok(vec![]);
+            }
+            Err(e)
+        }
     }
+}
 
+/// Heuristic: did a SQL execute fail because FTS5 rejected the user's query
+/// expression? FTS5 raises a few distinct messages depending on what it
+/// disliked — "syntax error near …", "unterminated string", "no such column"
+/// (when an unbalanced phrase confuses its column-filter parser), etc. The
+/// goal is to fall back to the safe-OR query whenever the user's input was
+/// the cause, but bubble up genuine SQL errors (DB locked, missing table).
+fn is_fts5_syntax_error(e: &anyhow::Error) -> bool {
+    let msg = e.to_string().to_lowercase();
+    msg.contains("fts5")
+        || msg.contains("unterminated string")
+        || msg.contains("syntax error")
+        || msg.contains("malformed match")
+}
+
+fn search_with_fts(
+    conn: &Connection,
+    fts_query: &str,
+    project: Option<&str>,
+    category: Option<&str>,
+    limit: usize,
+) -> Result<Vec<SearchResult>> {
     let mut sql = String::from(
         "SELECT c.id, c.uri, c.parent_uri, c.context_type, c.category, c.name,
                 c.abstract, c.overview, c.content, c.tags, c.source_agent,
@@ -38,7 +146,7 @@ pub fn search(
     );
 
     let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
-    param_values.push(Box::new(fts_query));
+    param_values.push(Box::new(fts_query.to_string()));
     let mut param_idx = 2;
 
     if let Some(proj) = project {

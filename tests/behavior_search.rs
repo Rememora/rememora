@@ -242,6 +242,153 @@ fn context_format_empty_when_no_results() {
 }
 
 // ---------------------------------------------------------------------------
+// FTS5 query syntax (Issue #103)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn search_supports_explicit_or_operator() {
+    // Given: two memories that share no common terms
+    let conn = db_with_memories(&[
+        memory("Redis caching")
+            .project("testproj")
+            .content("Picked Redis over memcached for caching"),
+        memory("Stampede prevention")
+            .project("testproj")
+            .content("Thundering herd workaround using locks"),
+    ]);
+
+    // When: using FTS5's explicit OR operator
+    let results = rememora::search::search(&conn, "redis OR stampede", None, None, 10).unwrap();
+
+    // Then: both memories appear (no FTS5 syntax error)
+    assert_eq!(results.len(), 2, "expected both branches of OR to match");
+}
+
+#[test]
+fn search_supports_grouped_or_and() {
+    // Given: memories with overlapping terms
+    let conn = db_with_memories(&[
+        memory("Redis caching layer")
+            .project("testproj")
+            .content("redis caching"),
+        memory("Memcached cache layer")
+            .project("testproj")
+            .content("memcached caching"),
+        memory("Unrelated note")
+            .project("testproj")
+            .content("nothing relevant"),
+    ]);
+
+    // When: using a grouped expression
+    let results =
+        rememora::search::search(&conn, "(redis OR memcached) AND caching", None, None, 10)
+            .unwrap();
+
+    // Then: both cache memories match, the unrelated one does not
+    assert!(results.iter().any(|r| r.context.name.contains("Redis")));
+    assert!(results.iter().any(|r| r.context.name.contains("Memcached")));
+    assert!(!results.iter().any(|r| r.context.name.contains("Unrelated")));
+}
+
+#[test]
+fn search_supports_phrase_query() {
+    // Given: a memory containing the exact phrase
+    let conn = db_with_memories(&[
+        memory("Locks and herds")
+            .project("testproj")
+            .content("Use a thundering herd lock"),
+        memory("Order matters")
+            .project("testproj")
+            // Same words, different order — must NOT match the phrase query.
+            .content("a herd thundering through"),
+    ]);
+
+    // When: using FTS5 phrase syntax
+    let results =
+        rememora::search::search(&conn, "\"thundering herd\"", None, None, 10).unwrap();
+
+    // Then: only the exact-phrase memory matches
+    assert!(results.iter().any(|r| r.context.name.contains("Locks")));
+    assert!(!results.iter().any(|r| r.context.name.contains("Order")));
+}
+
+#[test]
+fn search_supports_prefix_query() {
+    // Given: a memory containing "redis"
+    let conn = db_with_memories(&[memory("Redis pool")
+        .project("testproj")
+        .content("redis connection pool")]);
+
+    // When: using a prefix query
+    let results = rememora::search::search(&conn, "redi*", None, None, 10).unwrap();
+
+    // Then: it matches via the prefix
+    assert!(!results.is_empty(), "redi* should match redis");
+}
+
+#[test]
+fn search_empty_query_returns_empty_no_error() {
+    // Given: a populated DB
+    let conn = db_with_memories(&[memory("anything").project("testproj").content("x")]);
+
+    // When: passing empty / whitespace-only queries
+    let empty = rememora::search::search(&conn, "", None, None, 10).unwrap();
+    let blank = rememora::search::search(&conn, "   \t  ", None, None, 10).unwrap();
+
+    // Then: empty results, never an error
+    assert!(empty.is_empty());
+    assert!(blank.is_empty());
+}
+
+#[test]
+fn search_with_unbalanced_quote_falls_back_safely() {
+    // Given: a memory matching "redis"
+    let conn = db_with_memories(&[memory("Redis cache")
+        .project("testproj")
+        .content("redis cache")]);
+
+    // When: passing a query with a stray double-quote that would make FTS5
+    // unhappy (the primary query path passes quotes through)
+    let results = rememora::search::search(&conn, "redis \"", None, None, 10).unwrap();
+
+    // Then: the safe-fallback OR-of-tokens path runs and finds the memory
+    assert!(
+        !results.is_empty(),
+        "fallback should still surface the redis memory"
+    );
+}
+
+#[test]
+fn search_strips_control_characters() {
+    // Given: a populated DB
+    let conn = db_with_memories(&[memory("Redis cache")
+        .project("testproj")
+        .content("redis cache")]);
+
+    // When: query embeds NUL and other control bytes
+    let results = rememora::search::search(&conn, "redis\x00\x01\x02", None, None, 10).unwrap();
+
+    // Then: the control bytes are stripped and the search still works
+    assert!(
+        !results.is_empty(),
+        "control chars should be stripped, search should proceed"
+    );
+}
+
+#[test]
+fn search_with_or_in_lowercase_is_treated_as_term() {
+    // FTS5 only treats UPPERCASE OR as the operator. Lowercase "or" should
+    // be a regular search term — and the bag-of-words OR fallback we build
+    // for plain queries must not crash on it.
+    let conn = db_with_memories(&[memory("redis cache decision")
+        .project("testproj")
+        .content("we picked redis over memcache or anything else")]);
+
+    let results = rememora::search::search(&conn, "redis or memcache", None, None, 10).unwrap();
+    assert!(!results.is_empty(), "lowercase or is a literal token, not the operator");
+}
+
+// ---------------------------------------------------------------------------
 // Active count bumping
 // ---------------------------------------------------------------------------
 
