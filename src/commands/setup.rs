@@ -1,9 +1,64 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::path::PathBuf;
 
 const REMEMORA_MARKER: &str = "## Rememora";
 const REMEMORA_HOOK_MARKER: &str = "rememora context --auto";
 const REMEMORA_CURATE_MARKER: &str = "rememora curate";
+const REMEMORA_PROMPT_HOOK_MARKER: &str = "rememora search --limit 3";
+
+/// Canonical Rememora hook list written by `setup --apply`.
+///
+/// This is the single source of truth for which hooks setup wires into each
+/// agent's `settings.json`. It mirrors `plugin/.claude-plugin/hooks.json` in
+/// shape, but resolves to standalone shell commands (no `${CLAUDE_PLUGIN_ROOT}`)
+/// so users on the CLI-only install path get the same behavior as plugin
+/// users.
+///
+/// TODO(#101): drive this list from `plugin/hooks/hooks.json` at build time
+/// (e.g. via `include_str!` + serde) so we cannot drift from the manifest.
+/// For now the `setup_writes_canonical_hook_set` test asserts the keys match.
+struct HookSpec {
+    /// Top-level hook event name (`SessionStart`, `UserPromptSubmit`, ...).
+    event: &'static str,
+    /// Marker substring used to detect a pre-existing Rememora entry so we
+    /// do not write the hook twice if the user re-runs `setup --apply`.
+    marker: &'static str,
+    /// Shell command written to `settings.json`.
+    command: &'static str,
+}
+
+fn rememora_hooks() -> &'static [HookSpec] {
+    // Keep this list in lock-step with `plugin/.claude-plugin/hooks.json`.
+    // Order matters only for human-readable diffs; settings.json itself is
+    // a JSON object.
+    &[
+        HookSpec {
+            event: "SessionStart",
+            // "rememora context --auto" — narrow enough that user-pasted hooks
+            // with arbitrary other rememora commands won't false-match.
+            marker: REMEMORA_HOOK_MARKER,
+            command: "rememora context --auto 2>/dev/null || true",
+        },
+        HookSpec {
+            event: "UserPromptSubmit",
+            // Mirrors plugin/scripts/prompt-search.sh: bounded FTS5 hits via
+            // `--format context`. Inlined here so the CLI-only install path
+            // does not depend on plugin scripts being present on disk.
+            marker: REMEMORA_PROMPT_HOOK_MARKER,
+            command: "bash -c 'p=$(cat 2>/dev/null | python3 -c \"import sys,json; d=json.load(sys.stdin); print(d.get(\\\"prompt\\\",\\\"\\\"))\" 2>/dev/null); [ ${#p} -ge 6 ] && rememora search --limit 3 --format context \"$(printf %s \"$p\" | tr -d \"?:\\\"()*-\" | tr -s \" \")\" 2>/dev/null || true'",
+        },
+        HookSpec {
+            event: "SessionEnd",
+            marker: "rememora session end-active",
+            command: "rememora session end-active --auto-summary 2>/dev/null || true",
+        },
+        HookSpec {
+            event: "Stop",
+            marker: REMEMORA_CURATE_MARKER,
+            command: "bash -c '(rememora curate --auto 2>/dev/null || true) &'",
+        },
+    ]
+}
 
 // ---------------------------------------------------------------------------
 // Instruction snippets — behavioral triggers + urgency framing (Layer 2 + 3)
@@ -185,11 +240,13 @@ fn already_configured(path: &PathBuf) -> bool {
 }
 
 fn hooks_already_configured(path: &PathBuf) -> bool {
-    if let Ok(content) = std::fs::read_to_string(path) {
-        content.contains(REMEMORA_HOOK_MARKER) && content.contains(REMEMORA_CURATE_MARKER)
-    } else {
-        false
-    }
+    // We require *all* canonical hook markers to be present; if any are
+    // missing (e.g. an older install pre-dating UserPromptSubmit), the
+    // hooks file should be re-touched so setup wires the missing ones.
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    rememora_hooks().iter().all(|h| content.contains(h.marker))
 }
 
 fn tilde_path(path: &std::path::Path) -> String {
@@ -202,6 +259,9 @@ fn tilde_path(path: &std::path::Path) -> String {
 }
 
 /// Merge rememora hooks into an existing settings.json, preserving all other content.
+///
+/// Iterates `rememora_hooks()` so adding/removing a hook is a one-line change
+/// and the unit test stays in lock-step with what setup actually writes.
 fn write_hooks(path: &PathBuf) -> Result<()> {
     let mut root: serde_json::Value = if path.exists() {
         let content = std::fs::read_to_string(path)?;
@@ -224,59 +284,25 @@ fn write_hooks(path: &PathBuf) -> Result<()> {
         .as_object_mut()
         .expect("hooks must be an object");
 
-    // SessionStart hook
-    let session_start = hooks_obj
-        .entry("SessionStart")
-        .or_insert_with(|| serde_json::json!([]));
-    if let Some(arr) = session_start.as_array_mut() {
+    for spec in rememora_hooks() {
+        let entry = hooks_obj
+            .entry(spec.event.to_string())
+            .or_insert_with(|| serde_json::json!([]));
+        let Some(arr) = entry.as_array_mut() else {
+            // Some other tool wrote a non-array under this key — leave it
+            // alone rather than clobbering user state.
+            continue;
+        };
         let already = arr.iter().any(|h| {
             h.get("command")
                 .and_then(|c| c.as_str())
-                .map(|s| s.contains("rememora"))
+                .map(|s| s.contains(spec.marker))
                 .unwrap_or(false)
         });
         if !already {
             arr.push(serde_json::json!({
                 "type": "command",
-                "command": "rememora context --auto 2>/dev/null || true"
-            }));
-        }
-    }
-
-    // SessionEnd hook
-    let session_end = hooks_obj
-        .entry("SessionEnd")
-        .or_insert_with(|| serde_json::json!([]));
-    if let Some(arr) = session_end.as_array_mut() {
-        let already = arr.iter().any(|h| {
-            h.get("command")
-                .and_then(|c| c.as_str())
-                .map(|s| s.contains("rememora"))
-                .unwrap_or(false)
-        });
-        if !already {
-            arr.push(serde_json::json!({
-                "type": "command",
-                "command": "rememora session end-active --auto-summary 2>/dev/null || true"
-            }));
-        }
-    }
-
-    // Stop hook — autonomous curation after each agent turn
-    let stop = hooks_obj
-        .entry("Stop")
-        .or_insert_with(|| serde_json::json!([]));
-    if let Some(arr) = stop.as_array_mut() {
-        let already = arr.iter().any(|h| {
-            h.get("command")
-                .and_then(|c| c.as_str())
-                .map(|s| s.contains(REMEMORA_CURATE_MARKER))
-                .unwrap_or(false)
-        });
-        if !already {
-            arr.push(serde_json::json!({
-                "type": "command",
-                "command": "bash -c '(rememora curate --auto 2>/dev/null || true) &'"
+                "command": spec.command,
             }));
         }
     }
@@ -458,16 +484,16 @@ pub fn run(apply: bool) -> Result<()> {
 fn setup_encryption() -> Result<()> {
     let db_path = rememora::db::default_db_path();
 
-    // Already encrypted — nothing to do
+    // Already encrypted — nothing to do beyond making sure the DB is reachable.
     if db_path.exists() && rememora::crypto::is_db_encrypted(&db_path) {
         cliclack::log::success("Encryption: already enabled")?;
         return Ok(());
     }
 
-    // Key already in keychain/env — encryption will apply automatically
+    // Key already in env / file / keychain — encryption will apply automatically.
     if rememora::crypto::resolve_key(false)?.is_some() {
         if db_path.exists() {
-            // Unencrypted DB exists + key available — offer to encrypt
+            // Unencrypted DB exists + key available — offer to encrypt.
             let should_encrypt = cliclack::confirm("Database exists but is not encrypted. Encrypt now?")
                 .initial_value(true)
                 .interact()?;
@@ -477,32 +503,67 @@ fn setup_encryption() -> Result<()> {
         } else {
             cliclack::log::success("Encryption: key found — new database will be encrypted")?;
         }
+        // Ensure the DB exists so the first-run gate in main.rs passes.
+        ensure_db_initialized(&db_path)?;
         return Ok(());
     }
 
-    // No key anywhere — generate one
+    // No key anywhere — generate one and persist via the keychain → file
+    // fallback chain. We *must not* report success unless persistence succeeds
+    // (issue #100): on Linux without libsecret/secret-tool the keychain crate
+    // silently fails and previously left the user with an empty `~/.rememora/`
+    // and a `setup` claim that was untrue.
     let key = rememora::crypto::generate_key();
 
-    match rememora::crypto::keychain_set(&key) {
-        Ok(()) => {
+    match rememora::crypto::persist_key(&key)? {
+        rememora::crypto::KeyStorageOutcome::Keychain => {
             cliclack::log::success("Encryption: key generated and stored in OS keychain")?;
         }
-        Err(e) => {
+        rememora::crypto::KeyStorageOutcome::File { path, keychain_error } => {
+            // Surface the trade-off explicitly — the file fallback is fine for
+            // CI / Docker / vanilla Linux but is weaker than a keychain entry.
             cliclack::log::warning(format!(
-                "Could not store key in keychain: {e}\n\
-                 Set this environment variable to enable encryption:\n\
-                 \n  export REMEMORA_KEY={key}\n"
+                "Encryption: keychain unavailable ({keychain_error}).\n\
+                 Key written to {} (mode 600).\n\
+                 For stronger protection, install libsecret-1-0 (or equivalent)\n\
+                 and re-run `rememora setup`.",
+                tilde_path(&path),
             ))?;
         }
     }
 
-    // If an unencrypted DB already exists, encrypt it now
+    // If an unencrypted DB already exists, encrypt it in place.
     if db_path.exists() {
         super::encrypt::run_encrypt(&db_path)?;
-    } else {
-        cliclack::log::info("Database will be created with encryption on first use")?;
     }
 
+    // Always materialize the DB — the first-run gate in main.rs is
+    // `db_path.exists()`. Prior to issue #100 this path could leave the
+    // directory empty and every subsequent CLI call would bail with
+    // "Rememora is not set up yet".
+    ensure_db_initialized(&db_path)?;
+
+    Ok(())
+}
+
+/// Touch the SQLite DB so the first-run gate (`db_path.exists()`) passes.
+/// Opens once with `db::open` to apply the cipher key + run migrations,
+/// then drops the connection.
+fn ensure_db_initialized(db_path: &std::path::Path) -> Result<()> {
+    if db_path.exists() && db_path.metadata().map(|m| m.len() > 0).unwrap_or(false) {
+        return Ok(());
+    }
+    let conn = rememora::db::open(db_path).with_context(|| {
+        format!(
+            "Failed to initialize database at {}",
+            db_path.display(),
+        )
+    })?;
+    drop(conn);
+    cliclack::log::success(format!(
+        "Database initialized at {}",
+        tilde_path(db_path),
+    ))?;
     Ok(())
 }
 
@@ -512,4 +573,101 @@ enum Action {
         instructions: bool,
         hooks: bool,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `setup --apply` must wire exactly the canonical hook list. Asserting the
+    /// keys here keeps `rememora_hooks()` honest: the moment someone forgets
+    /// to wire a new hook into setup, this test fails.
+    #[test]
+    fn rememora_hooks_includes_user_prompt_submit() {
+        // Issue #101 regression guard — UserPromptSubmit (FTS5 injection)
+        // shipped in PR #87 but was missing from `setup --apply` for several
+        // releases. If this assert ever fails, the hook list silently drifted
+        // again.
+        let events: Vec<&str> = rememora_hooks().iter().map(|h| h.event).collect();
+        assert!(
+            events.contains(&"UserPromptSubmit"),
+            "UserPromptSubmit hook missing from rememora_hooks(); got: {events:?}",
+        );
+    }
+
+    #[test]
+    fn rememora_hooks_match_expected_set() {
+        let mut events: Vec<&str> = rememora_hooks().iter().map(|h| h.event).collect();
+        events.sort();
+        // Compare against an explicit list rather than the plugin manifest
+        // file: the manifest uses `${CLAUDE_PLUGIN_ROOT}` paths that only
+        // resolve under the plugin install. These are the four standalone
+        // hooks setup is responsible for.
+        assert_eq!(
+            events,
+            vec!["SessionEnd", "SessionStart", "Stop", "UserPromptSubmit"],
+        );
+    }
+
+    /// `write_hooks` must produce a JSON object whose top-level `hooks` keys
+    /// match the canonical list — even when the file does not yet exist. This
+    /// is the end-to-end contract setup gives to its caller.
+    #[test]
+    fn write_hooks_creates_complete_hook_set_on_fresh_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        write_hooks(&path).expect("write_hooks");
+
+        let raw = std::fs::read_to_string(&path).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        let hooks = parsed
+            .get("hooks")
+            .and_then(|v| v.as_object())
+            .expect("hooks object present");
+
+        for spec in rememora_hooks() {
+            let arr = hooks
+                .get(spec.event)
+                .and_then(|v| v.as_array())
+                .unwrap_or_else(|| panic!("{} array missing", spec.event));
+            let has_marker = arr.iter().any(|h| {
+                h.get("command")
+                    .and_then(|c| c.as_str())
+                    .map(|s| s.contains(spec.marker))
+                    .unwrap_or(false)
+            });
+            assert!(has_marker, "{} hook missing rememora command", spec.event);
+        }
+    }
+
+    /// Re-running `write_hooks` against an already-configured settings.json
+    /// must be a no-op: each hook entry should appear exactly once.
+    #[test]
+    fn write_hooks_is_idempotent() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        write_hooks(&path).unwrap();
+        write_hooks(&path).unwrap();
+
+        let raw = std::fs::read_to_string(&path).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        let hooks = parsed.get("hooks").and_then(|v| v.as_object()).unwrap();
+
+        for spec in rememora_hooks() {
+            let arr = hooks
+                .get(spec.event)
+                .and_then(|v| v.as_array())
+                .unwrap_or_else(|| panic!("{} array missing", spec.event));
+            let count = arr
+                .iter()
+                .filter(|h| {
+                    h.get("command")
+                        .and_then(|c| c.as_str())
+                        .map(|s| s.contains(spec.marker))
+                        .unwrap_or(false)
+                })
+                .count();
+            assert_eq!(count, 1, "{} duplicated by repeat write_hooks", spec.event);
+        }
+    }
 }

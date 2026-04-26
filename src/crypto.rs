@@ -1,9 +1,131 @@
 use anyhow::{bail, Context, Result};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 const KEYRING_SERVICE: &str = "rememora";
 const KEYRING_USER: &str = "db-encryption-key";
 const SQLITE_MAGIC: &[u8; 16] = b"SQLite format 3\0";
+
+/// Path to the on-disk fallback key file. Used on hosts without a keychain
+/// backend (vanilla Linux containers, CI, Docker images) where `keyring`
+/// fails to find libsecret/secret-tool. The file is written with mode 0600.
+///
+/// This path is `<rememora-data-dir>/key`, where the data dir tracks the
+/// `REMEMORA_DB` override so that integration tests (and any out-of-tree
+/// callers that relocate the DB) get a key file alongside the DB rather
+/// than in the user's real `~/.rememora/`.
+pub fn default_key_file_path() -> PathBuf {
+    if let Ok(p) = std::env::var("REMEMORA_DB") {
+        let db = PathBuf::from(p);
+        if let Some(parent) = db.parent() {
+            return parent.join("key");
+        }
+    }
+    let mut path = dirs::home_dir().expect("Could not determine home directory");
+    path.push(".rememora");
+    path.push("key");
+    path
+}
+
+/// Outcome of persisting a freshly generated encryption key. Setup uses this
+/// to print a tier-aware status line (keychain vs. on-disk file) and to
+/// surface the security trade-off when the file fallback is taken.
+#[derive(Debug)]
+pub enum KeyStorageOutcome {
+    /// Key was stored in the OS keychain.
+    Keychain,
+    /// Keychain was unavailable; key was written to `path` with mode 0600.
+    /// `keychain_error` carries the underlying keychain failure for context.
+    File {
+        path: PathBuf,
+        keychain_error: String,
+    },
+}
+
+/// Attempt to persist `key` in the OS keychain; on failure, fall back to
+/// writing it to `<data-dir>/key` with mode 0600. Returns the outcome so the
+/// caller can render an appropriate status line.
+///
+/// Errors are returned only when *both* tiers fail. The file fallback is the
+/// last line of defence — if it cannot be written, the caller MUST treat
+/// setup as failed and not pretend success (issue #100).
+pub fn persist_key(key: &str) -> Result<KeyStorageOutcome> {
+    if std::env::var("REMEMORA_TEST_NO_KEYCHAIN").ok().as_deref() != Some("1") {
+        match keychain_set(key) {
+            Ok(()) => return Ok(KeyStorageOutcome::Keychain),
+            Err(e) => {
+                let kc_err = format!("{e:#}");
+                let path = default_key_file_path();
+                write_key_file(&path, key)
+                    .with_context(|| format!(
+                        "Keychain unavailable ({kc_err}) and file fallback at {} also failed",
+                        path.display(),
+                    ))?;
+                return Ok(KeyStorageOutcome::File {
+                    path,
+                    keychain_error: kc_err,
+                });
+            }
+        }
+    }
+
+    // Test override: skip keychain entirely and exercise the file path.
+    let path = default_key_file_path();
+    write_key_file(&path, key).with_context(|| format!(
+        "REMEMORA_TEST_NO_KEYCHAIN=1 set but file fallback at {} failed",
+        path.display(),
+    ))?;
+    Ok(KeyStorageOutcome::File {
+        path,
+        keychain_error: "skipped (REMEMORA_TEST_NO_KEYCHAIN=1)".to_string(),
+    })
+}
+
+/// Read an on-disk key file. Returns `Ok(None)` when the file does not exist;
+/// any other read failure is propagated so callers can surface it.
+fn read_key_file(path: &Path) -> Result<Option<String>> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let raw = std::fs::read_to_string(path)
+        .with_context(|| format!("Failed to read key file at {}", path.display()))?;
+    let trimmed = raw.trim().to_string();
+    if trimmed.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(trimmed))
+    }
+}
+
+/// Write `key` to `path` with mode 0600 on Unix. Creates parent directories
+/// as needed. On non-Unix platforms the file is written without an explicit
+/// permission bit (Windows ACLs are out of scope for this fallback).
+fn write_key_file(path: &Path, key: &str) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("Failed to create directory {}", parent.display()))?;
+    }
+    std::fs::write(path, format!("{key}\n"))
+        .with_context(|| format!("Failed to write key file at {}", path.display()))?;
+    set_key_file_perms(path)
+        .with_context(|| format!("Failed to set 0600 perms on {}", path.display()))?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn set_key_file_perms(path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let mut perms = std::fs::metadata(path)?.permissions();
+    perms.set_mode(0o600);
+    std::fs::set_permissions(path, perms)?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn set_key_file_perms(_path: &Path) -> Result<()> {
+    // Non-Unix: rely on platform defaults. The encryption-at-rest property
+    // still holds; only the file-perm bit is missing.
+    Ok(())
+}
 
 /// Check whether a database file is encrypted by reading its header.
 /// Plain SQLite files start with "SQLite format 3\0"; encrypted ones don't.
@@ -18,21 +140,36 @@ pub fn is_db_encrypted(path: &Path) -> bool {
 }
 
 /// Resolve the encryption key without any interactive prompt:
-/// 1. REMEMORA_KEY environment variable
-/// 2. OS keychain
+/// 1. `REMEMORA_KEY` environment variable
+/// 2. On-disk key file (`<data-dir>/key`, mode 0600) — used as the keychain
+///    fallback on hosts without libsecret/secret-tool (issue #100)
+/// 3. OS keychain
 ///
-/// Returns `Ok(None)` when neither source has a key. This is the entry point
-/// for non-interactive callers (GUI apps, hooks, background workers) that
-/// must not block on stdin.
+/// Returns `Ok(None)` when no source has a key. This is the entry point for
+/// non-interactive callers (GUI apps, hooks, background workers) that must
+/// not block on stdin.
 pub fn resolve_key_no_prompt() -> Result<Option<String>> {
-    // 1. Environment variable
+    // 1. Environment variable — highest priority, lets users/tests override.
     if let Ok(key) = std::env::var("REMEMORA_KEY") {
         if !key.is_empty() {
             return Ok(Some(key));
         }
     }
 
-    // 2. OS keychain
+    // 2. On-disk file fallback. We check this *before* the keychain so that
+    //    once setup writes the file (because the keychain failed), every
+    //    subsequent invocation finds it without paying another keychain
+    //    round-trip.
+    let key_file = default_key_file_path();
+    match read_key_file(&key_file) {
+        Ok(Some(key)) => return Ok(Some(key)),
+        Ok(None) => {}
+        Err(e) => {
+            eprintln!("Warning: key file at {} unreadable: {e}", key_file.display());
+        }
+    }
+
+    // 3. OS keychain.
     match keychain_get() {
         Ok(Some(key)) => return Ok(Some(key)),
         Ok(None) => {}
@@ -143,5 +280,63 @@ mod tests {
         let result = resolve_key_no_prompt().expect("resolve_key_no_prompt");
         std::env::remove_var("REMEMORA_KEY");
         assert_eq!(result.as_deref(), Some(sentinel));
+    }
+
+    /// File-tier read: with `REMEMORA_KEY` unset and a key file present in the
+    /// data dir (pointed at by `REMEMORA_DB`), `resolve_key_no_prompt` should
+    /// return that key without falling through to the keychain. This is the
+    /// fallback path setup writes on hosts without a keychain backend
+    /// (issue #100).
+    #[test]
+    fn resolve_key_no_prompt_reads_file_when_env_unset() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db_path = dir.path().join("rememora.db");
+        let key_path = dir.path().join("key");
+        std::fs::write(&key_path, "file-key-sentinel-for-tests\n").unwrap();
+        // Lock down to 0600 so we test the same path setup writes.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&key_path).unwrap().permissions();
+            perms.set_mode(0o600);
+            std::fs::set_permissions(&key_path, perms).unwrap();
+        }
+
+        // Ensure the env var is empty for this test, then point the data dir
+        // at our tempdir via REMEMORA_DB so default_key_file_path resolves
+        // to <tempdir>/key.
+        let prev_env = std::env::var("REMEMORA_KEY").ok();
+        let prev_db = std::env::var("REMEMORA_DB").ok();
+        std::env::remove_var("REMEMORA_KEY");
+        std::env::set_var("REMEMORA_DB", &db_path);
+
+        let resolved = resolve_key_no_prompt().expect("resolve_key_no_prompt");
+
+        // Restore env to avoid leaking into sibling tests.
+        match prev_env {
+            Some(v) => std::env::set_var("REMEMORA_KEY", v),
+            None => std::env::remove_var("REMEMORA_KEY"),
+        }
+        match prev_db {
+            Some(v) => std::env::set_var("REMEMORA_DB", v),
+            None => std::env::remove_var("REMEMORA_DB"),
+        }
+
+        assert_eq!(resolved.as_deref(), Some("file-key-sentinel-for-tests"));
+    }
+
+    /// `default_key_file_path` must place the key file next to the DB when
+    /// `REMEMORA_DB` is set. This keeps integration tests and out-of-tree
+    /// callers from polluting the user's `~/.rememora/`.
+    #[test]
+    fn default_key_file_path_tracks_remora_db_env() {
+        let prev = std::env::var("REMEMORA_DB").ok();
+        std::env::set_var("REMEMORA_DB", "/tmp/rememora-key-path-test/scratch.db");
+        let p = default_key_file_path();
+        match prev {
+            Some(v) => std::env::set_var("REMEMORA_DB", v),
+            None => std::env::remove_var("REMEMORA_DB"),
+        }
+        assert_eq!(p, std::path::PathBuf::from("/tmp/rememora-key-path-test/key"));
     }
 }
