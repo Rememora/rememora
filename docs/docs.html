@@ -77,6 +77,7 @@
           <li><a href="#cmd-evolve">evolve</a></li>
           <li><a href="#cmd-consolidate">consolidate</a></li>
           <li><a href="#cmd-setup">setup</a></li>
+          <li><a href="#cmd-update">update</a></li>
           <li><a href="#cmd-agent-run">agent-run</a></li>
           <li><a href="#cmd-agent-loop">agent-loop</a></li>
           <li><a href="#cmd-encrypt">encrypt / decrypt</a></li>
@@ -138,6 +139,35 @@
 
       <h3>GitHub Releases</h3>
       <p>Pre-built binaries are available on the <a href="https://github.com/Rememora/rememora/releases">Releases page</a>.</p>
+
+      <h3>Staying up to date</h3>
+      <p><code>rememora update</code> hits the GitHub Releases API, compares the latest tag against your running binary, and prints an upgrade hint matched to the install method (Homebrew &middot; <code>cargo install</code> &middot; manual). It never auto-executes the upgrade &mdash; mixed install methods, sudo prompts, and the risk of pushing users onto a release we just shipped make &ldquo;tell, don&rsquo;t do&rdquo; the safer default.</p>
+      <div class="code-window">
+        <div class="code-header">
+          <div class="code-dots"><span class="red"></span><span class="yellow"></span><span class="green"></span></div>
+          <span class="code-title">terminal</span>
+          <button class="code-copy">Copy</button>
+        </div>
+        <div class="code-body">
+<pre><span class="prompt">$</span> <span class="cmd">rememora update</span>                <span class="comment"># hits API, prints status + hint</span>
+<span class="prompt">$</span> <span class="cmd">rememora update</span> <span class="flag">--check</span>        <span class="comment"># respect 24h cache (use from scripts/hooks)</span>
+<span class="prompt">$</span> <span class="cmd">rememora</span> <span class="flag">--json</span> <span class="cmd">update</span>         <span class="comment"># machine-readable output</span>
+<span class="prompt">$</span> <span class="cmd">brew upgrade</span> rememora           <span class="comment"># actual upgrade (Homebrew)</span></pre>
+        </div>
+      </div>
+      <p>The cache lives at <code>~/.rememora/.update-check</code>. Failures (offline, parse error, rate-limited) are silent. Set <code>REMEMORA_NO_UPDATE_CHECK=1</code> to disable entirely.</p>
+      <p>For the Claude Code plugin (separate lineage):</p>
+      <div class="code-window">
+        <div class="code-header">
+          <div class="code-dots"><span class="red"></span><span class="yellow"></span><span class="green"></span></div>
+          <span class="code-title">terminal</span>
+          <button class="code-copy">Copy</button>
+        </div>
+        <div class="code-body">
+<pre><span class="prompt">$</span> <span class="cmd">claude plugin marketplace update</span> rememora
+<span class="prompt">$</span> <span class="cmd">claude plugin update</span> rememora@rememora    <span class="comment"># note the @marketplace suffix</span></pre>
+        </div>
+      </div>
 
       <h3>Feature Flags</h3>
       <table>
@@ -231,14 +261,39 @@
       <table>
         <thead><tr><th>Component</th><th>Type</th><th>What it does</th></tr></thead>
         <tbody>
-          <tr><td><code>SessionStart</code></td><td>Hook</td><td>Loads project context + starts rememora session</td></tr>
-          <tr><td><code>SessionEnd</code></td><td>Hook</td><td>Closes the active session</td></tr>
-          <tr><td><code>Stop</code></td><td>Hook</td><td>Curates memories from the session transcript after each turn</td></tr>
+          <tr><td><code>SessionStart</code></td><td>Hook</td><td>Loads project context (L0 + L1) and opens a tracked session</td></tr>
+          <tr><td><code>UserPromptSubmit</code></td><td>Hook</td><td>Injects top-3 FTS5 hits matching your prompt into the agent&rsquo;s context</td></tr>
+          <tr><td><code>Stop</code></td><td>Hook</td><td>Curates memories from the session transcript after each turn (gated)</td></tr>
+          <tr><td><code>SessionEnd</code></td><td>Hook</td><td>Final-pass curation + closes the active session row</td></tr>
           <tr><td><code>rememora-save</code></td><td>Skill</td><td>Claude autonomously saves decisions, bug fixes, patterns</td></tr>
           <tr><td><code>rememora-search</code></td><td>Skill</td><td>Claude autonomously searches before implementations</td></tr>
           <tr><td><code>/rememora</code></td><td>Command</td><td>Manual save, search, or status check</td></tr>
         </tbody>
       </table>
+
+      <h4>Plugin configuration</h4>
+      <table>
+        <thead><tr><th>Variable</th><th>Default</th><th>Effect</th></tr></thead>
+        <tbody>
+          <tr><td><code>REMEMORA_CURATE_COOLDOWN_SECS</code></td><td><code>300</code></td><td>Minimum idle seconds between automatic curation runs from the <code>Stop</code> hook, per session. Concurrency gate (<code>pgrep</code> on session_id) is independent and always active. Set to <code>0</code> to disable just the cooldown.</td></tr>
+          <tr><td><code>REMEMORA_DISABLE_HOOKS</code></td><td>unset</td><td>Kill-switch for all four hooks. Useful for debugging or temporary opt-out.</td></tr>
+          <tr><td><code>REMEMORA_CURATE_CHILD</code></td><td>unset</td><td>Set internally by the curator on its <code>claude -p</code> subprocesses so the entire hook chain is a no-op inside curator children. Not intended for user override.</td></tr>
+          <tr><td><code>REMEMORA_NO_UPDATE_CHECK</code></td><td>unset</td><td>Disables the GitHub-Releases update check entirely (see <code>rememora update</code>).</td></tr>
+        </tbody>
+      </table>
+
+      <h4>Updating the plugin</h4>
+      <div class="code-window">
+        <div class="code-header">
+          <div class="code-dots"><span class="red"></span><span class="yellow"></span><span class="green"></span></div>
+          <span class="code-title">terminal</span>
+          <button class="code-copy">Copy</button>
+        </div>
+        <div class="code-body">
+<pre><span class="prompt">$</span> <span class="cmd">claude plugin marketplace update</span> rememora
+<span class="prompt">$</span> <span class="cmd">claude plugin update</span> rememora@rememora    <span class="comment"># note the @marketplace suffix</span></pre>
+        </div>
+      </div>
 
       <h3>Claude Code: Alternative (CLAUDE.md)</h3>
       <p>If you prefer manual control instead of the plugin, add to <code>~/.claude/CLAUDE.md</code>:</p>
@@ -691,6 +746,23 @@ Before ending: `rememora session end &lt;id&gt; --summary "..." ...`
 <span class="cmd">rememora</span> <span class="cmd">setup</span> <span class="flag">--apply</span>   <span class="comment"># apply configuration</span></pre>
         </div>
       </div>
+      <p><code>setup --apply</code> opportunistically prints an upgrade hint when a newer release is cached &mdash; silent when up-to-date, offline, or rate-limited.</p>
+
+      <h2 id="cmd-update">update</h2>
+      <p>Check GitHub Releases for a newer rememora and print an upgrade hint matched to your install method (Homebrew &middot; <code>cargo install</code> &middot; manual). Never auto-executes the upgrade.</p>
+      <div class="code-window">
+        <div class="code-header">
+          <div class="code-dots"><span class="red"></span><span class="yellow"></span><span class="green"></span></div>
+          <span class="code-title">usage</span>
+          <button class="code-copy">Copy</button>
+        </div>
+        <div class="code-body">
+<pre><span class="cmd">rememora</span> <span class="cmd">update</span>            <span class="comment"># hits API, prints status + hint</span>
+<span class="cmd">rememora</span> <span class="cmd">update</span> <span class="flag">--check</span>    <span class="comment"># respect 24h cache (use from scripts/hooks)</span>
+<span class="cmd">rememora</span> <span class="flag">--json</span> <span class="cmd">update</span>     <span class="comment"># machine-readable output</span></pre>
+        </div>
+      </div>
+      <p>Cache lives at <code>~/.rememora/.update-check</code>. <code>REMEMORA_NO_UPDATE_CHECK=1</code> disables entirely.</p>
 
       <h2 id="cmd-agent-run">agent-run</h2>
       <p>Dispatch a GitHub issue to Claude CLI with quality gates.</p>

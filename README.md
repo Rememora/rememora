@@ -5,6 +5,8 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 [![Homebrew](https://img.shields.io/badge/brew-Rememora%2Ftap-orange?style=flat-square)](https://github.com/Rememora/homebrew-tap)
 
+> **What's new in v1.5.0** — `rememora update [--check]` surfaces a one-line upgrade hint matched to your install method (Homebrew / cargo / unknown). 1.4.0 and 1.4.1 before it made the autonomous memory pipeline actually work end-to-end on modern Claude Code (the curator parser was inert in 1.2.x — Stop hook fired but no memories were ever saved). Full notes: [v1.5.0](https://github.com/Rememora/rememora/releases/tag/v1.5.0) · [v1.4.1](https://github.com/Rememora/rememora/releases/tag/v1.4.1) · [v1.4.0](https://github.com/Rememora/rememora/releases/tag/v1.4.0) · [CHANGELOG](CHANGELOG.md)
+
 Persistent, cross-agent memory for AI coding agents. One SQLite database, shared by every agent you use.
 
 **The problem:** Claude Code, Codex, and Gemini CLI each lose context between sessions. Switch agents mid-task and you start from scratch. Come back to a project after a week and the agent has forgotten everything.
@@ -50,6 +52,16 @@ cargo install --path .
 # Or download from GitHub Releases
 # https://github.com/Rememora/rememora/releases
 ```
+
+### Staying up to date
+
+```bash
+rememora update                # hits GitHub, prints status + upgrade hint
+rememora update --check        # respect 24h cache (use from scripts/hooks)
+brew upgrade rememora          # actual upgrade (Homebrew)
+```
+
+`rememora update` detects your install method (Homebrew / `cargo install` / unknown) from the running binary's path and prints the appropriate upgrade command — it never auto-executes the upgrade. `rememora setup --apply` also prints the same hint inline when a newer release is cached. Set `REMEMORA_NO_UPDATE_CHECK=1` to disable entirely.
 
 ## Quick Start
 
@@ -179,22 +191,32 @@ claude plugin install rememora@rememora
 claude plugin install rememora@rememora --scope project
 ```
 
-This gives you hooks + skills that work automatically — no manual commands needed:
+This gives you four hooks + three skills that work automatically — no manual commands needed:
 
 | Component | What it does |
 |-----------|-------------|
-| **SessionStart hook** | Loads project context + starts rememora session |
-| **SessionEnd hook** | Closes the active session |
-| **Stop hook** | Curates memories from the session transcript after each turn |
+| **SessionStart hook** | Loads project context (L0 + L1) and opens a tracked session |
+| **UserPromptSubmit hook** | Injects top-3 FTS5 hits matching your prompt into the agent's context |
+| **Stop hook** | Curates memories from the session transcript after each turn (gated) |
+| **SessionEnd hook** | Final-pass curation + closes the active session row |
 | **rememora-save skill** | Claude autonomously saves decisions, bug fixes, patterns |
 | **rememora-search skill** | Claude autonomously searches before implementations |
 | **`/rememora` command** | Manual save, search, or status check |
 
-After installing, restart Claude Code. The plugin auto-detects your project from the working directory.
+After installing, restart Claude Code. The plugin auto-detects your project from the working directory and now ships verified end-to-end on the marketplace install path (sandbox iter 12 confirmed: 3 substantive turns → 7 memories captured autonomously, fresh session recalls all 3 architectural decisions).
+
+**Updating the plugin:**
+
+```bash
+claude plugin marketplace update rememora    # refresh the marketplace cache
+claude plugin update rememora@rememora       # update the plugin (note the @marketplace suffix)
+```
 
 **Configuration:**
 
-- `REMEMORA_CURATE_COOLDOWN_SECS` (default: `300`) — minimum idle seconds between automatic curation runs from the Claude Code `Stop` hook, per session. The Stop hook fires after every agent turn. The plugin enforces **at most one in-flight `rememora curate` per session** via a kernel-level concurrency gate (`pgrep` on the session ID); this setting layers on top as a secondary frequency gate, bounding how long to wait after a curate *finishes* before another is allowed. Set to `0` to disable the cooldown — the concurrency gate still applies. A final curation pass always runs at `SessionEnd` regardless of cooldown, so the tail of the session is never lost.
+- `REMEMORA_CURATE_COOLDOWN_SECS` (default: `300`) — minimum idle seconds between automatic curation runs from the `Stop` hook, per session. The plugin enforces **at most one in-flight `rememora curate` per session** via a kernel-level concurrency gate (`pgrep` on the session ID); this setting layers on top as a secondary frequency gate, bounding how long to wait after a curate *finishes* before another is allowed. Set to `0` to disable the cooldown — the concurrency gate still applies. A final curation pass always runs at `SessionEnd` regardless of cooldown, so the tail of the session is never lost.
+- `REMEMORA_DISABLE_HOOKS=1` — kill-switch for all four hooks. Useful for debugging.
+- `REMEMORA_CURATE_CHILD=1` — set internally by the curator on its `claude -p` subprocesses so the entire hook chain is a no-op inside curator children (no spurious session rows, no context injection, no recursive curation). Not intended for user override.
 
 ### Claude Code (Alternative: CLAUDE.md)
 
@@ -280,8 +302,10 @@ cargo tauri dev
 | `rememora agent-run --repo X --issue N` | Dispatch issue to Claude CLI |
 | `rememora agent-loop --repo X` | Watch board + auto-dispatch |
 | `rememora setup` | Configure agents to use rememora |
+| `rememora update [--check]` | Check GitHub for a newer release; print upgrade hint |
 | `rememora eval` | DB compliance metrics |
 | `rememora status` | Show DB stats |
+| `rememora usage [--hooks]` | Aggregate LLM telemetry (or hook gate-outcomes with `--hooks`) |
 | `rememora export --project <name>` | Export as JSON or markdown |
 
 All commands support `--json` for structured output.
@@ -457,7 +481,7 @@ Results are exported as **Braintrust-aligned JSONL** (`input/output/expected/sco
 ## Development
 
 ```bash
-cargo test          # 124 tests (121 pass, 3 ignored)
+cargo test          # 187 tests (lib + integration)
 cargo build         # Debug build
 cargo clippy        # Lint
 ```
@@ -495,19 +519,23 @@ cargo clippy        # Lint
 
 ## Roadmap
 
-- [x] Auto-extraction of memories from text via LLM
-- [x] Homebrew formula (`brew install Rememora/tap/rememora`)
-- [x] Claude Code hooks for automatic session tracking
-- [x] Autonomous curation from session transcripts
-- [x] Memory consolidation (evolve + consolidate)
-- [x] Agent orchestration (agent-run + agent-loop)
-- [x] Agent auto-setup (detect + configure)
-- [x] Eval benchmark harness (scenarios + long-run + conditions matrix)
-- [x] Cheatsheet context mode (compact top-5 summary)
-- [ ] Vector search via candle + sqlite-vec (hybrid BM25 + cosine similarity)
+- [x] Cross-agent memory + transfer chain
+- [x] Autonomous curation pipeline (signal gate + AUDN curator)
+- [x] Claude Code plugin with 4 hooks (SessionStart, UserPromptSubmit, Stop, SessionEnd)
+- [x] Marketplace install (`claude plugin install rememora@rememora`)
+- [x] Homebrew formula + auto-update notifications (`rememora update`)
 - [x] Hierarchical retrieval with score propagation
-- [ ] Memory evolution — LLM-based consolidation of old memories
+- [x] Memory consolidation (evolve + consolidate, BM25 clustering + LLM)
+- [x] Agent orchestration (agent-run + agent-loop)
+- [x] Eval benchmark harness (scenarios + long-run + conditions matrix)
+- [x] Encryption at rest (SQLCipher + keychain / file fallback)
+- [x] OTEL telemetry export (`rememora telemetry`)
+- [x] Recursion-gate observability (`rememora usage --hooks`)
 - [x] TUI dashboard for browsing memories
+- [x] Desktop viewer (Tauri, macOS)
+- [ ] Cross-agent transfer beyond Claude→Codex (Gemini runner is the prerequisite)
+- [ ] Vector search via candle + sqlite-vec at production scale (currently feature-gated)
+- [ ] Monitors-based curator (replace Stop-hook with Claude Code `monitors` for simpler architecture)
 
 ## Insights
 
