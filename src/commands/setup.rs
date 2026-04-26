@@ -45,7 +45,11 @@ fn rememora_hooks() -> &'static [HookSpec] {
             // `--format context`. Inlined here so the CLI-only install path
             // does not depend on plugin scripts being present on disk.
             marker: REMEMORA_PROMPT_HOOK_MARKER,
-            command: "bash -c 'p=$(cat 2>/dev/null | python3 -c \"import sys,json; d=json.load(sys.stdin); print(d.get(\\\"prompt\\\",\\\"\\\"))\" 2>/dev/null); [ ${#p} -ge 6 ] && rememora search --limit 3 --format context \"$(printf %s \"$p\" | tr -d \"?:\\\"()*-\" | tr -s \" \")\" 2>/dev/null || true'",
+            // Defense-in-depth for #103: even though `rememora search` falls
+            // back to a literal-token query on FTS5 syntax errors, strip the
+            // word-bounded operators (OR/AND/NOT/NEAR) and structural punct
+            // here too so the search call sees a plain bag of words.
+            command: "bash -c 'p=$(cat 2>/dev/null | python3 -c \"import sys,json,re;d=json.load(sys.stdin);s=d.get(\\\"prompt\\\",\\\"\\\");s=re.sub(r\\\"\\\\b(OR|AND|NOT|NEAR)\\\\b\\\",\\\" \\\",s);s=re.sub(r\\\"[\\\\\\\"()*?:\\\\-]\\\",\\\" \\\",s);print(re.sub(r\\\"\\\\s+\\\",\\\" \\\",s).strip())\" 2>/dev/null); [ ${#p} -ge 6 ] && rememora search --limit 3 --format context \"$p\" 2>/dev/null || true'",
         },
         HookSpec {
             event: "SessionEnd",
