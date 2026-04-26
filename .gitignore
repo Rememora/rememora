@@ -6,6 +6,9 @@
 .remember/
 .agents/locks/
 .agents/worktrees/
+.agents/board_raw.json
+.claude/agent-memory/
+.claude/worktrees/
 
 # Bench
 bench/node_modules/
