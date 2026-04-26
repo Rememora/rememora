@@ -1,0 +1,28 @@
+# Build artifacts
+target/
+app/src-tauri/target/
+app/dist/
+app/node_modules/
+bench/dist/
+bench/node_modules/
+bench/results/
+
+# VCS / agent state
+.git/
+.agents/
+.claude/
+
+# Local DBs and SQLite WAL/SHM (never bake into image)
+*.db
+*.db-wal
+*.db-shm
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Docker self — note: `docker/entrypoint.sh` is COPYed by the Dockerfile,
+# so we cannot exclude the whole tree. Excluding nothing here is fine: the
+# directory is small (Dockerfile + scripts + README) and never balloons.
