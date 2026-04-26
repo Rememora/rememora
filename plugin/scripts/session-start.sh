@@ -17,6 +17,16 @@
 # Kill-switch: set REMEMORA_DISABLE_HOOKS=1 to disable all Rememora hooks.
 [ -n "${REMEMORA_DISABLE_HOOKS:-}" ] && exit 0
 
+# Curator-child gate (issue #117). When `rememora curate` spawns `claude -p`
+# for signal detection / AUDN curation, every hook in this directory runs
+# against a transcript the curator already owns. Without an early-exit, each
+# child claude would: create a spurious session row, prepend full project
+# context to its closed-loop signal-detector prompt, and re-run FTS5 search
+# on a transcript that's pure rememora plumbing. The Stop hook had this
+# guard; the other three didn't, producing ~30 leaked sessions per real
+# user turn. The whole hook chain is a no-op inside curator children.
+[ -n "${REMEMORA_CURATE_CHILD:-}" ] && exit 0
+
 set -euo pipefail
 
 # Check if rememora is available

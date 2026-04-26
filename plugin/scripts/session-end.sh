@@ -7,6 +7,12 @@
 # Kill-switch: set REMEMORA_DISABLE_HOOKS=1 to disable all Rememora hooks.
 [ -n "${REMEMORA_DISABLE_HOOKS:-}" ] && exit 0
 
+# Curator-child gate (issue #117). See session-start.sh for the reasoning;
+# we must not call `session end-active` from inside a curator child or it
+# will close the user's most-recent active session in the middle of their
+# real claude run.
+[ -n "${REMEMORA_CURATE_CHILD:-}" ] && exit 0
+
 set -euo pipefail
 
 if ! command -v rememora &>/dev/null; then

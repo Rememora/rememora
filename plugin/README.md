@@ -37,12 +37,12 @@ If a Rememora hook misbehaves and you need to turn everything off quickly, set t
 export REMEMORA_DISABLE_HOOKS=1
 ```
 
-All three hook scripts (`session-start.sh`, `session-end.sh`, `stop-curate.sh`) check this env var at the top and early-exit 0 when set. `unset REMEMORA_DISABLE_HOOKS` to re-enable.
+All four hook scripts (`session-start.sh`, `session-end.sh`, `stop-curate.sh`, `prompt-search.sh`) check this env var at the top and early-exit 0 when set. `unset REMEMORA_DISABLE_HOOKS` to re-enable.
 
 Other tunables:
 
 - `REMEMORA_CURATE_COOLDOWN_SECS` (default `300`): minimum seconds between curate runs per session. Set to `0` to disable the frequency gate. The kernel-level `pgrep` concurrency gate is independent and always active.
-- `REMEMORA_CURATE_CHILD`: set internally by `rememora curate` on its `claude -p` subprocesses so those children's Stop hooks don't recursively curate. Not intended for user override.
+- `REMEMORA_CURATE_CHILD`: set internally by `rememora curate` on its `claude -p` subprocesses so the entire hook chain is a no-op inside curator children (no spurious session rows, no context injection, no recursive curate). Not intended for user override.
 
 ## How it works
 

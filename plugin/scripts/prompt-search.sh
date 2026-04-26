@@ -10,6 +10,11 @@
 # Kill-switch — disables all Rememora hooks.
 [ -n "${REMEMORA_DISABLE_HOOKS:-}" ] && exit 0
 
+# Curator-child gate (issue #117). The signal-detector / AUDN curator prompts
+# are closed-loop rememora plumbing. Prepending FTS5 hits to them just bloats
+# the prompt with content the curator never asked for and cannot use.
+[ -n "${REMEMORA_CURATE_CHILD:-}" ] && exit 0
+
 if ! command -v rememora >/dev/null 2>&1; then
   exit 0
 fi
