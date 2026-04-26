@@ -696,9 +696,57 @@ pub fn run(apply: bool) -> Result<()> {
 fn setup_encryption() -> Result<()> {
     let db_path = rememora::db::default_db_path();
 
-    // Already encrypted — nothing to do beyond making sure the DB is reachable.
+    // Already encrypted — confirm we can still open it before claiming success.
+    //
+    // Issue #113: previously we returned Ok immediately on `is_db_encrypted`,
+    // even if every key source (env / file / keychain) was empty. Setup would
+    // print "already configured" and exit green while every subsequent
+    // `rememora` call errored on a no-tty key prompt. Now we also probe the
+    // key chain via `resolve_key_no_prompt` and, if no key is reachable, fall
+    // through to a recovery branch that re-runs the persist path (or surfaces
+    // a clear error in non-interactive environments).
     if db_path.exists() && rememora::crypto::is_db_encrypted(&db_path) {
-        cliclack::log::success("Encryption: already enabled")?;
+        if rememora::crypto::resolve_key_no_prompt()?.is_some() {
+            cliclack::log::success("Encryption: already enabled")?;
+            return Ok(());
+        }
+
+        cliclack::log::warning(
+            "Database is encrypted but no key is reachable in env, file, or keychain.\n\
+             Paste your existing encryption key to restore access (or Ctrl-C to abort).",
+        )?;
+        let key = cliclack::password("Encryption key:")
+            .interact()
+            .context(
+                "Cannot prompt for key in non-interactive setup. \
+                 Set REMEMORA_KEY, restore ~/.rememora/key, or run `rememora decrypt` to recover.",
+            )?;
+        if key.trim().is_empty() {
+            anyhow::bail!(
+                "Empty key provided; cannot recover encrypted database. \
+                 Restore the original key file or use `rememora decrypt` if you have a backup."
+            );
+        }
+
+        // Verify the key actually opens the DB before persisting it — otherwise
+        // we'd happily store a wrong value and break every subsequent run.
+        std::env::set_var("REMEMORA_KEY", key.trim());
+        rememora::db::open(&db_path).context(
+            "Provided key did not open the database. \
+             Check for typos or restore from a known-good source.",
+        )?;
+
+        match rememora::crypto::persist_key(key.trim())? {
+            rememora::crypto::KeyStorageOutcome::Keychain => {
+                cliclack::log::success("Encryption key restored to OS keychain")?;
+            }
+            rememora::crypto::KeyStorageOutcome::File { path, .. } => {
+                cliclack::log::success(format!(
+                    "Encryption key restored to {} (mode 600)",
+                    tilde_path(&path),
+                ))?;
+            }
+        }
         return Ok(());
     }
 
