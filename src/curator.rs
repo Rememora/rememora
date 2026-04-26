@@ -169,22 +169,36 @@ fn build_subagent_command(prompt: &str, model: &str) -> Command {
 
 /// Parse `claude -p --output-format json` stdout.
 ///
-/// Output is a JSON array of event objects; we walk it to find the final
-/// `{type:"result"}` entry which carries `result`, `usage`, `total_cost_usd`,
+/// Today's Claude Code emits `--output-format json` as a single result object
+/// of shape `{type:"result", ...}`. Earlier streaming builds emitted a JSON
+/// array of events with the final `type:"result"` entry buried at the end.
+/// Both shapes are accepted here (issue #119): when the payload is an object
+/// we use it as the result entry directly; when it's an array we walk it in
+/// reverse to find the final `{type:"result"}` entry.
+///
+/// The result entry carries `result`, `usage`, `total_cost_usd`,
 /// `duration_ms`, `stop_reason`, `terminal_reason`, `permission_denials`.
 pub fn parse_subagent_output(stdout: &str, model: &str) -> Result<SubagentOutput> {
-    let events: serde_json::Value =
+    let payload: serde_json::Value =
         serde_json::from_str(stdout.trim()).context("claude -p returned non-JSON output")?;
 
-    let array = events
-        .as_array()
-        .context("claude -p JSON was not an array")?;
-
-    let result_entry = array
-        .iter()
-        .rev()
-        .find(|v| v.get("type").and_then(|t| t.as_str()) == Some("result"))
-        .context("claude -p JSON stream had no {type:\"result\"} entry")?;
+    let result_entry: &serde_json::Value = if let Some(array) = payload.as_array() {
+        array
+            .iter()
+            .rev()
+            .find(|v| v.get("type").and_then(|t| t.as_str()) == Some("result"))
+            .context("claude -p JSON stream had no {type:\"result\"} entry")?
+    } else if payload.get("type").and_then(|t| t.as_str()) == Some("result") {
+        &payload
+    } else {
+        anyhow::bail!(
+            "claude -p JSON had no {{type:\"result\"}} payload; got top-level keys: {}",
+            payload
+                .as_object()
+                .map(|o| o.keys().cloned().collect::<Vec<_>>().join(","))
+                .unwrap_or_else(|| "<not-object>".to_string()),
+        );
+    };
 
     let text = result_entry
         .get("result")
@@ -274,6 +288,58 @@ mod tests {
         let prompt = SIGNAL_GATE_PROMPT.replace("{transcript}", transcript);
         assert!(prompt.contains("some transcript"));
         assert!(!prompt.contains("{transcript}"));
+    }
+
+    /// Issue #119: `--output-format json` returns a single `{type:"result"}`
+    /// object on modern Claude Code. The previous parser required an array
+    /// and bailed before the curator could read its own answer.
+    #[test]
+    fn parse_subagent_output_accepts_single_object_payload() {
+        let stdout = r#"{"type":"result","subtype":"success","is_error":false,
+            "result":"YES","duration_ms":1200,"duration_api_ms":900,
+            "num_turns":1,"session_id":"abc-123","total_cost_usd":0.0042,
+            "stop_reason":"end_turn","usage":{
+                "input_tokens":12,"output_tokens":3,
+                "cache_creation_input_tokens":100,"cache_read_input_tokens":200
+            }}"#;
+        let out = parse_subagent_output(stdout, "haiku")
+            .expect("single-object payload must parse");
+        assert_eq!(out.text, "YES");
+        assert_eq!(out.telemetry.input_tokens, Some(12));
+        assert_eq!(out.telemetry.output_tokens, Some(3));
+        assert_eq!(out.telemetry.cost_usd, Some(0.0042));
+        assert_eq!(out.telemetry.child_session_id.as_deref(), Some("abc-123"));
+        assert!(!out.telemetry.is_error);
+    }
+
+    /// Backwards-compat: legacy streaming builds emit an array; we keep
+    /// supporting it so tooling pinned to older Claude Code still works.
+    #[test]
+    fn parse_subagent_output_accepts_array_payload() {
+        let stdout = r#"[
+            {"type":"system","subtype":"init"},
+            {"type":"assistant","message":{}},
+            {"type":"result","is_error":false,"result":"NO",
+             "session_id":"def-456","total_cost_usd":0.001,
+             "usage":{"input_tokens":50,"output_tokens":1}}
+        ]"#;
+        let out = parse_subagent_output(stdout, "haiku")
+            .expect("array payload must parse");
+        assert_eq!(out.text, "NO");
+        assert_eq!(out.telemetry.input_tokens, Some(50));
+        assert_eq!(out.telemetry.child_session_id.as_deref(), Some("def-456"));
+    }
+
+    #[test]
+    fn parse_subagent_output_errors_on_neither_shape() {
+        let stdout = r#"{"type":"system","ok":true}"#;
+        let err = parse_subagent_output(stdout, "haiku")
+            .expect_err("payload without type=result must error");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("type") || msg.contains("result"),
+            "error should mention the missing result entry, got: {msg}",
+        );
     }
 
     #[test]
