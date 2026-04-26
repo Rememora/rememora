@@ -17,7 +17,22 @@ INPUT=$(cat)
 CWD=$(echo "$INPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('cwd',''))" 2>/dev/null || echo "")
 SESSION_ID=$(echo "$INPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('session_id',''))" 2>/dev/null || echo "")
 
-rememora session end-active --auto-summary 2>/dev/null || true
+# Pass the same project name session-start.sh used (basename of cwd). Without
+# this, `end-active` falls back to `detect_from_cwd` which only resolves
+# *registered* projects — running `claude -p` from `/tmp/<scratch>` (CI,
+# agent-loop, ad-hoc) would silently no-op and leak active session rows
+# forever (issue #114). The CLI also gained a basename-fallback so older
+# hooks keep working, but this explicit form is the canonical one.
+PROJECT_FOR_END=""
+if [ -n "$CWD" ]; then
+  PROJECT_FOR_END=$(basename "$CWD")
+fi
+
+if [ -n "$PROJECT_FOR_END" ]; then
+  rememora session end-active --project "$PROJECT_FOR_END" --auto-summary 2>/dev/null || true
+else
+  rememora session end-active --auto-summary 2>/dev/null || true
+fi
 
 if [ -n "$CWD" ] && [ -n "$SESSION_ID" ]; then
   ENCODED_CWD=$(echo "$CWD" | sed 's|/|-|g')

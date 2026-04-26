@@ -50,12 +50,26 @@ pub fn end_active(
     auto_summary: bool,
     json: bool,
 ) -> Result<()> {
-    // Resolve project: explicit flag or auto-detect from CWD
+    // Resolve project: explicit flag, then registered-project lookup by cwd,
+    // then basename(cwd) — the same string `session start` uses when called
+    // from a hook in an unregistered directory.
+    //
+    // Issue #114: previously this stopped at `detect_from_cwd`, which only
+    // returns Some when a project's registered `path` is a prefix of cwd.
+    // Running `claude -p` from `/tmp/<scratch>` (CI, agent-loop, ad-hoc)
+    // would no-op silently and leak `[active]` session rows.
     let resolved_project = if let Some(p) = project {
         Some(p.to_string())
     } else {
         let cwd = std::env::current_dir()?;
-        project::detect_from_cwd(conn, cwd.to_str().unwrap_or(""))?
+        let cwd_str = cwd.to_str().unwrap_or("");
+        match project::detect_from_cwd(conn, cwd_str)? {
+            Some(p) => Some(p),
+            None => cwd
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(|s| s.to_string()),
+        }
     };
 
     let project_name = match resolved_project {

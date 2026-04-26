@@ -604,6 +604,22 @@ pub fn run(apply: bool) -> Result<()> {
         .filter(|(_, a)| !matches!(a, Action::AlreadyConfigured))
         .collect();
 
+    // Deploy bundled plugin hook scripts to `~/.rememora/hooks/` BEFORE the
+    // "already configured" early-return — otherwise users who upgrade the
+    // rememora CLI (Homebrew, cargo install, marketplace plugin) would end up
+    // running the *old* shell scripts indefinitely, since their settings.json
+    // already points at canonical hook paths and the old per-agent action is
+    // `AlreadyConfigured` (issue #115). `deploy_hook_scripts` is idempotent
+    // (overwrites in place) so it's safe to run on every `--apply`.
+    let hooks_dir = default_hooks_dir();
+    if apply {
+        deploy_hook_scripts(&hooks_dir)?;
+        cliclack::log::success(format!(
+            "Deployed hook scripts to {}",
+            tilde_path(&hooks_dir),
+        ))?;
+    }
+
     if pending.is_empty() {
         cliclack::outro("All agents already configured.")?;
         return Ok(());
@@ -626,18 +642,6 @@ pub fn run(apply: bool) -> Result<()> {
         cliclack::outro("Setup cancelled.")?;
         return Ok(());
     }
-
-    // Deploy bundled plugin hook scripts to `~/.rememora/hooks/` BEFORE we
-    // mutate any agent's settings.json, so that the moment the new inline
-    // commands point at those scripts, the scripts are already in place
-    // (issue #111). Idempotent — overwrites the existing files so the
-    // scripts upgrade in lockstep with the CLI binary.
-    let hooks_dir = default_hooks_dir();
-    deploy_hook_scripts(&hooks_dir)?;
-    cliclack::log::success(format!(
-        "Deployed hook scripts to {}",
-        tilde_path(&hooks_dir),
-    ))?;
 
     // Apply changes
     for (agent, action) in &actions {
@@ -696,9 +700,57 @@ pub fn run(apply: bool) -> Result<()> {
 fn setup_encryption() -> Result<()> {
     let db_path = rememora::db::default_db_path();
 
-    // Already encrypted — nothing to do beyond making sure the DB is reachable.
+    // Already encrypted — confirm we can still open it before claiming success.
+    //
+    // Issue #113: previously we returned Ok immediately on `is_db_encrypted`,
+    // even if every key source (env / file / keychain) was empty. Setup would
+    // print "already configured" and exit green while every subsequent
+    // `rememora` call errored on a no-tty key prompt. Now we also probe the
+    // key chain via `resolve_key_no_prompt` and, if no key is reachable, fall
+    // through to a recovery branch that re-runs the persist path (or surfaces
+    // a clear error in non-interactive environments).
     if db_path.exists() && rememora::crypto::is_db_encrypted(&db_path) {
-        cliclack::log::success("Encryption: already enabled")?;
+        if rememora::crypto::resolve_key_no_prompt()?.is_some() {
+            cliclack::log::success("Encryption: already enabled")?;
+            return Ok(());
+        }
+
+        cliclack::log::warning(
+            "Database is encrypted but no key is reachable in env, file, or keychain.\n\
+             Paste your existing encryption key to restore access (or Ctrl-C to abort).",
+        )?;
+        let key = cliclack::password("Encryption key:")
+            .interact()
+            .context(
+                "Cannot prompt for key in non-interactive setup. \
+                 Set REMEMORA_KEY, restore ~/.rememora/key, or run `rememora decrypt` to recover.",
+            )?;
+        if key.trim().is_empty() {
+            anyhow::bail!(
+                "Empty key provided; cannot recover encrypted database. \
+                 Restore the original key file or use `rememora decrypt` if you have a backup."
+            );
+        }
+
+        // Verify the key actually opens the DB before persisting it — otherwise
+        // we'd happily store a wrong value and break every subsequent run.
+        std::env::set_var("REMEMORA_KEY", key.trim());
+        rememora::db::open(&db_path).context(
+            "Provided key did not open the database. \
+             Check for typos or restore from a known-good source.",
+        )?;
+
+        match rememora::crypto::persist_key(key.trim())? {
+            rememora::crypto::KeyStorageOutcome::Keychain => {
+                cliclack::log::success("Encryption key restored to OS keychain")?;
+            }
+            rememora::crypto::KeyStorageOutcome::File { path, .. } => {
+                cliclack::log::success(format!(
+                    "Encryption key restored to {} (mode 600)",
+                    tilde_path(&path),
+                ))?;
+            }
+        }
         return Ok(());
     }
 
