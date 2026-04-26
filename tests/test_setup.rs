@@ -165,7 +165,9 @@ fn setup_apply_no_keychain_creates_db_key_and_hooks() {
     );
 
     // Spot-check the UserPromptSubmit command shape: it must shell out to
-    // `rememora search` so PR #87's FTS5-injection behavior is wired.
+    // the deployed `prompt-search.sh` (issue #111). The script — bundled
+    // via `include_str!` and redeployed on every `setup --apply` — is what
+    // calls `rememora search` and emits the FTS5-injected hits PR #87 added.
     let ups = hooks
         .get("UserPromptSubmit")
         .and_then(|v| v.as_array())
@@ -174,15 +176,15 @@ fn setup_apply_no_keychain_creates_db_key_and_hooks() {
         .get("hooks")
         .and_then(|h| h.as_array())
         .expect("UserPromptSubmit envelope missing inner hooks");
-    let has_search = ups_inner.iter().any(|h| {
+    let has_deployed_script = ups_inner.iter().any(|h| {
         h.get("command")
             .and_then(|c| c.as_str())
-            .map(|s| s.contains("rememora search"))
+            .map(|s| s.contains(".rememora/hooks/prompt-search.sh"))
             .unwrap_or(false)
     });
     assert!(
-        has_search,
-        "UserPromptSubmit hook does not invoke `rememora search`: {:?}",
+        has_deployed_script,
+        "UserPromptSubmit hook does not reference deployed prompt-search.sh: {:?}",
         ups,
     );
 
@@ -204,6 +206,33 @@ fn setup_apply_no_keychain_creates_db_key_and_hooks() {
         "UserPromptSubmit command failed bash -n: {}\ncmd was: {}",
         String::from_utf8_lossy(&parse.stderr),
         cmd,
+    );
+
+    // 4. Issue #111: bundled plugin scripts must be deployed under
+    //    <REMEMORA_DB parent>/hooks/ (i.e. ~/.rememora/hooks/ in production)
+    //    with mode 0755, and the Stop-hook script must contain the
+    //    `record-hook-event` telemetry calls that populate `hook_invocations`.
+    let hooks_dir = home_path.join(".rememora").join("hooks");
+    for name in ["session-start.sh", "session-end.sh", "stop-curate.sh", "prompt-search.sh"] {
+        let p = hooks_dir.join(name);
+        assert!(p.exists(), "{} not deployed at {}", name, p.display());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&p).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o755, "{} perms 0o{:o} != 0o755", name, mode);
+        }
+    }
+    let stop_curate = std::fs::read_to_string(hooks_dir.join("stop-curate.sh")).unwrap();
+    assert!(
+        stop_curate.contains("rememora debug record-hook-event"),
+        "deployed stop-curate.sh missing record-hook-event telemetry — \
+         hook_invocations will not populate for CLI installs (#111)",
+    );
+    let prompt_search = std::fs::read_to_string(hooks_dir.join("prompt-search.sh")).unwrap();
+    assert!(
+        prompt_search.contains("rememora search"),
+        "deployed prompt-search.sh missing `rememora search` invocation",
     );
 }
 

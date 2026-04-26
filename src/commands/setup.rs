@@ -2,9 +2,34 @@ use anyhow::{Context, Result};
 use std::path::PathBuf;
 
 const REMEMORA_MARKER: &str = "## Rememora";
-const REMEMORA_HOOK_MARKER: &str = "rememora context --auto";
-const REMEMORA_CURATE_MARKER: &str = "rememora curate";
-const REMEMORA_PROMPT_HOOK_MARKER: &str = "rememora search --limit 3";
+
+// Markers identifying canonical Rememora hook entries. These are substring
+// fingerprints used by `hooks_already_configured` to confirm the deployed
+// command is in place. They reference the deployed-script paths under
+// `~/.rememora/hooks/` so the marker tracks the exact form `setup --apply`
+// writes today (issue #111).
+const REMEMORA_HOOK_MARKER: &str = ".rememora/hooks/session-start.sh";
+const REMEMORA_CURATE_MARKER: &str = ".rememora/hooks/stop-curate.sh";
+const REMEMORA_PROMPT_HOOK_MARKER: &str = ".rememora/hooks/prompt-search.sh";
+const REMEMORA_SESSION_END_MARKER: &str = ".rememora/hooks/session-end.sh";
+
+// Bundled plugin hook scripts — embedded at compile time so CLI-only
+// installs (Homebrew, cargo) get the same observability-instrumented
+// scripts the marketplace plugin ships (issue #111). On every
+// `setup --apply` we redeploy these to `~/.rememora/hooks/<name>.sh`
+// so they upgrade in lockstep with the CLI binary.
+const BUNDLED_SESSION_START_SH: &str = include_str!("../../plugin/scripts/session-start.sh");
+const BUNDLED_SESSION_END_SH: &str = include_str!("../../plugin/scripts/session-end.sh");
+const BUNDLED_STOP_CURATE_SH: &str = include_str!("../../plugin/scripts/stop-curate.sh");
+const BUNDLED_PROMPT_SEARCH_SH: &str = include_str!("../../plugin/scripts/prompt-search.sh");
+
+/// Filename + content pairs for every script we redeploy under `~/.rememora/hooks/`.
+const BUNDLED_HOOK_SCRIPTS: &[(&str, &str)] = &[
+    ("session-start.sh", BUNDLED_SESSION_START_SH),
+    ("session-end.sh", BUNDLED_SESSION_END_SH),
+    ("stop-curate.sh", BUNDLED_STOP_CURATE_SH),
+    ("prompt-search.sh", BUNDLED_PROMPT_SEARCH_SH),
+];
 
 /// Embedded canonical hook manifest — single source of truth for hook *shape*.
 ///
@@ -38,35 +63,37 @@ fn rememora_hooks() -> &'static [HookSpec] {
     // `plugin/hooks/hooks.json` (validated by `setup_hooks_match_manifest_subset`).
     // We deliberately exclude `Setup`: it's a marketplace-only event whose
     // command depends on `${CLAUDE_PLUGIN_ROOT}` and has no CLI-install analogue.
+    //
+    // Issue #111: each command points at the bundled plugin script deployed
+    // to `~/.rememora/hooks/<name>.sh` by `deploy_hook_scripts()`. This gives
+    // CLI installs (Homebrew, cargo) the same `_emit` recursion-gate
+    // telemetry (`hook_invocations` table) the marketplace plugin already
+    // had, and lets the scripts upgrade in lockstep with the CLI binary
+    // (every `setup --apply` redeploys them).
+    //
+    // Tilde expansion is performed by the shell that runs the hook command;
+    // Claude Code launches hooks via `bash -c`, so `~` resolves correctly
+    // without us having to bake an absolute path that would differ per host.
     &[
         HookSpec {
             event: "SessionStart",
-            // "rememora context --auto" — narrow enough that user-pasted hooks
-            // with arbitrary other rememora commands won't false-match.
             marker: REMEMORA_HOOK_MARKER,
-            command: "rememora context --auto 2>/dev/null || true",
+            command: "bash ~/.rememora/hooks/session-start.sh 2>/dev/null || true",
         },
         HookSpec {
             event: "UserPromptSubmit",
-            // Mirrors plugin/scripts/prompt-search.sh: bounded FTS5 hits via
-            // `--format context`. Inlined here so the CLI-only install path
-            // does not depend on plugin scripts being present on disk.
             marker: REMEMORA_PROMPT_HOOK_MARKER,
-            // Defense-in-depth for #103: even though `rememora search` falls
-            // back to a literal-token query on FTS5 syntax errors, strip the
-            // word-bounded operators (OR/AND/NOT/NEAR) and structural punct
-            // here too so the search call sees a plain bag of words.
-            command: "bash -c 'p=$(cat 2>/dev/null | python3 -c \"import sys,json,re;d=json.load(sys.stdin);s=d.get(\\\"prompt\\\",\\\"\\\");s=re.sub(r\\\"\\\\b(OR|AND|NOT|NEAR)\\\\b\\\",\\\" \\\",s);s=re.sub(r\\\"[\\\\\\\"()*?:\\\\-]\\\",\\\" \\\",s);print(re.sub(r\\\"\\\\s+\\\",\\\" \\\",s).strip())\" 2>/dev/null); [ ${#p} -ge 6 ] && rememora search --limit 3 --format context \"$p\" 2>/dev/null || true'",
+            command: "bash ~/.rememora/hooks/prompt-search.sh 2>/dev/null || true",
         },
         HookSpec {
             event: "SessionEnd",
-            marker: "rememora session end-active",
-            command: "rememora session end-active --auto-summary 2>/dev/null || true",
+            marker: REMEMORA_SESSION_END_MARKER,
+            command: "bash ~/.rememora/hooks/session-end.sh 2>/dev/null || true",
         },
         HookSpec {
             event: "Stop",
             marker: REMEMORA_CURATE_MARKER,
-            command: "bash -c '(rememora curate --auto 2>/dev/null || true) &'",
+            command: "bash ~/.rememora/hooks/stop-curate.sh 2>/dev/null || true",
         },
     ]
 }
@@ -78,11 +105,14 @@ fn rememora_hooks() -> &'static [HookSpec] {
 ///
 /// Keep this in sync with the markers used by `rememora_hooks()` plus any
 /// historical command fragments we know we shipped (e.g. `rememora session`).
+/// The `.rememora/hooks/` token catches the new deployed-script form added
+/// in #111.
 const REMEMORA_COMMAND_TOKENS: &[&str] = &[
     "rememora context",
     "rememora search",
     "rememora session",
     "rememora curate",
+    ".rememora/hooks/",
 ];
 
 fn is_rememora_command(cmd: &str) -> bool {
@@ -239,6 +269,53 @@ struct AgentConfig {
 
 fn home() -> PathBuf {
     dirs::home_dir().expect("Could not determine home directory")
+}
+
+/// Directory under which `setup --apply` deploys the bundled plugin hook
+/// scripts. Tracks `REMEMORA_DB` (mirrors `crypto::default_key_file_path`)
+/// so integration tests pointed at a scratch DB do not stomp the user's
+/// real `~/.rememora/hooks/`.
+pub fn default_hooks_dir() -> PathBuf {
+    if let Ok(p) = std::env::var("REMEMORA_DB") {
+        let db = PathBuf::from(p);
+        if let Some(parent) = db.parent() {
+            return parent.join("hooks");
+        }
+    }
+    home().join(".rememora").join("hooks")
+}
+
+/// Write every bundled plugin hook script to `dir/<name>.sh` with mode 0755.
+/// Overwrites existing files so the deployed copy stays in lockstep with the
+/// CLI binary on every `setup --apply` (issue #111).
+fn deploy_hook_scripts(dir: &std::path::Path) -> Result<()> {
+    std::fs::create_dir_all(dir)
+        .with_context(|| format!("Failed to create hooks dir {}", dir.display()))?;
+    for (name, body) in BUNDLED_HOOK_SCRIPTS {
+        let target = dir.join(name);
+        std::fs::write(&target, body)
+            .with_context(|| format!("Failed to write {}", target.display()))?;
+        set_executable(&target).with_context(|| {
+            format!("Failed to set 0755 perms on {}", target.display())
+        })?;
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn set_executable(path: &std::path::Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let mut perms = std::fs::metadata(path)?.permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(path, perms)?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn set_executable(_path: &std::path::Path) -> Result<()> {
+    // Non-Unix: shells launched from Claude Code on Windows run via WSL/bash
+    // anyway; the executable bit is irrelevant to `bash <path>`.
+    Ok(())
 }
 
 fn detect_agents() -> Vec<AgentConfig> {
@@ -550,6 +627,18 @@ pub fn run(apply: bool) -> Result<()> {
         return Ok(());
     }
 
+    // Deploy bundled plugin hook scripts to `~/.rememora/hooks/` BEFORE we
+    // mutate any agent's settings.json, so that the moment the new inline
+    // commands point at those scripts, the scripts are already in place
+    // (issue #111). Idempotent — overwrites the existing files so the
+    // scripts upgrade in lockstep with the CLI binary.
+    let hooks_dir = default_hooks_dir();
+    deploy_hook_scripts(&hooks_dir)?;
+    cliclack::log::success(format!(
+        "Deployed hook scripts to {}",
+        tilde_path(&hooks_dir),
+    ))?;
+
     // Apply changes
     for (agent, action) in &actions {
         let (needs_instructions, needs_hooks) = match action {
@@ -640,14 +729,17 @@ fn setup_encryption() -> Result<()> {
 
     match rememora::crypto::persist_key(&key)? {
         rememora::crypto::KeyStorageOutcome::Keychain => {
-            cliclack::log::success("Encryption: key generated and stored in OS keychain")?;
+            // Round-trip readback already verified the value persisted
+            // (issue #109). Safe to claim keychain success.
+            cliclack::log::success("Encryption key stored in OS keychain")?;
         }
-        rememora::crypto::KeyStorageOutcome::File { path, keychain_error } => {
+        rememora::crypto::KeyStorageOutcome::File { path, keychain_error: _ } => {
             // Surface the trade-off explicitly — the file fallback is fine for
             // CI / Docker / vanilla Linux but is weaker than a keychain entry.
+            // The exact `keychain_error` is intentionally elided from the
+            // user-facing message; it stays in code paths/logs for debugging.
             cliclack::log::warning(format!(
-                "Encryption: keychain unavailable ({keychain_error}).\n\
-                 Key written to {} (mode 600).\n\
+                "Encryption: keychain unavailable. Key written to {} (mode 600).\n\
                  For stronger protection, install libsecret-1-0 (or equivalent)\n\
                  and re-run `rememora setup`.",
                 tilde_path(&path),
@@ -989,5 +1081,105 @@ mod tests {
                 .unwrap_or(false)
         });
         assert!(preserved, "user-managed non-rememora hook was clobbered");
+    }
+
+    /// Issue #111: bundled plugin scripts must land on disk under the hooks
+    /// dir with mode 0755 and contain the recursion-gate telemetry calls
+    /// (`rememora debug record-hook-event`) that populate `hook_invocations`.
+    /// Without this, Homebrew/cargo installs get zero observability — the
+    /// inline `(rememora curate --auto) &` form never emitted hook events.
+    #[test]
+    fn deploy_hook_scripts_writes_executable_files_with_telemetry() {
+        let dir = tempfile::tempdir().unwrap();
+        deploy_hook_scripts(dir.path()).expect("deploy_hook_scripts");
+
+        let expected = [
+            "session-start.sh",
+            "session-end.sh",
+            "stop-curate.sh",
+            "prompt-search.sh",
+        ];
+        for name in expected {
+            let p = dir.path().join(name);
+            assert!(p.exists(), "{} must be deployed", name);
+
+            // Mode 0755 on Unix.
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mode = std::fs::metadata(&p).unwrap().permissions().mode() & 0o777;
+                assert_eq!(mode, 0o755, "{} must be 0755, got 0o{:o}", name, mode);
+            }
+
+            // Sanity: file is non-empty and has a bash shebang.
+            let body = std::fs::read_to_string(&p).unwrap();
+            assert!(
+                body.starts_with("#!/usr/bin/env bash"),
+                "{} missing bash shebang",
+                name,
+            );
+        }
+
+        // The Stop-hook recursion gate is the entire reason #111 exists:
+        // verify the deployed copy still contains the `record-hook-event`
+        // telemetry call so `hook_invocations` will populate when it runs.
+        let stop_curate = std::fs::read_to_string(dir.path().join("stop-curate.sh")).unwrap();
+        assert!(
+            stop_curate.contains("rememora debug record-hook-event"),
+            "stop-curate.sh must call `rememora debug record-hook-event` so \
+             hook_invocations populates for Homebrew/cargo installs (#111)",
+        );
+    }
+
+    /// `deploy_hook_scripts` must be idempotent — running it twice is a
+    /// no-error overwrite (the issue spec calls for re-deploy on every
+    /// `setup --apply` so scripts upgrade in lockstep with the CLI binary).
+    #[test]
+    fn deploy_hook_scripts_is_idempotent() {
+        let dir = tempfile::tempdir().unwrap();
+        deploy_hook_scripts(dir.path()).expect("first deploy");
+        // Tamper with one script to simulate a stale version on disk.
+        let stop = dir.path().join("stop-curate.sh");
+        std::fs::write(&stop, "#!/usr/bin/env bash\n# stale\n").unwrap();
+        // Second deploy must overwrite it.
+        deploy_hook_scripts(dir.path()).expect("second deploy");
+        let body = std::fs::read_to_string(&stop).unwrap();
+        assert!(
+            body.contains("rememora debug record-hook-event"),
+            "second deploy did not overwrite stale stop-curate.sh",
+        );
+    }
+
+    /// Issue #111: settings.json's inline commands must reference the
+    /// deployed-script paths under `~/.rememora/hooks/`. Without this, the
+    /// `_emit` recursion-gate telemetry inside the scripts never runs and
+    /// `hook_invocations` stays empty for CLI installs.
+    #[test]
+    fn write_hooks_references_deployed_script_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        write_hooks(&path).unwrap();
+
+        let parsed: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let hooks = parsed.get("hooks").and_then(|v| v.as_object()).unwrap();
+
+        let cases = [
+            ("SessionStart", "~/.rememora/hooks/session-start.sh"),
+            ("SessionEnd", "~/.rememora/hooks/session-end.sh"),
+            ("Stop", "~/.rememora/hooks/stop-curate.sh"),
+            ("UserPromptSubmit", "~/.rememora/hooks/prompt-search.sh"),
+        ];
+        for (event, expected_path) in cases {
+            let arr = hooks.get(event).and_then(|v| v.as_array()).unwrap();
+            let cmds = collect_envelope_commands(arr);
+            assert!(
+                cmds.iter().any(|c| c.contains(expected_path)),
+                "{} command must reference {} (got: {:?})",
+                event,
+                expected_path,
+                cmds,
+            );
+        }
     }
 }

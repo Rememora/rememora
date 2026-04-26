@@ -21,6 +21,18 @@ if [[ -f "${SRC_KEY}" ]]; then
     install -m 0644 -o root -g root "${SRC_KEY}" "${DST_KEY}"
 fi
 
+# Issue #110: silence "Claude configuration file not found at: ~/.claude.json"
+# noise that `claude -p` prints 3+ times before responding inside the sandbox.
+# Cosmetic but loud. Seed an empty JSON object owned by the tester user. If
+# the user later runs `/login` and Claude Code populates the real file, this
+# placeholder is overwritten on first real write — idempotent.
+CLAUDE_CONFIG="/home/tester/.claude.json"
+if [[ ! -f "${CLAUDE_CONFIG}" ]]; then
+    echo '{}' > "${CLAUDE_CONFIG}"
+    chown tester:tester "${CLAUDE_CONFIG}"
+    chmod 0644 "${CLAUDE_CONFIG}"
+fi
+
 # Start a detached tmux session as the tester user. Idempotent: re-running
 # is a no-op if the session already exists.
 sudo -u tester -H bash -c '

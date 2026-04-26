@@ -49,9 +49,73 @@ pub enum KeyStorageOutcome {
 /// last line of defence — if it cannot be written, the caller MUST treat
 /// setup as failed and not pretend success (issue #100).
 pub fn persist_key(key: &str) -> Result<KeyStorageOutcome> {
+    persist_key_with(key, keychain_set, keychain_get)
+}
+
+/// Round-trip readback verification for keychain persistence (issue #109).
+///
+/// On Debian-slim and other Linuxes without `libsecret-1-0` / `secret-tool`,
+/// the `keyring` crate's mock backend has been observed to return `Ok(())`
+/// from `set_password` while the value is never actually persisted. Trusting
+/// that silent success leaves the user with an "encryption configured" log
+/// line, no keychain entry, and no file fallback — every later call then
+/// fails to find the key.
+///
+/// The cure is to read the key back immediately after writing it. If the
+/// readback returns `None`, an empty string, or a different value than the
+/// one we just wrote, we treat the keychain as unavailable and fall through
+/// to the file fallback. The `REMEMORA_TEST_NO_KEYCHAIN=1` env var continues
+/// to short-circuit straight to the file path for tests that don't want to
+/// touch the host keychain at all.
+///
+/// `setter` and `getter` are injected so unit tests can exercise the
+/// silent-success failure mode without needing a real keychain.
+fn persist_key_with(
+    key: &str,
+    setter: fn(&str) -> Result<()>,
+    getter: fn() -> Result<Option<String>>,
+) -> Result<KeyStorageOutcome> {
     if std::env::var("REMEMORA_TEST_NO_KEYCHAIN").ok().as_deref() != Some("1") {
-        match keychain_set(key) {
-            Ok(()) => return Ok(KeyStorageOutcome::Keychain),
+        match setter(key) {
+            Ok(()) => match getter() {
+                // Round-trip succeeded — value matches what we wrote.
+                Ok(Some(stored)) if stored == key => return Ok(KeyStorageOutcome::Keychain),
+                // Silent-success path (issue #109): set returned Ok but the
+                // backend either dropped the value (None / empty) or stored
+                // something different. Treat as keychain-unavailable and
+                // fall through to the file tier.
+                Ok(other) => {
+                    let detail = match other {
+                        Some(s) if s.is_empty() => {
+                            "keychain readback returned empty value".to_string()
+                        }
+                        Some(_) => "keychain readback returned a different value".to_string(),
+                        None => "keychain readback returned no entry".to_string(),
+                    };
+                    let path = default_key_file_path();
+                    write_key_file(&path, key).with_context(|| {
+                        format!(
+                            "{detail} and file fallback at {} also failed",
+                            path.display(),
+                        )
+                    })?;
+                    return Ok(KeyStorageOutcome::File {
+                        path,
+                        keychain_error: detail,
+                    });
+                }
+                Err(e) => {
+                    let detail = format!("keychain readback failed: {e:#}");
+                    let path = default_key_file_path();
+                    write_key_file(&path, key).with_context(|| {
+                        format!("{detail} and file fallback at {} also failed", path.display())
+                    })?;
+                    return Ok(KeyStorageOutcome::File {
+                        path,
+                        keychain_error: detail,
+                    });
+                }
+            },
             Err(e) => {
                 let kc_err = format!("{e:#}");
                 let path = default_key_file_path();
@@ -323,6 +387,104 @@ mod tests {
         }
 
         assert_eq!(resolved.as_deref(), Some("file-key-sentinel-for-tests"));
+    }
+
+    /// Issue #109 silent-success regression guard: when the keychain `set`
+    /// returns Ok but the readback returns `None` (the failure mode observed
+    /// on Debian-slim without libsecret), `persist_key_with` must fall back
+    /// to writing the key file rather than reporting Keychain success.
+    #[test]
+    fn persist_key_with_falls_back_when_readback_returns_none() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db_path = dir.path().join("rememora.db");
+        let prev_no_kc = std::env::var("REMEMORA_TEST_NO_KEYCHAIN").ok();
+        let prev_db = std::env::var("REMEMORA_DB").ok();
+        std::env::remove_var("REMEMORA_TEST_NO_KEYCHAIN");
+        std::env::set_var("REMEMORA_DB", &db_path);
+
+        // Setter "succeeds" but getter sees no entry — exactly the silent
+        // success the keyring crate exhibits on Linux without libsecret.
+        fn fake_set_ok(_k: &str) -> Result<()> { Ok(()) }
+        fn fake_get_none() -> Result<Option<String>> { Ok(None) }
+
+        let outcome = persist_key_with("rt-test-key", fake_set_ok, fake_get_none)
+            .expect("persist_key_with should not error when fallback succeeds");
+
+        // Restore env before assertions so failures don't leak to siblings.
+        match prev_no_kc {
+            Some(v) => std::env::set_var("REMEMORA_TEST_NO_KEYCHAIN", v),
+            None => std::env::remove_var("REMEMORA_TEST_NO_KEYCHAIN"),
+        }
+        match prev_db {
+            Some(v) => std::env::set_var("REMEMORA_DB", v),
+            None => std::env::remove_var("REMEMORA_DB"),
+        }
+
+        match outcome {
+            KeyStorageOutcome::File { path, keychain_error } => {
+                assert!(
+                    path.starts_with(dir.path()),
+                    "fallback wrote outside scratch dir: {}",
+                    path.display(),
+                );
+                assert!(path.exists(), "fallback file must exist on disk");
+                assert!(
+                    keychain_error.contains("readback") || keychain_error.contains("no entry"),
+                    "keychain_error should describe readback failure, got: {keychain_error}",
+                );
+            }
+            KeyStorageOutcome::Keychain => {
+                panic!("must not report Keychain success when readback returns None");
+            }
+        }
+    }
+
+    /// Round-trip success path: setter writes the key, getter returns it
+    /// unchanged. `persist_key_with` must report `Keychain` and not write
+    /// any file fallback.
+    #[test]
+    fn persist_key_with_uses_keychain_when_readback_matches() {
+        use std::sync::Mutex;
+        static SLOT: Mutex<Option<String>> = Mutex::new(None);
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db_path = dir.path().join("rememora.db");
+        let prev_no_kc = std::env::var("REMEMORA_TEST_NO_KEYCHAIN").ok();
+        let prev_db = std::env::var("REMEMORA_DB").ok();
+        std::env::remove_var("REMEMORA_TEST_NO_KEYCHAIN");
+        std::env::set_var("REMEMORA_DB", &db_path);
+
+        fn fake_set(k: &str) -> Result<()> {
+            *SLOT.lock().unwrap() = Some(k.to_string());
+            Ok(())
+        }
+        fn fake_get() -> Result<Option<String>> {
+            Ok(SLOT.lock().unwrap().clone())
+        }
+
+        let outcome = persist_key_with("happy-path-key", fake_set, fake_get)
+            .expect("persist_key_with on success path");
+
+        // Restore env first.
+        match prev_no_kc {
+            Some(v) => std::env::set_var("REMEMORA_TEST_NO_KEYCHAIN", v),
+            None => std::env::remove_var("REMEMORA_TEST_NO_KEYCHAIN"),
+        }
+        match prev_db {
+            Some(v) => std::env::set_var("REMEMORA_DB", v),
+            None => std::env::remove_var("REMEMORA_DB"),
+        }
+
+        assert!(
+            matches!(outcome, KeyStorageOutcome::Keychain),
+            "should report Keychain when readback matches",
+        );
+        // No file should have been written next to the scratch DB.
+        let key_file = dir.path().join("key");
+        assert!(
+            !key_file.exists(),
+            "must not write file fallback when keychain round-trip succeeds",
+        );
     }
 
     /// `default_key_file_path` must place the key file next to the DB when
