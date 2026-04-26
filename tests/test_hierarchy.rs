@@ -82,3 +82,93 @@ fn test_empty_project_assembly() {
 
     assert!(md.contains("No memories or sessions found"));
 }
+
+// Issue #104: when no project is detected (cwd is not inside a registered
+// project), Global mode used to filter to project=None and show an empty
+// memory map. The fix: aggregate across every project in the DB.
+#[test]
+fn test_global_mode_aggregates_across_projects() {
+    use rememora::models::context::{self, InsertContext};
+    use rememora::models::project;
+
+    let conn = common::create_test_db();
+
+    // Two projects, two memories each.
+    project::add(&conn, "alpha", Some("/tmp/alpha"), "Alpha project", &[]).unwrap();
+    project::add(&conn, "beta", Some("/tmp/beta"), "Beta project", &[]).unwrap();
+
+    for (proj, mems) in [
+        ("alpha", &["alpha decision one", "alpha pattern two"][..]),
+        ("beta", &["beta decision one", "beta pattern two"][..]),
+    ] {
+        for (i, name) in mems.iter().enumerate() {
+            let category = if i % 2 == 0 { "decision" } else { "pattern" };
+            context::insert(
+                &conn,
+                &InsertContext {
+                    uri: format!(
+                        "rememora://projects/{proj}/memories/{category}/m{i}-{}",
+                        slug::slugify(name)
+                    ),
+                    parent_uri: Some(format!(
+                        "rememora://projects/{proj}/memories/{category}"
+                    )),
+                    context_type: "memory".to_string(),
+                    category: Some(category.to_string()),
+                    name: name.to_string(),
+                    abstract_text: format!("abs: {name}"),
+                    overview: format!("ov: {name}"),
+                    content: format!("body: {name}"),
+                    tags: "[]".to_string(),
+                    source_agent: Some("claude-code".to_string()),
+                    source_session: None,
+                    importance: 0.5,
+                },
+            )
+            .unwrap();
+        }
+    }
+
+    // Assemble in Global mode.
+    let assembly = hierarchy::assemble(&conn, None).unwrap();
+
+    // Then: at least 4 entries surface (all memory rows from both projects),
+    // covering both project URIs.
+    assert!(
+        assembly.l0_abstracts.len() >= 4,
+        "expected aggregated view across projects, got {} entries",
+        assembly.l0_abstracts.len()
+    );
+
+    let uris: Vec<&str> = assembly
+        .l0_abstracts
+        .iter()
+        .map(|s| s.context.uri.as_str())
+        .collect();
+    assert!(uris.iter().any(|u| u.contains("alpha")), "missing alpha");
+    assert!(uris.iter().any(|u| u.contains("beta")), "missing beta");
+
+    // The rendered markdown should tag each entry with its project so the
+    // user can tell which workspace it came from.
+    let md = rememora::format::context_to_markdown(&assembly);
+    assert!(
+        md.contains("[alpha]"),
+        "Global L0 should prefix entries with project name; got:\n{md}"
+    );
+    assert!(md.contains("[beta]"));
+    // And it must not claim the DB is empty.
+    assert!(!md.contains("No memories"));
+}
+
+// Issue #104: when the DB really is empty, Global mode should still produce a
+// distinct, accurate empty-state message.
+#[test]
+fn test_global_mode_empty_db_message() {
+    let conn = common::create_test_db();
+    let assembly = hierarchy::assemble(&conn, None).unwrap();
+    let md = rememora::format::context_to_markdown(&assembly);
+    assert!(
+        md.contains("No memories found in the database"),
+        "expected accurate Global empty-state, got:\n{md}"
+    );
+}
