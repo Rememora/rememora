@@ -4,6 +4,20 @@ All notable changes to Rememora will be documented in this file.
 
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.1] — 2026-04-26
+
+Patch release. Surfaced by running `claude plugin validate plugin/` end-to-end as part of the marketplace-install acceptance test that 1.4.0 had skipped.
+
+### Fixed
+
+- **`rememora-init` skill frontmatter parse failure** (#124). `argument-hint: [save|search|status] [text]` put YAML in flow-sequence mode where `|` is a reserved block-scalar marker, so the entire frontmatter block was discarded by Claude Code's plugin loader at install time. The `/rememora` slash command shipped in 1.4.0 with empty metadata. Quoting the value as a plain string scalar fixes the parse.
+
+### Removed
+
+- **Unrecognized `requirements` key** in `plugin/.claude-plugin/plugin.json` (#124). Claude Code's plugin schema doesn't include a `requirements` field; the `binaries: ["rememora"]` declaration was silently ignored. The Setup hook in `setup-check.sh` already covers the same intent (verify `rememora` is on PATH; surface an install hint if not).
+
+[1.4.1]: https://github.com/Rememora/rememora/compare/v1.4.0...v1.4.1
+
 ## [1.4.0] — 2026-04-26
 
 This release makes the autonomous memory pipeline actually work end-to-end on modern Claude Code. The Stop-hook curator was silently inert in 1.2.x for most users — every curator-spawned `claude -p` call bailed before the LLM's answer was parsed, so the plugin chain "looked busy" but no memories were ever saved. 1.4.0 closes the entire loop: capture, dedup, and recall all verified in a Docker sandbox against the real Claude Code CLI.

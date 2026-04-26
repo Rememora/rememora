@@ -1,7 +1,7 @@
 ---
 name: rememora
 description: Manage rememora persistent memory — save knowledge, search prior context, or check status.
-argument-hint: [save|search|status] [text]
+argument-hint: "[save|search|status] [text]"
 allowed-tools: Bash
 ---
 
