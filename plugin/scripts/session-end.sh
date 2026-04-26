@@ -46,21 +46,33 @@ if [ -n "$CWD" ] && [ -n "$SESSION_ID" ]; then
   PROJECT=$(basename "$CWD")
 
   if [ -f "$JSONL_PATH" ]; then
-    # Fully detach the final-pass curate. Plain `&` backgrounds scheduling
-    # but does NOT close inherited file descriptors — a curate subprocess
-    # that lingers past SessionEnd could keep the hook's pipe write-end
-    # open and cause the same FD-leak blocking we fixed in stop-curate.sh.
-    # Apply the same setsid (Linux) / nohup + disown (macOS) detachment and
-    # redirect all three std streams on the outer launch.
-    if command -v setsid >/dev/null 2>&1; then
-      setsid bash -c '
-        rememora curate --file "$1" --project "$2" >/dev/null 2>&1 || true
-      ' _ "$JSONL_PATH" "$PROJECT" </dev/null >/dev/null 2>&1 &
+    # Cross-hook concurrency gate (issue #121). In `claude -p` Stop and
+    # SessionEnd fire back-to-back; both used to spawn curate on the same
+    # transcript, two AUDN agents searched in parallel before either's saves
+    # had committed, and we ended up with near-duplicate memories. Skip the
+    # tail-pass when Stop's curate is still running on this same JSONL —
+    # the in-flight curate already owns the work. The check is best-effort:
+    # `pgrep` may miss a curate that's just spawning, but the worst case is
+    # the same race we had before, just on a much narrower window.
+    if pgrep -f "rememora curate --file ${JSONL_PATH}" >/dev/null 2>&1; then
+      :  # Stop hook's curate is in flight; skip the tail-pass.
     else
-      nohup bash -c '
-        rememora curate --file "$1" --project "$2" >/dev/null 2>&1 || true
-      ' _ "$JSONL_PATH" "$PROJECT" </dev/null >/dev/null 2>&1 &
-      disown
+      # Fully detach the final-pass curate. Plain `&` backgrounds scheduling
+      # but does NOT close inherited file descriptors — a curate subprocess
+      # that lingers past SessionEnd could keep the hook's pipe write-end
+      # open and cause the same FD-leak blocking we fixed in stop-curate.sh.
+      # Apply the same setsid (Linux) / nohup + disown (macOS) detachment and
+      # redirect all three std streams on the outer launch.
+      if command -v setsid >/dev/null 2>&1; then
+        setsid bash -c '
+          rememora curate --file "$1" --project "$2" >/dev/null 2>&1 || true
+        ' _ "$JSONL_PATH" "$PROJECT" </dev/null >/dev/null 2>&1 &
+      else
+        nohup bash -c '
+          rememora curate --file "$1" --project "$2" >/dev/null 2>&1 || true
+        ' _ "$JSONL_PATH" "$PROJECT" </dev/null >/dev/null 2>&1 &
+        disown
+      fi
     fi
   fi
 
