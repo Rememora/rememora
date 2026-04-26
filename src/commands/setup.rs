@@ -621,6 +621,7 @@ pub fn run(apply: bool) -> Result<()> {
     }
 
     if pending.is_empty() {
+        maybe_print_update_hint();
         cliclack::outro("All agents already configured.")?;
         return Ok(());
     }
@@ -692,9 +693,24 @@ pub fn run(apply: bool) -> Result<()> {
         }
     }
 
+    maybe_print_update_hint();
     cliclack::outro("All agents configured.")?;
 
     Ok(())
+}
+
+/// Best-effort check for a newer release on GitHub. Honours
+/// `REMEMORA_NO_UPDATE_CHECK=1`, uses the 24h cache, and silently swallows
+/// every failure mode (offline, parse error, rate-limited). The point is to
+/// never block setup on this — print a hint when we have one, otherwise
+/// the user sees nothing different.
+fn maybe_print_update_hint() {
+    let advice = match rememora::update_check::check(false) {
+        Ok(Some(a)) => a,
+        Ok(None) => return,
+        Err(_) => return,
+    };
+    let _ = cliclack::log::info(advice.render_hint());
 }
 
 fn setup_encryption() -> Result<()> {

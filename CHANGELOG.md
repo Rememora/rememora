@@ -4,6 +4,15 @@ All notable changes to Rememora will be documented in this file.
 
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] — 2026-04-26
+
+### Added
+
+- **`rememora update [--check]`** — best-effort check against GitHub Releases for a newer rememora. Detects the install method from the running binary's path (Homebrew / `cargo install` / unknown) and prints a hint with the right upgrade command. Caches the API result for 24h at `~/.rememora/.update-check`. Set `REMEMORA_NO_UPDATE_CHECK=1` to disable. Bare `rememora update` always hits the network; `--check` respects the cache (use this from scripts/hooks). The marketplace plugin lives on its own lineage and updates via `claude plugin update rememora@rememora`.
+- **Opportunistic notification in `rememora setup --apply`** — if the cache shows a newer release, the upgrade hint is shown inline before the outro. Failures are silent (offline, parse error, rate-limited).
+
+[1.5.0]: https://github.com/Rememora/rememora/compare/v1.4.1...v1.5.0
+
 ## [1.4.1] — 2026-04-26
 
 Patch release. Surfaced by running `claude plugin validate plugin/` end-to-end as part of the marketplace-install acceptance test that 1.4.0 had skipped.

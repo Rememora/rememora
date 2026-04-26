@@ -377,6 +377,17 @@ enum Commands {
     /// Show system status
     Status,
 
+    /// Check whether a newer rememora release is available on GitHub.
+    /// Prints an upgrade hint matched to your install method (Homebrew /
+    /// cargo / manual). Never auto-executes the upgrade. Set
+    /// `REMEMORA_NO_UPDATE_CHECK=1` to disable entirely.
+    Update {
+        /// Respect the 24h cache (use this from scripts / hooks). Without
+        /// it, every invocation hits the GitHub Releases API.
+        #[arg(long)]
+        check: bool,
+    },
+
     /// Export memories
     Export {
         /// Filter by project
@@ -609,6 +620,7 @@ fn main() -> Result<()> {
         Commands::Encrypt => return commands::encrypt::run_encrypt(&db_path),
         Commands::Decrypt => return commands::encrypt::run_decrypt(&db_path),
         Commands::Desktop => return commands::desktop::run(),
+        Commands::Update { check } => return commands::update::run(*check, cli.json),
         _ => {}
     }
 
@@ -910,7 +922,7 @@ fn main() -> Result<()> {
             cli.json,
         ),
 
-        Commands::Encrypt | Commands::Decrypt | Commands::Desktop => unreachable!("handled above"),
+        Commands::Encrypt | Commands::Decrypt | Commands::Desktop | Commands::Update { .. } => unreachable!("handled above"),
 
         Commands::Tui => commands::tui::run(&conn),
 

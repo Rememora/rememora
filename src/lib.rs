@@ -12,4 +12,5 @@ pub mod models;
 pub mod propagate;
 pub mod search;
 pub mod timeline;
+pub mod update_check;
 pub mod uri;

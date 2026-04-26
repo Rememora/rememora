@@ -22,5 +22,6 @@ pub mod supersede;
 pub mod telemetry;
 pub mod timeline;
 pub mod tui;
+pub mod update;
 pub mod usage;
 pub mod watch_transcript;
