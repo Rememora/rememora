@@ -57,7 +57,7 @@
     <div class="hero-content">
       <div class="hero-badge">
         <span class="dot"></span>
-        v0.3.0 &mdash; Hierarchical search, plugin install, desktop app
+        v1.5.0 &mdash; Autonomous memory pipeline, marketplace install, update notifications
       </div>
 
       <h1>
@@ -672,40 +672,50 @@
       <div class="reveal" style="max-width: 700px; margin: 0 auto; text-align: left;">
         <div class="glass-card" style="margin-bottom: 16px;">
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-            <h3 style="margin: 0;">v0.3.0</h3>
-            <span style="color: var(--text-muted); font-size: 0.8rem;">April 2026</span>
+            <h3 style="margin: 0;">v1.5.0</h3>
+            <span style="color: var(--text-muted); font-size: 0.8rem;">April 26, 2026</span>
           </div>
           <ul style="margin: 0; padding-left: 20px; line-height: 1.8;">
-            <li><strong>Hierarchical score propagation</strong> &mdash; search boosts related memories via URI tree</li>
-            <li><strong>Claude Code plugin install</strong> &mdash; <code>/plugin install rememora@rememora</code></li>
-            <li><strong>Desktop app</strong> &mdash; Tauri v2 with dashboard, browser, and search</li>
-            <li><strong>Landing page &amp; docs site</strong> &mdash; GitHub Pages with full documentation</li>
+            <li><strong><code>rememora update [--check]</code></strong> &mdash; passive GitHub Releases check; prints upgrade hint matched to your install method (brew / cargo / unknown)</li>
+            <li><strong>Inline upgrade hint in <code>setup --apply</code></strong> &mdash; opportunistic, silent on failure</li>
+            <li><strong>24h cache + opt-out env</strong> &mdash; <code>REMEMORA_NO_UPDATE_CHECK=1</code> for sandboxes</li>
           </ul>
         </div>
 
         <div class="glass-card" style="margin-bottom: 16px;">
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-            <h3 style="margin: 0;">v0.2.0</h3>
-            <span style="color: var(--text-muted); font-size: 0.8rem;">April 2026</span>
+            <h3 style="margin: 0;">v1.4.1</h3>
+            <span style="color: var(--text-muted); font-size: 0.8rem;">April 26, 2026</span>
           </div>
           <ul style="margin: 0; padding-left: 20px; line-height: 1.8;">
-            <li><strong>SQLCipher encryption at rest</strong> &mdash; keychain integration</li>
-            <li><strong>TUI dashboard</strong> &mdash; interactive terminal browser (ratatui)</li>
-            <li><strong>BDD-style tests</strong> &mdash; Given-When-Then test structure</li>
-            <li><strong>Autonomous curation</strong> &mdash; LLM-powered memory extraction from session transcripts</li>
+            <li><strong>Skill frontmatter fix</strong> &mdash; <code>/rememora</code> slash command was silently broken in 1.4.0 (YAML flow-sequence issue with <code>argument-hint: [save|search|status]</code>); now parses cleanly</li>
+            <li><strong>Plugin manifest cleanup</strong> &mdash; dropped unrecognized <code>requirements</code> key</li>
+          </ul>
+        </div>
+
+        <div class="glass-card" style="margin-bottom: 16px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+            <h3 style="margin: 0;">v1.4.0</h3>
+            <span style="color: var(--text-muted); font-size: 0.8rem;">April 26, 2026</span>
+          </div>
+          <ul style="margin: 0; padding-left: 20px; line-height: 1.8;">
+            <li><strong>Autonomous memory pipeline now actually works</strong> &mdash; 1.2.x had Stop-hook curator silently inert because the parser required an array but modern <code>claude -p --output-format json</code> returns a single object. Stop hook fired, processes spawned, no memories ever landed. Closes the loop end-to-end.</li>
+            <li><strong>14 bugs fixed across setup, hook lifecycle, and concurrency</strong> &mdash; verified across 12 Docker sandbox iterations</li>
+            <li><strong>Curator child session 28x explosion</strong> fixed (<code>REMEMORA_CURATE_CHILD</code> gate now applies to all 4 hooks)</li>
+            <li><strong>SessionEnd tail-pass dedup</strong> &mdash; Stop and SessionEnd no longer race on the same transcript (~50% cost reduction)</li>
           </ul>
         </div>
 
         <div class="glass-card">
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-            <h3 style="margin: 0;">v0.1.0</h3>
-            <span style="color: var(--text-muted); font-size: 0.8rem;">March 2026</span>
+            <h3 style="margin: 0;">Earlier releases</h3>
+            <span style="color: var(--text-muted); font-size: 0.8rem;">March &ndash; April 2026</span>
           </div>
           <ul style="margin: 0; padding-left: 20px; line-height: 1.8;">
-            <li><strong>Core CLI</strong> &mdash; save, search, context, sessions, projects</li>
-            <li><strong>BM25 search</strong> &mdash; FTS5 full-text search, zero dependencies</li>
-            <li><strong>Vector search</strong> &mdash; optional cosine similarity via sqlite-vec + Candle</li>
-            <li><strong>Agent orchestration</strong> &mdash; agent-run, agent-loop, GitHub project board integration</li>
+            <li><strong>v1.2.x</strong> &mdash; SQLCipher encryption at rest, keychain integration, plugin install via marketplace</li>
+            <li><strong>v0.3.x</strong> &mdash; hierarchical score propagation, desktop app (Tauri v2), landing page</li>
+            <li><strong>v0.2.x</strong> &mdash; TUI dashboard, autonomous curation v1, BDD-style tests</li>
+            <li><strong>v0.1.x</strong> &mdash; core CLI (save/search/context/sessions/projects), BM25 + optional vector search, agent orchestration</li>
           </ul>
         </div>
 
