@@ -52,6 +52,8 @@ export interface ExperimentCondition {
   categoriesEnabled?: string[];
   /** Whether the KB is pre-seeded with context before the first task. */
   preIndexed?: boolean;
+  /** Whether to wipe the DB before each task (control condition for A/B). */
+  resetDbBetweenTasks?: boolean;
   /** Which CLI agent to use. */
   agent: string;
 }
@@ -105,6 +107,8 @@ export interface LongRunEvalRow {
     raw_output?: string;
     /** Contexts found in DB after this task (ground truth, not parsed). */
     db_new_contexts?: Array<{ category: string | null; name: string; abstract: string }>;
+    /** LLM judge reasoning (when available). */
+    judge_reasoning?: string;
   };
   expected: {
     ground_truth?: string;
