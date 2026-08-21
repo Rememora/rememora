@@ -264,15 +264,22 @@ Auto-detects Claude Code, Codex, and Gemini CLI, then patches their config files
 
 ## Desktop App
 
-A native desktop app built with Tauri for browsing memories visually.
-
-![Rememora Desktop Dashboard](docs/img/desktop-dashboard.png)
+A native macOS app built with Tauri that renders your local memory database.
+v0 is deliberately minimal: it opens the encrypted DB **read-only**, never
+prompts for the key, and renders every non-superseded context newest-first,
+paginated. No editing, no search, no charts yet — see
+[`docs/spikes/83-desktop-viewer.md`](docs/spikes/83-desktop-viewer.md) for the
+longer-term design.
 
 ```bash
-cd desktop
+cd app
 pnpm install
-cargo tauri dev
+pnpm tauri dev      # dev loop
+pnpm tauri build    # unsigned .app + .dmg
 ```
+
+Requires Rust (stable), Node 22+, pnpm 9+, and Xcode Command Line Tools. If the
+app reports "Encryption key not available", run `rememora init` first.
 
 ## Commands
 
