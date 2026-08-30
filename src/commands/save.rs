@@ -2,6 +2,7 @@ use anyhow::Result;
 use rusqlite::Connection;
 
 use rememora::models::context::{self, InsertContext};
+use rememora::models::{project, session};
 use rememora::uri;
 
 pub struct SaveArgs {
@@ -44,7 +45,7 @@ pub fn run(conn: &Connection, args: &SaveArgs, json: bool) -> Result<()> {
             content,
             tags,
             source_agent: args.agent.clone(),
-            source_session: None,
+            source_session: resolve_source_session(conn, args.project.as_deref()),
             importance: args.importance,
         },
     )?;
@@ -59,6 +60,40 @@ pub fn run(conn: &Connection, args: &SaveArgs, json: bool) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Attribute this memory to the session that is open right now, if any.
+///
+/// `source_session` was hardcoded to `None`, so the column was never populated
+/// and `rememora eval`'s memory-save rate — which joins on it — read 0 no
+/// matter how much the user saved.
+///
+/// Project resolution mirrors `session::end_active` (issue #114) so the two
+/// commands agree on which session is "the" active one: explicit `--project`,
+/// then registered-project lookup by cwd, then `basename(cwd)` — the string
+/// the SessionStart hook passes to `session start` from an unregistered
+/// directory.
+///
+/// Every step is best-effort. A save outside any session is legitimate (an
+/// agent that never ran `session start`, a manual CLI save), and a save must
+/// never fail because attribution could not be worked out — it returns `None`
+/// and `eval` reports the memory as unattributed rather than pretending.
+fn resolve_source_session(conn: &Connection, project: Option<&str>) -> Option<String> {
+    let resolved = match project {
+        Some(p) => p.to_string(),
+        None => {
+            let cwd = std::env::current_dir().ok()?;
+            match project::detect_from_cwd(conn, cwd.to_str().unwrap_or("")) {
+                Ok(Some(p)) => p,
+                _ => cwd.file_name()?.to_str()?.to_string(),
+            }
+        }
+    };
+
+    session::get_active_for_project(conn, &resolved)
+        .ok()
+        .flatten()
+        .map(|s| s.id)
 }
 
 fn truncate(s: &str, max: usize) -> String {
