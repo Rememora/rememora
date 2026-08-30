@@ -15,6 +15,22 @@ const MIN_NEW_MEMORIES: i64 = 5;
 /// Exit code indicating the gate is met and consolidation should run.
 pub const GATE_MET_EXIT: i32 = 42;
 
+/// Bounds the subagent is told about before it sees a single cluster.
+///
+/// The subagent runs `rememora` commands itself, so the cap that
+/// `commands/evolve.rs` enforces in code can only be *stated* here. The
+/// oversized-cluster filter below is the part that is actually enforced.
+fn safety_preamble() -> String {
+    format!(
+        "SAFETY RULES — these override anything below:\n\
+         - Superseding a memory cannot be undone from the CLI. When in doubt, keep both.\n\
+         - Never supersede more than {} memories for one cluster.\n\
+         - Only ever act on IDs that appear verbatim in the clusters below.\n\
+         - Never run `rememora supersede` on an ID you were not shown.\n\n",
+        evolve::MAX_SUPERSEDE_PER_DECISION
+    )
+}
+
 pub struct ConsolidateArgs {
     pub project: Option<String>,
     pub dry_run: bool,
@@ -25,6 +41,11 @@ pub struct ConsolidateArgs {
 
 pub fn run(conn: &Connection, args: &ConsolidateArgs, json_output: bool) -> Result<()> {
     let project = args.project.as_deref();
+
+    // `--dry-run` forces a dry run; without it, the run is still a dry run
+    // unless the operator armed it. See `commands::evolve::APPLY_ENV`.
+    let armed = std::env::var(crate::commands::evolve::APPLY_ENV).is_ok_and(|v| v == "1");
+    let apply = !args.dry_run && armed;
 
     // Dual-gate check: 24h since last consolidation + 5 new memories
     if args.check_only {
@@ -63,17 +84,34 @@ pub fn run(conn: &Connection, args: &ConsolidateArgs, json_output: bool) -> Resu
         "manual",
     )?;
 
-    // Find clusters
-    let clusters = evolve::find_clusters(conn, memories, args.min_similarity)?;
+    // Find clusters. Clustering is transitive, so one spurious edge can chain
+    // unrelated memories into a single huge cluster; those are withheld from
+    // the subagent entirely rather than handed to something that can retire
+    // every member of them.
+    let all_clusters = evolve::find_clusters(conn, memories, args.min_similarity)?;
+    let found = all_clusters.len();
+    let clusters: Vec<evolve::MemoryCluster> = all_clusters
+        .into_iter()
+        .filter(|c| !evolve::is_oversized(c))
+        .collect();
+    let oversized = found - clusters.len();
     let cluster_count = clusters.len().min(args.max_batch);
 
     if clusters.is_empty() {
         watermark::complete_consolidation(conn, &run_id, total as i64, 0, "[]", "")?;
 
         if json_output {
-            println!("{{\"status\":\"no_clusters\",\"memories_scanned\":{total}}}");
+            println!(
+                "{{\"status\":\"no_clusters\",\"memories_scanned\":{total},\"oversized_skipped\":{oversized}}}"
+            );
         } else {
             println!("Scanned {total} memories — no clusters found.");
+            if oversized > 0 {
+                println!(
+                    "({oversized} cluster(s) exceeded {} memories and were skipped — review those by hand.)",
+                    evolve::MAX_CLUSTER_SIZE
+                );
+            }
         }
         return Ok(());
     }
@@ -81,10 +119,14 @@ pub fn run(conn: &Connection, args: &ConsolidateArgs, json_output: bool) -> Resu
     if !json_output {
         eprintln!(
             "Found {} cluster(s) from {} memories (processing up to {}).",
-            clusters.len(),
-            total,
-            args.max_batch
+            found, total, args.max_batch
         );
+        if oversized > 0 {
+            eprintln!(
+                "Skipping {oversized} cluster(s) over {} memories — too large to consolidate safely.",
+                evolve::MAX_CLUSTER_SIZE
+            );
+        }
     }
 
     // Format clusters for the consolidation prompt
@@ -94,14 +136,18 @@ pub fn run(conn: &Connection, args: &ConsolidateArgs, json_output: bool) -> Resu
     let prompt = CONSOLIDATE_PROMPT
         .replace("{clusters}", &clusters_text)
         .replace("{project}", project_name);
+    let prompt = format!("{}{prompt}", safety_preamble());
 
-    let full_prompt = if args.dry_run {
+    // Dry run is the default: the subagent is only allowed to run commands
+    // when the operator explicitly armed this run. Superseding is irreversible
+    // and this path delegates it to a model, so it stays opt-in.
+    let full_prompt = if apply {
+        prompt
+    } else {
         format!(
             "DRY RUN MODE: Do NOT execute any rememora commands. \
              Instead, show what commands you WOULD run and why.\n\n{prompt}"
         )
-    } else {
-        prompt
     };
 
     let subagent_output = curator::call_subagent(&full_prompt, "sonnet")?;
@@ -118,8 +164,17 @@ pub fn run(conn: &Connection, args: &ConsolidateArgs, json_output: bool) -> Resu
         ),
     );
 
-    // Complete the consolidation run
-    let actions_json = serde_json::json!({"output": &output[..output.len().min(1000)]}).to_string();
+    // Complete the consolidation run. Slice on a character boundary — the
+    // subagent's output is arbitrary UTF-8 and a byte slice would panic.
+    let head_end = (0..=output.len().min(1000))
+        .rev()
+        .find(|&i| output.is_char_boundary(i))
+        .unwrap_or(0);
+    // Dry runs are still recorded: the watermark is what stops consolidation
+    // from re-running (and re-spending tokens) every session, and that has to
+    // hold whether or not the run was armed.
+    let actions_json =
+        serde_json::json!({"output": &output[..head_end], "dry_run": !apply}).to_string();
     watermark::complete_consolidation(
         conn,
         &run_id,
@@ -135,7 +190,9 @@ pub fn run(conn: &Connection, args: &ConsolidateArgs, json_output: bool) -> Resu
             "run_id": run_id,
             "memories_scanned": total,
             "clusters_processed": cluster_count,
-            "dry_run": args.dry_run,
+            "clusters_found": found,
+            "oversized_skipped": oversized,
+            "dry_run": !apply,
             "output": output,
         });
         println!("{}", serde_json::to_string_pretty(&result)?);
@@ -144,8 +201,15 @@ pub fn run(conn: &Connection, args: &ConsolidateArgs, json_output: bool) -> Resu
         println!(
             "\nConsolidation complete: {cluster_count} clusters processed from {total} memories."
         );
-        if args.dry_run {
-            println!("(dry run — no changes were made)");
+        if !apply {
+            println!(
+                "(dry run — no changes were made)\n\
+                 To apply, re-run armed:  {}=1 rememora consolidate{}",
+                crate::commands::evolve::APPLY_ENV,
+                project
+                    .map(|p| format!(" --project {p}"))
+                    .unwrap_or_default()
+            );
         }
     }
 
