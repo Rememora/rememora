@@ -45,8 +45,8 @@ pub fn insert(conn: &Connection, ctx: &InsertContext) -> Result<String> {
     let now = chrono::Utc::now().to_rfc3339();
 
     conn.execute(
-        "INSERT INTO contexts (id, uri, parent_uri, context_type, category, name, abstract, overview, content, tags, source_agent, source_session, importance, active_count, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 0, ?14, ?14)",
+        "INSERT INTO contexts (id, uri, parent_uri, context_type, category, name, abstract, overview, content, tags, source_agent, source_session, importance, active_count, created_at, updated_at, last_accessed_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 0, ?14, ?14, ?14)",
         params![
             id,
             ctx.uri,
@@ -150,12 +150,34 @@ pub fn supersede(conn: &Connection, old_id: &str, new_id: &str) -> Result<()> {
     Ok(())
 }
 
+/// Record a retrieval: increment `active_count` and stamp `last_accessed_at`.
+///
+/// Deliberately does **not** touch `updated_at` — that column means "when the
+/// content last changed". Bumping it here made every search result look freshly
+/// written, which inflated the recency term in `hotness.rs` and turned
+/// retrieval into its own ranking evidence.
 pub fn bump_active_count(conn: &Connection, id: &str) -> Result<()> {
     conn.execute(
-        "UPDATE contexts SET active_count = active_count + 1, updated_at = ?1 WHERE id = ?2",
+        "UPDATE contexts SET active_count = active_count + 1, last_accessed_at = ?1 WHERE id = ?2",
         params![chrono::Utc::now().to_rfc3339(), id],
     )?;
     Ok(())
+}
+
+/// When this context was last retrieved, if ever recorded.
+///
+/// Kept off `ContextRecord` for now: that struct is built by literal in several
+/// call sites outside this module, so widening it is a separate change.
+pub fn last_accessed_at(conn: &Connection, id: &str) -> Result<Option<String>> {
+    let result = conn
+        .query_row(
+            "SELECT last_accessed_at FROM contexts WHERE id = ?1",
+            params![id],
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .optional()?;
+
+    Ok(result.flatten())
 }
 
 pub fn list_by_scope(conn: &Connection, context_type: Option<&str>, category: Option<&str>, project: Option<&str>, limit: usize) -> Result<Vec<ContextRecord>> {

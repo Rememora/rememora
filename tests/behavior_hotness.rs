@@ -182,6 +182,137 @@ fn frequently_accessed_memory_outranks_important_but_stale_one() {
 }
 
 // ---------------------------------------------------------------------------
+// Retrieval must not forge the recency signal
+// ---------------------------------------------------------------------------
+
+/// Read the three columns that retrieval is allowed to touch, for a memory
+/// matched by name.
+fn recency_row(conn: &rusqlite::Connection, name_like: &str) -> (String, Option<String>, i64) {
+    conn.query_row(
+        "SELECT updated_at, last_accessed_at, active_count FROM contexts WHERE name LIKE ?1",
+        rusqlite::params![format!("%{name_like}%")],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )
+    .expect("memory not found")
+}
+
+#[test]
+fn searching_a_memory_does_not_make_it_look_freshly_written() {
+    // Given: a memory whose content was last changed 30 days ago
+    let conn = db_with_memories(&[memory("Stale but findable")
+        .project("myapp")
+        .content("A memory about kubernetes ingress that nobody has edited")
+        .accessed_days_ago(30)]);
+    let (updated_before, _, _) = recency_row(&conn, "Stale but findable");
+
+    // When: it is returned by a search (three times, as a hook would)
+    for _ in 0..3 {
+        rememora::search::search(&conn, "kubernetes ingress", Some("myapp"), None, 10).unwrap();
+    }
+
+    // Then: updated_at is untouched — the content did not change, so the
+    // content-recency term in the hotness score must not move.
+    let (updated_after, accessed_after, count_after) = recency_row(&conn, "Stale but findable");
+    assert_eq!(
+        updated_before, updated_after,
+        "search restamped updated_at: {updated_before} -> {updated_after}"
+    );
+    // And the retrieval is recorded where it belongs.
+    assert_eq!(count_after, 3);
+    let accessed_after = accessed_after.expect("last_accessed_at should be set");
+    assert!(
+        accessed_after > updated_after,
+        "last_accessed_at ({accessed_after}) should be newer than updated_at ({updated_after})"
+    );
+}
+
+#[test]
+fn repeated_retrieval_cannot_reset_a_stale_memorys_decay() {
+    // Given: a 30-day-old memory, decayed well below the fresh baseline
+    let conn = db_with_memories(&[memory("Decayed by age")
+        .project("myapp")
+        .content("A memory about postgres vacuum tuning")
+        .accessed_days_ago(30)]);
+
+    let score_of = |conn: &rusqlite::Connection| {
+        let (updated, _, active) = recency_row(conn, "Decayed by age");
+        let ts = chrono::DateTime::parse_from_rfc3339(&updated)
+            .unwrap()
+            .with_timezone(&Utc);
+        hotness::hotness_score(active, &ts, None)
+    };
+
+    let before = score_of(&conn);
+
+    // When: it is retrieved 20 times
+    for _ in 0..20 {
+        rememora::search::search(&conn, "postgres vacuum", Some("myapp"), None, 10).unwrap();
+    }
+
+    // Then: the recency multiplier is unchanged, so the score can only move by
+    // the (saturating) frequency term — never back to the fresh 0.5 baseline.
+    let after = score_of(&conn);
+    assert!(
+        after < 0.05,
+        "a 30-day-old memory must stay decayed however often it is retrieved, got {after}"
+    );
+    assert!(
+        after > before,
+        "frequency should still count for something: {before} -> {after}"
+    );
+}
+
+#[test]
+fn non_bumping_search_records_no_retrieval() {
+    // Given: a memory and a search that declares it is not evidence of use
+    // (the hook-injection case — nobody necessarily read the result).
+    let conn = db_with_memories(&[memory("Injected not read")
+        .project("myapp")
+        .content("A memory about redis eviction policies")]);
+    let (updated_before, accessed_before, count_before) = recency_row(&conn, "Injected not read");
+
+    // When: searching with bumping disabled
+    let opts = rememora::search::SearchOptions { bump: false };
+    let results = rememora::search::search_with_options(
+        &conn,
+        "redis eviction",
+        Some("myapp"),
+        None,
+        10,
+        opts,
+    )
+    .unwrap();
+
+    // Then: results still come back, but nothing about the row changes.
+    assert!(!results.is_empty(), "expected the memory to match");
+    let (updated_after, accessed_after, count_after) = recency_row(&conn, "Injected not read");
+    assert_eq!(updated_before, updated_after);
+    assert_eq!(accessed_before, accessed_after);
+    assert_eq!(count_before, count_after);
+}
+
+#[test]
+fn default_search_options_bump() {
+    // The CLI's behavior is unchanged: `rememora search` still counts as use.
+    let conn = db_with_memories(&[memory("Default bumps")
+        .project("myapp")
+        .content("A memory about nginx buffer sizes")]);
+
+    rememora::search::search_with_options(
+        &conn,
+        "nginx buffer",
+        Some("myapp"),
+        None,
+        10,
+        rememora::search::SearchOptions::default(),
+    )
+    .unwrap();
+
+    let (_, _, count) = recency_row(&conn, "Default bumps");
+    assert_eq!(count, 1);
+}
+
+// ---------------------------------------------------------------------------
 // Integration: ranking through the search pipeline
 // ---------------------------------------------------------------------------
 

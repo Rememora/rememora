@@ -8,6 +8,26 @@ pub struct SearchResult {
     pub rank: f64,
 }
 
+/// Side effects a search is allowed to have on the rows it returns.
+#[derive(Debug, Clone, Copy)]
+pub struct SearchOptions {
+    /// Record every returned row as accessed — `active_count + 1` and a fresh
+    /// `last_accessed_at` (see `context::bump_active_count`).
+    ///
+    /// Set `false` for machine-driven retrieval whose results no human or agent
+    /// necessarily reads: a memory injected into a prompt by the search hook is
+    /// not evidence that the memory was useful, and counting it as one lets the
+    /// hook manufacture its own ranking signal.
+    pub bump: bool,
+}
+
+impl Default for SearchOptions {
+    /// Bumping on — what `rememora search` has always done.
+    fn default() -> Self {
+        Self { bump: true }
+    }
+}
+
 /// Strip ASCII control chars (incl. NUL) and trim whitespace.
 fn sanitize_input(query: &str) -> String {
     query
@@ -90,10 +110,22 @@ pub fn search(
     category: Option<&str>,
     limit: usize,
 ) -> Result<Vec<SearchResult>> {
+    search_with_options(conn, query, project, category, limit, SearchOptions::default())
+}
+
+/// `search` with explicit control over retrieval side effects.
+pub fn search_with_options(
+    conn: &Connection,
+    query: &str,
+    project: Option<&str>,
+    category: Option<&str>,
+    limit: usize,
+    options: SearchOptions,
+) -> Result<Vec<SearchResult>> {
     let Some(fts_query) = build_fts_query(query) else {
         return Ok(vec![]);
     };
-    match search_with_fts(conn, &fts_query, project, category, limit) {
+    match search_with_fts(conn, &fts_query, project, category, limit, options) {
         Ok(rows) => Ok(rows),
         Err(e) => {
             // Defense-in-depth: if FTS5 rejected the user's syntax, retry
@@ -103,7 +135,7 @@ pub fn search(
                 let cleaned = sanitize_input(query);
                 if let Some(fallback) = safe_or_query(&cleaned) {
                     if fallback != fts_query {
-                        return search_with_fts(conn, &fallback, project, category, limit);
+                        return search_with_fts(conn, &fallback, project, category, limit, options);
                     }
                 }
                 return Ok(vec![]);
@@ -133,6 +165,7 @@ fn search_with_fts(
     project: Option<&str>,
     category: Option<&str>,
     limit: usize,
+    options: SearchOptions,
 ) -> Result<Vec<SearchResult>> {
     let mut sql = String::from(
         "SELECT c.id, c.uri, c.parent_uri, c.context_type, c.category, c.name,
@@ -204,9 +237,11 @@ fn search_with_fts(
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
 
-    // Bump active_count for returned results
-    for result in &rows {
-        context::bump_active_count(conn, &result.context.id)?;
+    // Record the retrieval against the returned results
+    if options.bump {
+        for result in &rows {
+            context::bump_active_count(conn, &result.context.id)?;
+        }
     }
 
     Ok(rows)
@@ -225,8 +260,33 @@ pub fn search_with_propagation(
     limit: usize,
     config: &crate::propagate::PropagationConfig,
 ) -> Result<Vec<SearchResult>> {
+    search_with_propagation_options(
+        conn,
+        query,
+        project,
+        category,
+        limit,
+        config,
+        SearchOptions::default(),
+    )
+}
+
+/// `search_with_propagation` with explicit control over retrieval side effects.
+///
+/// Note that the bump applies to the *pre-propagation* candidate set (3x the
+/// requested limit), matching `search_with_propagation`'s existing behavior —
+/// rows dropped during propagation have still been counted as retrieved.
+pub fn search_with_propagation_options(
+    conn: &Connection,
+    query: &str,
+    project: Option<&str>,
+    category: Option<&str>,
+    limit: usize,
+    config: &crate::propagate::PropagationConfig,
+    options: SearchOptions,
+) -> Result<Vec<SearchResult>> {
     let expanded_limit = limit * 3;
-    let results = search(conn, query, project, category, expanded_limit)?;
+    let results = search_with_options(conn, query, project, category, expanded_limit, options)?;
     crate::propagate::propagate_scores(conn, results, config, limit)
 }
 

@@ -67,9 +67,14 @@ fn test_migrations_idempotent() {
     let conn = common::create_test_db();
     // Running open_memory again with same connection would re-run configure+migrate
     // But since we use IF NOT EXISTS, it should be safe
-    // Just verify the migration tracking table has exactly one entry
+    // The idempotency claim is that no migration is recorded twice — asserting a
+    // hardcoded total instead just made every new migration look like a failure.
     let count: i64 = conn
         .query_row("SELECT COUNT(*) FROM _migrations", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(count, 5);
+    let distinct: i64 = conn
+        .query_row("SELECT COUNT(DISTINCT name) FROM _migrations", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(count, distinct, "a migration was recorded more than once");
+    assert!(count >= 6, "expected all migrations applied, got {count}");
 }

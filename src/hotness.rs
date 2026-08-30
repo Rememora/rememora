@@ -4,10 +4,38 @@ const DEFAULT_HALF_LIFE_DAYS: f64 = 7.0;
 const IMPORTANCE_WEIGHT: f64 = 0.7;
 const HOTNESS_WEIGHT: f64 = 0.3;
 
-/// Compute hotness score based on access frequency and recency.
+/// Compute hotness score based on access frequency and content recency.
 /// Returns value in [0.0, 1.0].
 ///
 /// Formula: sigmoid(log1p(active_count)) * exp(-age_days / half_life)
+///
+/// # Which recency?
+///
+/// The two factors are meant to be independent: *how much has this been used*
+/// (`active_count`) times *how fresh is what it says* (`updated_at`). Migration
+/// 006 split access recency out into `contexts.last_accessed_at`, and the score
+/// deliberately keeps decaying on `updated_at` — content recency — for two
+/// reasons:
+///
+/// 1. Using access recency here would re-create the feedback loop that made the
+///    split necessary. Retrieval already raises `active_count`; if it also
+///    raised the recency multiplier, a single retrieval would move both factors
+///    and the result would rank higher purely for having been returned once.
+///    Content recency is the only term in the formula that retrieval cannot
+///    touch, so it is what keeps the score anchored to something external.
+/// 2. `active_count` is a monotone counter, but it is squashed through
+///    `sigmoid(log1p(..))` and saturates near 0.99 — so extra retrievals buy
+///    rapidly diminishing rank, which bounds the loop that remains.
+///
+/// The cost of this choice is real and worth naming: a memory that is still
+/// true and used daily but whose text has not changed in months decays toward
+/// zero hotness, and its ranking falls back on `importance` (weighted 0.7 in
+/// `final_score`, against hotness's 0.3). That is the intended "stale knowledge
+/// sinks" behavior, and genuinely live memories get their `updated_at`
+/// refreshed by the curator's evolve/update passes.
+///
+/// `last_accessed_at` is recorded but unscored. Reversing this decision means
+/// passing it here instead — the data is there from migration 006 onward.
 pub fn hotness_score(active_count: i64, updated_at: &DateTime<Utc>, half_life_days: Option<f64>) -> f64 {
     let half_life = half_life_days.unwrap_or(DEFAULT_HALF_LIFE_DAYS);
     let age_days = (Utc::now() - *updated_at).num_seconds() as f64 / 86400.0;
