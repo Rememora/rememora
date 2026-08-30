@@ -274,8 +274,18 @@ fn test_no_clusters_with_single_memory() {
     );
 }
 
+/// `min_similarity` has to actually move the needle.
+///
+/// The version of this test that shipped with the sign fix asserted only
+/// `high_total <= low_total` over a three-document corpus. Under the relative
+/// mapping BM25 cannot discriminate a corpus that small at all (see
+/// `test_tiny_corpora_produce_no_clusters`), so both sides were 0 and the
+/// assertion held for the wrong reason: it would have passed with clustering
+/// deleted. This version gives BM25 a corpus it can work in and pins both ends
+/// — the low threshold must find the Stripe pair, the high threshold must find
+/// nothing — so a mapping that ignored the threshold would fail it.
 #[test]
-fn test_dissimilar_memories_fewer_clusters_at_high_threshold() {
+fn test_threshold_controls_how_much_clusters() {
     let conn = common::create_test_db();
 
     rememora::models::project::add(
@@ -287,11 +297,11 @@ fn test_dissimilar_memories_fewer_clusters_at_high_threshold() {
     )
     .unwrap();
 
-    // Insert three memories: two similar (Stripe-related) and one dissimilar
+    // Two similar (Stripe-related) memories and one dissimilar...
     insert_memory(
         &conn,
         "varied",
-        "entity",
+        "decision",
         "stripe-api",
         "Stripe API integration for payments",
         "The project uses Stripe API for processing credit card payments with idempotency keys.",
@@ -300,40 +310,56 @@ fn test_dissimilar_memories_fewer_clusters_at_high_threshold() {
     insert_memory(
         &conn,
         "varied",
-        "entity",
+        "decision",
         "stripe-webhooks",
-        "Stripe webhook handling for payment events",
+        "Stripe webhook handling for payments",
         "Stripe webhooks are used to handle payment success and failure events asynchronously.",
         0.7,
     );
     insert_memory(
         &conn,
         "varied",
-        "entity",
+        "decision",
         "kubernetes-deploy",
-        "Kubernetes deployment configuration",
+        "Kubernetes deployment for production",
         "Production deployments use Kubernetes with Helm charts and ArgoCD for GitOps.",
         0.6,
     );
+    // ...plus enough unrelated documents for the shared terms to carry IDF.
+    insert_filler(&conn, "varied");
 
     let memories =
         context::list_by_scope(&conn, Some("memory"), None, Some("varied"), 100).unwrap();
-    assert_eq!(memories.len(), 3);
+    assert_eq!(memories.len(), 8);
 
-    // At a low threshold, we may get clusters containing all memories
-    let low_clusters =
-        rememora::evolve::find_clusters(&conn, memories.clone(), 0.01).unwrap();
+    let low = rememora::evolve::find_clusters(&conn, memories.clone(), 0.3).unwrap();
+    let high = rememora::evolve::find_clusters(&conn, memories, 0.99).unwrap();
 
-    // At a high threshold, we should get fewer or no clusters
-    let high_clusters =
-        rememora::evolve::find_clusters(&conn, memories, 0.95).unwrap();
+    let low_names: Vec<Vec<&str>> = low
+        .iter()
+        .map(|c| c.memories.iter().map(|m| m.name.as_str()).collect())
+        .collect();
+    let high_total: usize = high.iter().map(|c| c.memories.len()).sum();
 
-    // High threshold should produce fewer total clustered memories than low threshold
-    let low_total: usize = low_clusters.iter().map(|c| c.memories.len()).sum();
-    let high_total: usize = high_clusters.iter().map(|c| c.memories.len()).sum();
-    assert!(
-        high_total <= low_total,
-        "Higher threshold should cluster fewer memories: high={high_total}, low={low_total}"
+    assert_eq!(
+        low.len(),
+        1,
+        "the default threshold must find exactly the Stripe pair, got {low_names:?}"
+    );
+    let mut clustered = low_names[0].clone();
+    clustered.sort_unstable();
+    assert_eq!(
+        clustered,
+        vec![
+            "Stripe API integration for payments",
+            "Stripe webhook handling for payments",
+        ],
+        "the only cluster must be the two Stripe memories"
+    );
+
+    assert_eq!(
+        high_total, 0,
+        "a near-perfect-match threshold must cluster nothing in this corpus"
     );
 }
 
@@ -522,4 +548,243 @@ fn test_oversized_clusters_are_flagged() {
 
     assert!(!is_oversized(&at_limit));
     assert!(is_oversized(&over_limit));
+}
+
+// --- Read-only mode -------------------------------------------------------
+//
+// `consolidate` hands its clusters to a Claude Code subagent that has Bash and
+// runs `rememora` itself, so none of the caps, cluster-membership checks,
+// transactions or journalling in `commands/evolve.rs` apply to anything that
+// subagent does. Rather than advertise safety it does not have, `consolidate`
+// no longer writes at all — and it backs that up by setting
+// `REMEMORA_READONLY=1` in the subagent's environment, which the CLI refuses to
+// write under.
+//
+// These drive the real binary in a subprocess, because the guard is only worth
+// anything if it survives the process boundary the subagent sits behind.
+
+/// Build a scratch database the CLI can open, seeded with one memory.
+///
+/// Unencrypted and inside a tempdir, so nothing here can reach `~/.rememora`.
+fn scratch_db(dir: &std::path::Path) -> (std::path::PathBuf, String) {
+    let db_path = dir.join("scratch.db");
+    let conn = rememora::db::open_with_options(&db_path, true).unwrap();
+    rememora::models::project::add(&conn, "ro", Some("/tmp/ro"), "Read-only", &[]).unwrap();
+    let id = insert_memory(
+        &conn,
+        "ro",
+        "decision",
+        "use-zustand",
+        "Use Zustand for state management",
+        "We chose Zustand for state management due to minimal boilerplate.",
+        0.8,
+    );
+    (db_path, id)
+}
+
+fn cli(db_path: &std::path::Path) -> assert_cmd::Command {
+    let mut cmd = assert_cmd::Command::cargo_bin("rememora").expect("binary built");
+    cmd.env("REMEMORA_DB", db_path)
+        .env("REMEMORA_READONLY", "1")
+        .arg("--no-encryption");
+    cmd
+}
+
+fn unguarded_cli(db_path: &std::path::Path) -> assert_cmd::Command {
+    let mut cmd = assert_cmd::Command::cargo_bin("rememora").expect("binary built");
+    cmd.env("REMEMORA_DB", db_path)
+        .env_remove("REMEMORA_READONLY")
+        .arg("--no-encryption");
+    cmd
+}
+
+fn memory_count(db_path: &std::path::Path) -> usize {
+    let conn = rememora::db::open_with_options(db_path, true).unwrap();
+    context::list_by_scope(&conn, Some("memory"), None, Some("ro"), 100)
+        .unwrap()
+        .len()
+}
+
+#[test]
+fn readonly_mode_refuses_writes_from_a_subprocess() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let (db_path, id) = scratch_db(dir.path());
+    let before = memory_count(&db_path);
+
+    cli(&db_path)
+        .args([
+            "save",
+            "a brand new fact",
+            "--category",
+            "decision",
+            "--project",
+            "ro",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("read-only mode"));
+
+    cli(&db_path)
+        .args(["supersede", &id, "--by", &id])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("read-only mode"));
+
+    assert_eq!(
+        memory_count(&db_path),
+        before,
+        "read-only mode must leave the store untouched"
+    );
+}
+
+#[test]
+fn readonly_mode_still_allows_the_subagent_to_search() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let (db_path, _) = scratch_db(dir.path());
+
+    cli(&db_path)
+        .args(["search", "Zustand", "--project", "ro"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Zustand"));
+}
+
+/// Without the guard armed the same write goes through, so the test above is
+/// measuring the guard and not some unrelated failure.
+#[test]
+fn writes_succeed_when_readonly_mode_is_not_armed() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let (db_path, _) = scratch_db(dir.path());
+    let before = memory_count(&db_path);
+
+    unguarded_cli(&db_path)
+        .args([
+            "save",
+            "a brand new fact",
+            "--category",
+            "decision",
+            "--project",
+            "ro",
+        ])
+        .assert()
+        .success();
+
+    assert_eq!(memory_count(&db_path), before + 1);
+}
+
+/// `consolidate --apply` is refused outright rather than quietly proposing.
+#[test]
+fn consolidate_apply_is_refused_and_points_at_evolve() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let (db_path, _) = scratch_db(dir.path());
+
+    unguarded_cli(&db_path)
+        .args(["consolidate", "--project", "ro", "--apply"])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains(
+            "rememora evolve --project ro --apply",
+        ));
+}
+
+/// End-to-end: the subagent `consolidate` spawns cannot write, even when it
+/// tries to.
+///
+/// This is the claim the branch has to earn. `consolidate` delegates its writes
+/// to a Claude Code subagent, so the caps and journalling in
+/// `commands/evolve.rs` never see them; the guard has to hold at the process
+/// boundary instead. A stub `claude` on PATH stands in for the subagent and
+/// does exactly what the consolidation prompt used to tell it to do — shell out
+/// to `rememora` and retire a memory.
+#[test]
+fn a_consolidate_subagent_cannot_write_memories() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let (db_path, _) = scratch_db(dir.path());
+    // Enough of a corpus that clustering finds something to consolidate.
+    {
+        let conn = rememora::db::open_with_options(&db_path, true).unwrap();
+        insert_memory(
+            &conn,
+            "ro",
+            "decision",
+            "zustand-redux",
+            "Zustand chosen over Redux for state management",
+            "After evaluating Redux and Zustand, we picked Zustand for state management.",
+            0.7,
+        );
+        insert_filler(&conn, "ro");
+    }
+    let before = memory_count(&db_path);
+
+    let bin_dir = dir.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    let probe = dir.path().join("probe.txt");
+    let stub = bin_dir.join("claude");
+    std::fs::write(
+        &stub,
+        "#!/bin/sh\n\
+         # Stand in for the consolidation subagent: try to retire a memory.\n\
+         \"$REMEMORA_BIN\" --no-encryption save \"subagent wrote this\" \
+         --category decision --project ro >\"$REMEMORA_PROBE\" 2>&1\n\
+         echo \"exit=$?\" >>\"$REMEMORA_PROBE\"\n\
+         echo '{\"type\":\"result\",\"result\":\"proposal only\"}'\n",
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&stub).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&stub, perms).unwrap();
+    }
+
+    unguarded_cli(&db_path)
+        .env(
+            "PATH",
+            format!(
+                "{}:{}",
+                bin_dir.display(),
+                std::env::var("PATH").unwrap_or_default()
+            ),
+        )
+        .env("REMEMORA_BIN", assert_cmd::cargo::cargo_bin("rememora"))
+        .env("REMEMORA_PROBE", &probe)
+        .args(["consolidate", "--project", "ro"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("never writes to the database"));
+
+    let attempt = std::fs::read_to_string(&probe).expect("the stub subagent must have run");
+    assert!(
+        attempt.contains("read-only mode"),
+        "the subagent's write should have been refused, got: {attempt}"
+    );
+    assert!(
+        !attempt.contains("exit=0"),
+        "the subagent's write should have failed, got: {attempt}"
+    );
+    assert_eq!(
+        memory_count(&db_path),
+        before,
+        "a consolidate run must not change the store"
+    );
+}
+
+/// The undo journal is readable back out of the encrypted database — it is not
+/// a file the user has to know about, and there is no cleartext sidecar.
+#[test]
+fn undo_log_reads_from_the_database_and_writes_no_sidecar() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let (db_path, _) = scratch_db(dir.path());
+
+    unguarded_cli(&db_path)
+        .args(["evolve", "--project", "ro", "--undo-log"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("undo journal is empty"));
+
+    assert!(
+        !dir.path().join("evolve-undo").exists(),
+        "the journal must live in the database, not in a cleartext sidecar"
+    );
 }

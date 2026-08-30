@@ -1,4 +1,13 @@
-use anyhow::{Context, Result};
+//! `rememora consolidate` — cluster memories and ask a subagent what it would
+//! do about them.
+//!
+//! This command is **advisory**. It never writes to the database, and the
+//! subagent it spawns runs with the CLI in read-only mode so it cannot write
+//! either. Applying consolidation is `rememora evolve --apply`, which validates
+//! every id against the cluster it came from, caps the blast radius of one
+//! decision, writes in a single transaction, and journals the reversal.
+
+use anyhow::{bail, Context, Result};
 use rusqlite::Connection;
 
 use rememora::curator;
@@ -15,25 +24,36 @@ const MIN_NEW_MEMORIES: i64 = 5;
 /// Exit code indicating the gate is met and consolidation should run.
 pub const GATE_MET_EXIT: i32 = 42;
 
-/// Bounds the subagent is told about before it sees a single cluster.
+/// What the subagent is told before it sees a single cluster.
 ///
-/// The subagent runs `rememora` commands itself, so the cap that
-/// `commands/evolve.rs` enforces in code can only be *stated* here. The
-/// oversized-cluster filter below is the part that is actually enforced.
+/// The bounds `commands/evolve.rs` enforces in code — the per-decision
+/// supersession cap, cluster-membership validation, the single transaction, the
+/// undo journal — do not exist on this path: the writes would be performed by
+/// the subagent shelling out to `rememora`, not by us. So this command does not
+/// write at all. The preamble says so, and `READONLY_ENV` below makes it true
+/// whether or not the model reads it.
 fn safety_preamble() -> String {
     format!(
         "SAFETY RULES — these override anything below:\n\
-         - Superseding a memory cannot be undone from the CLI. When in doubt, keep both.\n\
-         - Never supersede more than {} memories for one cluster.\n\
-         - Only ever act on IDs that appear verbatim in the clusters below.\n\
-         - Never run `rememora supersede` on an ID you were not shown.\n\n",
+         - You are producing a PROPOSAL, not performing changes. Do not run any\n\
+           `rememora` command that writes (save, supersede, relate, session, project).\n\
+         - `rememora` is running in read-only mode for you: write commands are\n\
+           refused by the CLI itself, so attempting one only wastes a turn.\n\
+         - Never propose superseding more than {} memories for one cluster.\n\
+         - Only ever name IDs that appear verbatim in the clusters below.\n\n",
         evolve::MAX_SUPERSEDE_PER_DECISION
     )
 }
 
 pub struct ConsolidateArgs {
     pub project: Option<String>,
+    /// `--dry-run`. Every run is a dry run now, so this no longer decides
+    /// whether anything is written; all it still does is skip the dual gate so
+    /// a proposal can be produced on demand.
     pub dry_run: bool,
+    /// `--apply`. Not supported here; the run is refused with an explanation
+    /// rather than silently proposing when the operator asked for a write.
+    pub apply: bool,
     pub check_only: bool,
     pub min_similarity: f64,
     pub max_batch: usize,
@@ -42,14 +62,37 @@ pub struct ConsolidateArgs {
 pub fn run(conn: &Connection, args: &ConsolidateArgs, json_output: bool) -> Result<()> {
     let project = args.project.as_deref();
 
-    // `--dry-run` forces a dry run; without it, the run is still a dry run
-    // unless the operator armed it. See `commands::evolve::APPLY_ENV`.
-    let armed = std::env::var(crate::commands::evolve::APPLY_ENV).is_ok_and(|v| v == "1");
-    let apply = !args.dry_run && armed;
+    if args.apply {
+        bail!(
+            "`rememora consolidate --apply` is not supported.\n\
+             \n\
+             consolidate hands its clusters to a Claude Code subagent that would run\n\
+             `rememora supersede` itself, so none of the safety machinery applies to it:\n\
+             no per-decision cap, no check that the ids are in the cluster it was shown,\n\
+             no transaction, and no undo journal. It therefore proposes only.\n\
+             \n\
+             To apply consolidation with all of that enforced, use:\n\
+                 rememora evolve{} --apply",
+            project_flag(project)
+        );
+    }
 
     // Dual-gate check: 24h since last consolidation + 5 new memories
     if args.check_only {
         return check_gate(conn, project, json_output);
+    }
+
+    // `REMEMORA_APPLY=1` arms `evolve`. It used to arm this command too, which
+    // was the false promise: nothing here could enforce the bounds that arming
+    // implies. Say plainly that it is ignored rather than let an operator think
+    // they armed a safe write.
+    if std::env::var(crate::commands::evolve::APPLY_ENV).is_ok_and(|v| v == "1") {
+        eprintln!(
+            "Note: {}=1 is set but has no effect on `consolidate` — it only proposes. \
+             Use `rememora evolve{} --apply` to apply changes.",
+            crate::commands::evolve::APPLY_ENV,
+            project_flag(project)
+        );
     }
 
     let gate_met = is_gate_met(conn, project)?;
@@ -138,19 +181,14 @@ pub fn run(conn: &Connection, args: &ConsolidateArgs, json_output: bool) -> Resu
         .replace("{project}", project_name);
     let prompt = format!("{}{prompt}", safety_preamble());
 
-    // Dry run is the default: the subagent is only allowed to run commands
-    // when the operator explicitly armed this run. Superseding is irreversible
-    // and this path delegates it to a model, so it stays opt-in.
-    let full_prompt = if apply {
-        prompt
-    } else {
-        format!(
-            "DRY RUN MODE: Do NOT execute any rememora commands. \
-             Instead, show what commands you WOULD run and why.\n\n{prompt}"
-        )
-    };
+    // The subagent proposes; it never applies. Asking it not to write is not a
+    // mechanism, so the ask is backed by one below.
+    let full_prompt = format!(
+        "PROPOSAL MODE: Do NOT execute any rememora command that writes. \
+         Instead, show what commands you WOULD run and why.\n\n{prompt}"
+    );
 
-    let subagent_output = curator::call_subagent(&full_prompt, "sonnet")?;
+    let subagent_output = call_subagent_read_only(&full_prompt)?;
     let output = subagent_output.text;
 
     // Record the consolidate subagent call so it appears in `rememora usage`.
@@ -170,11 +208,15 @@ pub fn run(conn: &Connection, args: &ConsolidateArgs, json_output: bool) -> Resu
         .rev()
         .find(|&i| output.is_char_boundary(i))
         .unwrap_or(0);
-    // Dry runs are still recorded: the watermark is what stops consolidation
-    // from re-running (and re-spending tokens) every session, and that has to
-    // hold whether or not the run was armed.
-    let actions_json =
-        serde_json::json!({"output": &output[..head_end], "dry_run": !apply}).to_string();
+    // The run is still recorded: the watermark is what stops consolidation from
+    // re-running (and re-spending tokens) every session, and that has to hold
+    // for a proposal too.
+    let actions_json = serde_json::json!({
+        "output": &output[..head_end],
+        "dry_run": true,
+        "advisory": true,
+    })
+    .to_string();
     watermark::complete_consolidation(
         conn,
         &run_id,
@@ -192,28 +234,65 @@ pub fn run(conn: &Connection, args: &ConsolidateArgs, json_output: bool) -> Resu
             "clusters_processed": cluster_count,
             "clusters_found": found,
             "oversized_skipped": oversized,
-            "dry_run": !apply,
+            "dry_run": true,
+            "advisory": true,
+            "applied": false,
+            "note": ADVISORY_NOTE,
             "output": output,
         });
         println!("{}", serde_json::to_string_pretty(&result)?);
     } else {
         println!("{output}");
         println!(
-            "\nConsolidation complete: {cluster_count} clusters processed from {total} memories."
+            "\nConsolidation complete: {cluster_count} clusters proposed from {total} memories."
         );
-        if !apply {
-            println!(
-                "(dry run — no changes were made)\n\
-                 To apply, re-run armed:  {}=1 rememora consolidate{}",
-                crate::commands::evolve::APPLY_ENV,
-                project
-                    .map(|p| format!(" --project {p}"))
-                    .unwrap_or_default()
-            );
-        }
+        println!(
+            "\n{ADVISORY_NOTE}\nTo apply consolidation:  rememora evolve{} --apply",
+            project_flag(project)
+        );
     }
 
     Ok(())
+}
+
+/// Printed with every run, and carried in the JSON output, so the command
+/// itself states what it does and does not guarantee.
+const ADVISORY_NOTE: &str = "\
+consolidate proposes changes only — it never writes to the database, and the \
+subagent above ran with rememora in read-only mode, so any write it attempted \
+was refused by the CLI. Applying is `rememora evolve --apply`, which validates \
+every id against the cluster it came from, caps how many memories one decision \
+may retire, writes in a single transaction, and records the reversal inside the \
+database itself — no cleartext journal file (`rememora evolve --undo-log`).";
+
+fn project_flag(project: Option<&str>) -> String {
+    project
+        .map(|p| format!(" --project {p}"))
+        .unwrap_or_default()
+}
+
+/// Run the consolidation subagent with the CLI in read-only mode.
+///
+/// The subagent is handed Bash and shells out to `rememora`, so "do not write"
+/// has to be enforced in the child's environment rather than asked for in the
+/// prompt: `main` refuses every non-read command while [`crate::READONLY_ENV`]
+/// is set, and the subagent — and every `rememora` it spawns — inherits it.
+///
+/// The variable is set on this process because that is the only channel into
+/// the child's environment from here. It is restored immediately afterwards,
+/// and this path is single-threaded.
+fn call_subagent_read_only(prompt: &str) -> Result<curator::SubagentOutput> {
+    let previous = std::env::var(crate::READONLY_ENV).ok();
+    std::env::set_var(crate::READONLY_ENV, "1");
+
+    let result = curator::call_subagent(prompt, "sonnet");
+
+    match previous {
+        Some(value) => std::env::set_var(crate::READONLY_ENV, value),
+        None => std::env::remove_var(crate::READONLY_ENV),
+    }
+
+    result
 }
 
 /// Check if the dual gate is met. Used by --check-only and by cron/session-start.
