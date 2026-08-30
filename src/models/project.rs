@@ -97,6 +97,105 @@ pub fn detect_from_cwd(conn: &Connection, cwd: &str) -> Result<Option<String>> {
     Ok(None)
 }
 
+/// Resolve the project for a working directory, tolerating git worktrees.
+///
+/// `detect_from_cwd` prefix-matches the registered project path, which fails in
+/// a git worktree: `AGENTS.md` mandates worktrees under `.agents/worktrees/`,
+/// but a worktree lives outside the registered checkout so the prefix never
+/// matches. Callers used to paper over this with `basename(cwd)`, which
+/// fabricates a project name that matches nothing — and because the project
+/// filter in `search` is a hard `uri LIKE 'rememora://projects/<name>/%'`
+/// clause, a fabricated name silently excludes every project memory and leaves
+/// only global ones. That reads as "memory doesn't work" rather than as an error.
+///
+/// Resolution order:
+/// 1. Direct prefix match on the registered path.
+/// 2. If `cwd` is inside a git repo, retry against the main checkout, derived
+///    from `git rev-parse --git-common-dir` (a worktree's common dir points at
+///    the primary `.git`, so its parent is the main working tree).
+/// 3. `None` — meaning "no project filter", never a fabricated name.
+///
+/// Returning `None` is deliberate: an unfiltered search scores only marginally
+/// worse than a correctly-filtered one, while a wrong project name drives recall
+/// to zero. Prefer the graceful degradation.
+pub fn resolve_for_cwd(conn: &Connection, cwd: &str) -> Result<Option<String>> {
+    if let Some(name) = detect_from_cwd(conn, cwd)? {
+        return Ok(Some(name));
+    }
+
+    if let Some(root) = git_main_worktree(cwd) {
+        if root != cwd {
+            if let Some(name) = detect_from_cwd(conn, &root)? {
+                return Ok(Some(name));
+            }
+            // git reports fully-resolved paths, but a registered path may be
+            // recorded through a symlink (on macOS `/tmp` and `/var` are
+            // symlinks into `/private`). Retry with both sides canonicalized.
+            if let Some(name) = detect_canonical(conn, &root)? {
+                return Ok(Some(name));
+            }
+        }
+    }
+
+    Ok(None)
+}
+
+/// Prefix match with both sides canonicalized, for symlinked project paths.
+///
+/// Kept separate from `detect_from_cwd` so the cheap string comparison stays on
+/// the hot path — this only runs after that has already missed, and it touches
+/// the filesystem once per registered project.
+fn detect_canonical(conn: &Connection, path: &str) -> Result<Option<String>> {
+    let needle = match std::fs::canonicalize(path) {
+        Ok(p) => p,
+        Err(_) => return Ok(None),
+    };
+
+    for proj in list(conn)? {
+        let content: serde_json::Value = serde_json::from_str(&proj.content).unwrap_or_default();
+        let Some(registered) = content.get("path").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        // A registered path that no longer exists cannot be canonicalized;
+        // skip rather than failing the whole resolution.
+        let Ok(registered) = std::fs::canonicalize(registered) else {
+            continue;
+        };
+        if needle.starts_with(&registered) {
+            return Ok(Some(proj.name));
+        }
+    }
+
+    Ok(None)
+}
+
+/// Absolute path to the main working tree containing `cwd`, if it is in a git repo.
+///
+/// Uses `--git-common-dir` rather than `--show-toplevel`: in a linked worktree
+/// the former resolves to the primary repo's `.git`, which is what lets a
+/// worktree map back to the registered project.
+fn git_main_worktree(cwd: &str) -> Option<String> {
+    let out = std::process::Command::new("git")
+        .args(["rev-parse", "--path-format=absolute", "--git-common-dir"])
+        .current_dir(cwd)
+        .output()
+        .ok()?;
+
+    if !out.status.success() {
+        return None;
+    }
+
+    let common_dir = String::from_utf8(out.stdout).ok()?;
+    let common_dir = common_dir.trim();
+    if common_dir.is_empty() {
+        return None;
+    }
+
+    std::path::Path::new(common_dir)
+        .parent()
+        .map(|p| p.to_string_lossy().into_owned())
+}
+
 pub fn update_last_active(conn: &Connection, name: &str) -> Result<()> {
     let uri = uri::build_project_uri(name);
     let now = chrono::Utc::now().to_rfc3339();

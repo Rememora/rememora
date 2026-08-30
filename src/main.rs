@@ -92,6 +92,12 @@ enum Commands {
         /// ~75 tokens), or context (length-capped for prompt injection)
         #[arg(long, default_value = "full")]
         format: String,
+
+        /// Resolve the project from this directory when --project is omitted.
+        /// Hooks pass the session cwd; git worktrees resolve to their main
+        /// checkout. Defaults to the process working directory.
+        #[arg(long)]
+        cwd: Option<String>,
     },
 
     /// Chronological slice of contexts around an anchor URI.
@@ -669,6 +675,7 @@ fn main() -> Result<()> {
             propagate_decay,
             propagate_depth,
             format,
+            cwd,
         } => {
             let fmt = commands::search::SearchFormat::parse(&format)?;
             commands::search::run(
@@ -682,6 +689,7 @@ fn main() -> Result<()> {
                     propagate_decay,
                     propagate_depth,
                     format: fmt,
+                    cwd,
                 },
                 cli.json,
             )
