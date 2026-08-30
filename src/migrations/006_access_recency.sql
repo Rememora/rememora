@@ -25,8 +25,15 @@
 --   user's only copy of their memory on no evidence. The polluted values stop
 --   advancing from here on and decay out of the ranking within one half-life
 --   (7 days). See the commit message for the full argument.
-
-ALTER TABLE contexts ADD COLUMN last_accessed_at TEXT;
+--
+-- Where the ADD COLUMN went:
+--   This migration's `ALTER TABLE contexts ADD COLUMN last_accessed_at TEXT` is
+--   issued from `db.rs` (`MIGRATION_006_ADD_COLUMN`), not from here. SQLite has
+--   no `ADD COLUMN IF NOT EXISTS`, and `migrate()` runs on every `open`, so a
+--   replay of that statement — after a lost ledger row, say — would fail with
+--   "duplicate column name" and the database could never be opened again. It
+--   therefore sits behind a `column_exists` check in Rust, and everything left
+--   in this file is idempotent and safe to re-run on its own.
 
 UPDATE contexts SET last_accessed_at = updated_at WHERE last_accessed_at IS NULL;
 

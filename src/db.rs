@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use rusqlite::Connection;
+use rusqlite::{Connection, Transaction, TransactionBehavior};
 use std::path::Path;
 
 const MIGRATION_001: &str = include_str!("migrations/001_initial.sql");
@@ -8,6 +8,16 @@ const MIGRATION_003: &str = include_str!("migrations/003_curator.sql");
 const MIGRATION_004: &str = include_str!("migrations/004_agent_invocations.sql");
 const MIGRATION_005: &str = include_str!("migrations/005_hook_invocations.sql");
 const MIGRATION_006: &str = include_str!("migrations/006_access_recency.sql");
+
+/// The one statement of migration 006 that cannot be replayed.
+///
+/// SQLite has no `ADD COLUMN IF NOT EXISTS`, so running this twice fails with
+/// "duplicate column name" — and because `migrate()` runs on every `open`, that
+/// failure would wedge the database shut for good. It lives here, behind the
+/// `column_exists` guard in `migrate()`, instead of in
+/// `migrations/006_access_recency.sql` with the rest of the migration, which is
+/// idempotent on its own and safe to re-run.
+const MIGRATION_006_ADD_COLUMN: &str = "ALTER TABLE contexts ADD COLUMN last_accessed_at TEXT;";
 
 /// Register sqlite-vec extension before opening connections.
 /// Must be called before any Connection::open calls.
@@ -160,11 +170,31 @@ fn migrate(conn: &Connection) -> Result<()> {
     )?;
 
     if !applied_006 {
-        conn.execute_batch(MIGRATION_006)?;
-        conn.execute(
+        // 001–005 are replay-safe by construction (`CREATE ... IF NOT EXISTS`),
+        // so a crash between applying one and recording it was survivable — the
+        // next open just ran it again. 006 adds a column, which is not
+        // replayable, so it gets two guards the earlier migrations never needed:
+        //
+        //  1. An IMMEDIATE transaction, so "applied" and "recorded" commit or
+        //     roll back as a single fact and the wedged state (column added,
+        //     ledger row missing) cannot be produced here at all. IMMEDIATE
+        //     rather than DEFERRED takes the write lock up front, so a
+        //     concurrent writer costs a `busy_timeout` wait instead of a
+        //     SQLITE_BUSY when the read-to-write upgrade lands mid-migration.
+        //  2. A `column_exists` check, so a DB that is *already* in that state —
+        //     from a pre-transaction build of this migration, a restored file,
+        //     or a hand-edited ledger — still opens: the ALTER is skipped and
+        //     the idempotent remainder re-runs.
+        let tx = Transaction::new_unchecked(conn, TransactionBehavior::Immediate)?;
+        if !column_exists(&tx, "contexts", "last_accessed_at")? {
+            tx.execute_batch(MIGRATION_006_ADD_COLUMN)?;
+        }
+        tx.execute_batch(MIGRATION_006)?;
+        tx.execute(
             "INSERT INTO _migrations (name, applied_at) VALUES ('006_access_recency', datetime('now'))",
             [],
         )?;
+        tx.commit()?;
     }
 
     // Create sqlite-vec virtual table when feature is enabled
@@ -179,6 +209,23 @@ fn migrate(conn: &Connection) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Whether `table` already has a column called `column`.
+///
+/// Used to make the non-replayable half of migration 006 a no-op on a database
+/// whose ledger row went missing.
+fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool> {
+    // `PRAGMA table_info` takes no bind parameters. Both arguments here are
+    // compile-time literals, never user input.
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+    let mut rows = stmt.query([])?;
+    while let Some(row) = rows.next()? {
+        if row.get::<_, String>(1)? == column {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Apply encryption key to a SQLCipher connection.
