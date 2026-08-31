@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rememora Eval Report — express-api-buildup</title>
+<style>
+  :root {
+    --bg: #0f172a;
+    --surface: #1e293b;
+    --surface2: #334155;
+    --text: #e2e8f0;
+    --muted: #64748b;
+    --accent: #818cf8;
+    --green: #34d399;
+    --blue: #60a5fa;
+    --yellow: #fbbf24;
+    --red: #f87171;
+    --radius: 8px;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    padding: 2rem;
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+  h1 { font-size: 1.8rem; margin-bottom: 0.25rem; }
+  h2 { font-size: 1.3rem; margin: 2rem 0 1rem; color: var(--accent); border-bottom: 1px solid var(--surface2); padding-bottom: 0.5rem; }
+  h3 { font-size: 1.1rem; margin-bottom: 0.5rem; }
+  .subtitle { color: var(--muted); font-size: 0.9rem; margin-bottom: 2rem; }
+  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; vertical-align: middle; }
+
+  /* Summary table */
+  table { width: 100%; border-collapse: collapse; margin-bottom: 1.5rem; }
+  th { text-align: left; padding: 0.6rem 0.8rem; border-bottom: 2px solid var(--surface2); color: var(--muted); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; white-space: nowrap; }
+  td { padding: 0.6rem 0.8rem; border-bottom: 1px solid var(--surface); vertical-align: middle; }
+  tr:hover td { background: var(--surface); }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .desc { max-width: 250px; font-size: 0.85rem; color: var(--muted); }
+  .pass { color: var(--green); font-weight: bold; }
+  .fail { color: var(--red); font-weight: bold; }
+  .muted { color: var(--muted); font-size: 0.85rem; }
+
+  /* Bar charts in tables */
+  .bar-container { display: flex; align-items: center; gap: 8px; min-width: 120px; }
+  .bar { height: 18px; border-radius: 3px; min-width: 2px; transition: width 0.3s; }
+  .bar-label { font-size: 0.85rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+  /* Horizontal bar charts */
+  .chart { background: var(--surface); border-radius: var(--radius); padding: 1.2rem; margin-bottom: 1.5rem; }
+  .chart-row { display: flex; align-items: center; margin-bottom: 0.6rem; }
+  .chart-row:last-child { margin-bottom: 0; }
+  .chart-label { width: 180px; font-size: 0.85rem; flex-shrink: 0; }
+  .chart-bar-wrap { flex: 1; background: var(--surface2); border-radius: 4px; height: 24px; overflow: hidden; }
+  .chart-bar { height: 100%; border-radius: 4px; display: flex; align-items: center; justify-content: flex-end; padding-right: 8px; font-size: 0.8rem; font-weight: 600; color: var(--bg); min-width: fit-content; transition: width 0.3s; }
+
+  /* Detail sections */
+  .condition-detail { background: var(--surface); border-radius: var(--radius); padding: 1.5rem; margin-bottom: 1.5rem; }
+  .condition-detail .meta { color: var(--muted); font-size: 0.85rem; margin-bottom: 1rem; }
+  .detail-table { font-size: 0.85rem; }
+  .detail-table th { font-size: 0.75rem; }
+  .detail-table td { padding: 0.4rem 0.6rem; }
+
+  details { cursor: pointer; }
+  details summary { color: var(--blue); font-size: 0.85rem; }
+  details summary.db-save { color: var(--green); }
+  .db-save { color: var(--green); font-weight: 600; }
+  .db-list { list-style: none; padding: 0; margin-top: 0.4rem; }
+  .db-list li { background: var(--bg); padding: 0.4rem 0.6rem; border-radius: 4px; margin-bottom: 0.3rem; font-size: 0.8rem; }
+  .tag { display: inline-block; background: var(--surface2); color: var(--accent); padding: 0.1rem 0.4rem; border-radius: 3px; font-size: 0.7rem; margin-right: 0.4rem; }
+  .cmd-list { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.75rem; background: var(--bg); padding: 0.6rem; border-radius: 4px; margin-top: 0.4rem; white-space: pre-wrap; word-break: break-all; max-height: 200px; overflow-y: auto; }
+
+  /* Grid for charts */
+  .charts-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
+  @media (max-width: 900px) { .charts-grid { grid-template-columns: 1fr; } }
+
+  .card { background: var(--surface); border-radius: var(--radius); padding: 1.2rem; }
+  .card h3 { font-size: 0.95rem; margin-bottom: 1rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+
+  /* Stats row */
+  .stats { display: flex; gap: 1.5rem; margin-bottom: 2rem; flex-wrap: wrap; }
+  .stat { background: var(--surface); border-radius: var(--radius); padding: 1rem 1.5rem; flex: 1; min-width: 150px; }
+  .stat-value { font-size: 2rem; font-weight: 700; }
+  .stat-label { font-size: 0.8rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+
+  footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--surface2); color: var(--muted); font-size: 0.8rem; text-align: center; }
+</style>
+</head>
+<body>
+
+<h1>Rememora Eval Report</h1>
+<p class="subtitle">Sequence: <strong>express-api-buildup</strong> &middot; Generated: 2026-04-12T11:33:10.215Z &middot; Conditions: 2</p>
+
+<div class="stats">
+  <div class="stat">
+    <div class="stat-value">2</div>
+    <div class="stat-label">Conditions</div>
+  </div>
+  <div class="stat">
+    <div class="stat-value">4</div>
+    <div class="stat-label">Total Runs</div>
+  </div>
+  <div class="stat">
+    <div class="stat-value">24</div>
+    <div class="stat-label">Autonomous Saves</div>
+  </div>
+  <div class="stat">
+    <div class="stat-value">0</div>
+    <div class="stat-label">Autonomous Searches</div>
+  </div>
+</div>
+
+<h2>Condition Comparison</h2>
+<table>
+  <thead>
+    <tr>
+      <th>Condition</th><th>Runs</th><th>Completed</th><th>Rate</th><th>Quality</th><th>DB Saves</th><th>Parsed Saves</th><th>Autonomous Searches</th><th>P-Saves</th><th>P-Search</th><th>KB/Task</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+        <td><span class="dot" style="background:#f87171"></span>A/B Control (no memory)</td>
+        <td class="num">2</td>
+        <td class="num">10/10</td>
+        <td class="num">100%</td>
+        <td><div class="bar-container"><div class="bar" style="width:0.0%;background:#818cf8"></div><span class="bar-label">0</span></div></td>
+        <td><div class="bar-container"><div class="bar" style="width:100.0%;background:#f59e0b"></div><span class="bar-label">17</span></div></td>
+        <td><div class="bar-container"><div class="bar" style="width:100.0%;background:#34d399"></div><span class="bar-label">17</span></div></td>
+        <td><div class="bar-container"><div class="bar" style="width:0.0%;background:#60a5fa"></div><span class="bar-label">0</span></div></td>
+        <td class="num">-17</td>
+        <td class="num">0</td>
+        <td><div class="bar-container"><div class="bar" style="width:100.0%;background:#a78bfa"></div><span class="bar-label">1.7</span></div></td>
+      </tr>
+<tr>
+        <td><span class="dot" style="background:#34d399"></span>A/B Treatment (memory)</td>
+        <td class="num">2</td>
+        <td class="num">10/10</td>
+        <td class="num">100%</td>
+        <td><div class="bar-container"><div class="bar" style="width:0.0%;background:#818cf8"></div><span class="bar-label">0</span></div></td>
+        <td><div class="bar-container"><div class="bar" style="width:41.2%;background:#f59e0b"></div><span class="bar-label">7</span></div></td>
+        <td><div class="bar-container"><div class="bar" style="width:41.2%;background:#34d399"></div><span class="bar-label">7</span></div></td>
+        <td><div class="bar-container"><div class="bar" style="width:0.0%;background:#60a5fa"></div><span class="bar-label">0</span></div></td>
+        <td class="num">-7</td>
+        <td class="num">0</td>
+        <td><div class="bar-container"><div class="bar" style="width:41.2%;background:#a78bfa"></div><span class="bar-label">0.7</span></div></td>
+      </tr>
+  </tbody>
+</table>
+
+<h2>Autonomous Behavior Charts</h2>
+<div class="charts-grid">
+  <div class="card">
+    <h3>Autonomous Saves by Condition</h3>
+    <div class="chart-row">
+        <div class="chart-label">A/B Control (no memory)</div>
+        <div class="chart-bar-wrap"><div class="chart-bar" style="width:100.0%;background:#f87171">17</div></div>
+      </div>
+<div class="chart-row">
+        <div class="chart-label">A/B Treatment (memory)</div>
+        <div class="chart-bar-wrap"><div class="chart-bar" style="width:41.2%;background:#34d399">7</div></div>
+      </div>
+  </div>
+  <div class="card">
+    <h3>Autonomous Searches by Condition</h3>
+    <div class="chart-row">
+        <div class="chart-label">A/B Control (no memory)</div>
+        <div class="chart-bar-wrap"><div class="chart-bar" style="width:0.0%;background:#f87171">0</div></div>
+      </div>
+<div class="chart-row">
+        <div class="chart-label">A/B Treatment (memory)</div>
+        <div class="chart-bar-wrap"><div class="chart-bar" style="width:0.0%;background:#34d399">0</div></div>
+      </div>
+  </div>
+</div>
+
+<h2>Per-Condition Task Breakdown (Latest Run)</h2>
+<section class="condition-detail">
+        <h3><span class="dot" style="background:#f87171"></span>A/B Control (no memory)</h3>
+        <p class="meta">2 run(s) &middot; 10/10 tasks completed &middot; completion rate: 100%</p>
+        <table class="detail-table">
+          <thead>
+            <tr>
+              <th></th><th>Task</th><th>Description</th><th>Quality</th><th>DB Saves</th><th>A-Search</th><th>KB</th><th>Latency</th><th>Parsed Saves</th><th>Search Commands</th>
+            </tr>
+          </thead>
+          <tbody><tr>
+            <td class="pass">&#10003;</td>
+            <td>init-project</td>
+            <td class="desc">Initialize an Express API project with TypeScript and decide on a database.</td>
+            <td class="num"><span class="muted">—</span></td>
+            <td><details><summary class="db-save">1 DB save(s)</summary><ul class="db-list"><li><span class="tag">decision</span> Database: PostgreSQL with Prisma ORM. Chose PG for ACID transaction guarantees n...<br><span class="muted">Database: PostgreSQL with Prisma ORM. Chose PG for ACID transaction guarantees needed for payment processing (charges + ledger entries must be atomic). Prisma provides type-safe $transaction API that ...</span></li></ul></details></td>
+            <td class="num">0</td>
+            <td class="num">0&rarr;1</td>
+            <td class="num">301.6s</td>
+            <td><span class="muted">0 parsed</span></td>
+            <td><span class="muted">0 searches</span></td>
+          </tr>
+<tr>
+            <td class="pass">&#10003;</td>
+            <td>add-auth-middleware</td>
+            <td class="desc">Add JWT authentication middleware based on a prior decision.</td>
+            <td class="num"><span class="muted">—</span></td>
+            <td><details><summary class="db-save">1 DB save(s)</summary><ul class="db-list"><li><span class="tag">decision</span> JWT auth uses RS256 (asymmetric) with JWKS rotating keys, NOT HS256. Security te...<br><span class="muted">JWT auth uses RS256 (asymmetric) with JWKS rotating keys, NOT HS256. Security team requirement for payment endpoints: services only hold public keys so a compromised verifier cannot forge tokens. JWKS...</span></li></ul></details></td>
+            <td class="num">0</td>
+            <td class="num">0&rarr;1</td>
+            <td class="num">302.1s</td>
+            <td><span class="muted">0 parsed</span></td>
+            <td><span class="muted">0 searches</span></td>
+          </tr>
+<tr>
+            <td class="pass">&#10003;</td>
+            <td>add-users-endpoint</td>
+            <td class="desc">Create a users CRUD endpoint that uses the auth middleware.</td>
+            <td class="num"><span class="muted">—</span></td>
+            <td><details><summary class="db-save">1 DB save(s)</summary><ul class="db-list"><li><span class="tag">entity</span> Users CRUD at /api/users with full validation. Prisma error codes: P2002=unique ...<br><span class="muted">Users CRUD at /api/users with full validation. Prisma error codes: P2002=unique constraint (409 Conflict), P2025=record not found (404). All user routes require JWT auth via authenticate middleware. U...</span></li></ul></details></td>
+            <td class="num">0</td>
+            <td class="num">0&rarr;1</td>
+            <td class="num">302.5s</td>
+            <td><span class="muted">0 parsed</span></td>
+            <td><span class="muted">0 searches</span></td>
+          </tr>
+<tr>
+            <td class="pass">&#10003;</td>
+            <td>fix-auth-bug</td>
+            <td class="desc">Fix a bug in the auth middleware and save the debugging case.</td>
+            <td class="num"><span class="muted">—</span></td>
+            <td><details><summary class="db-save">1 DB save(s)</summary><ul class="db-list"><li><span class="tag">case</span> Bug fix: JWT TokenExpiredError was silently swallowed because instanceof checks ...<br><span class="muted">Bug fix: JWT TokenExpiredError was silently swallowed because instanceof checks fail across duplicate module boundaries. When jwks-rsa bundles a separate copy of jsonwebtoken, the TokenExpiredError th...</span></li></ul></details></td>
+            <td class="num">0</td>
+            <td class="num">0&rarr;1</td>
+            <td class="num">302.0s</td>
+            <td><span class="muted">0 parsed</span></td>
+            <td><span class="muted">0 searches</span></td>
+          </tr>
+<tr>
+            <td class="pass">&#10003;</td>
+            <td>add-payments-endpoint</td>
+            <td class="desc">Create a payments endpoint that ties together all prior decisions.</td>
+            <td class="num"><span class="muted">—</span></td>
+            <td><details><summary class="db-save">1 DB save(s)</summary><ul class="db-list"><li><span class="tag">entity</span> Payment endpoint at /api/payments uses Prisma interactive transactions for ACID ...<br><span class="muted">Payment endpoint at /api/payments uses Prisma interactive transactions for ACID guarantees. Double-entry bookkeeping: each payment creates debit (user account) + credit (revenue) ledger entries atomic...</span></li></ul></details></td>
+            <td class="num">0</td>
+            <td class="num">0&rarr;1</td>
+            <td class="num">302.4s</td>
+            <td><span class="muted">0 parsed</span></td>
+            <td><span class="muted">0 searches</span></td>
+          </tr></tbody>
+        </table>
+      </section>
+<section class="condition-detail">
+        <h3><span class="dot" style="background:#34d399"></span>A/B Treatment (memory)</h3>
+        <p class="meta">2 run(s) &middot; 10/10 tasks completed &middot; completion rate: 100%</p>
+        <table class="detail-table">
+          <thead>
+            <tr>
+              <th></th><th>Task</th><th>Description</th><th>Quality</th><th>DB Saves</th><th>A-Search</th><th>KB</th><th>Latency</th><th>Parsed Saves</th><th>Search Commands</th>
+            </tr>
+          </thead>
+          <tbody><tr>
+            <td class="pass">&#10003;</td>
+            <td>init-project</td>
+            <td class="desc">Initialize an Express API project with TypeScript and decide on a database.</td>
+            <td class="num"><span class="muted">—</span></td>
+            <td><span class="muted">0</span></td>
+            <td class="num">0</td>
+            <td class="num">0&rarr;0</td>
+            <td class="num">302.9s</td>
+            <td><span class="muted">0 parsed</span></td>
+            <td><span class="muted">0 searches</span></td>
+          </tr>
+<tr>
+            <td class="pass">&#10003;</td>
+            <td>add-auth-middleware</td>
+            <td class="desc">Add JWT authentication middleware based on a prior decision.</td>
+            <td class="num"><span class="muted">—</span></td>
+            <td><span class="muted">0</span></td>
+            <td class="num">0</td>
+            <td class="num">0&rarr;0</td>
+            <td class="num">302.9s</td>
+            <td><span class="muted">0 parsed</span></td>
+            <td><span class="muted">0 searches</span></td>
+          </tr>
+<tr>
+            <td class="pass">&#10003;</td>
+            <td>add-users-endpoint</td>
+            <td class="desc">Create a users CRUD endpoint that uses the auth middleware.</td>
+            <td class="num"><span class="muted">—</span></td>
+            <td><span class="muted">0</span></td>
+            <td class="num">0</td>
+            <td class="num">0&rarr;0</td>
+            <td class="num">303.0s</td>
+            <td><span class="muted">0 parsed</span></td>
+            <td><span class="muted">0 searches</span></td>
+          </tr>
+<tr>
+            <td class="pass">&#10003;</td>
+            <td>fix-auth-bug</td>
+            <td class="desc">Fix a bug in the auth middleware and save the debugging case.</td>
+            <td class="num"><span class="muted">—</span></td>
+            <td><span class="muted">0</span></td>
+            <td class="num">0</td>
+            <td class="num">0&rarr;0</td>
+            <td class="num">302.8s</td>
+            <td><span class="muted">0 parsed</span></td>
+            <td><span class="muted">0 searches</span></td>
+          </tr>
+<tr>
+            <td class="pass">&#10003;</td>
+            <td>add-payments-endpoint</td>
+            <td class="desc">Create a payments endpoint that ties together all prior decisions.</td>
+            <td class="num"><span class="muted">—</span></td>
+            <td><span class="muted">0</span></td>
+            <td class="num">0</td>
+            <td class="num">0&rarr;0</td>
+            <td class="num">302.9s</td>
+            <td><span class="muted">0 parsed</span></td>
+            <td><span class="muted">0 searches</span></td>
+          </tr></tbody>
+        </table>
+      </section>
+
+<footer>
+  Rememora Eval Benchmark &middot; <a href="https://github.com/Rememora/rememora" style="color:var(--accent)">github.com/Rememora/rememora</a>
+</footer>
+
+</body>
+</html>

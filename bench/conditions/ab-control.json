@@ -1,0 +1,8 @@
+{
+  "id": "ab-control",
+  "instructionMode": "full-hybrid",
+  "categoriesEnabled": ["preference", "entity", "decision", "event", "case", "pattern"],
+  "preIndexed": false,
+  "resetDbBetweenTasks": true,
+  "agent": "claude-tmux"
+}
