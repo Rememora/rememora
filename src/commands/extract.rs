@@ -6,6 +6,8 @@ use rememora::models::agent_invocation::{self, Caller};
 use rememora::models::context::{self, InsertContext};
 use rememora::uri;
 
+use crate::commands::save;
+
 const EXTRACT_MODEL: &str = "claude-haiku-4-5-20251001";
 
 const EXTRACT_PROMPT: &str = r#"Extract key memories from the following text. Return a JSON array of objects with these fields:
@@ -121,6 +123,13 @@ pub fn run(
     }
 
     if save {
+        // Same attribution as `commands::save`, resolved once for the batch:
+        // `extract --save` is a shipped memory-creation path, so leaving it on
+        // `source_session: None` would keep writing permanently unattributed
+        // rows and hold `eval`'s `unattributed_memories` above zero forever.
+        // Best-effort by design — see `save::resolve_source_session`.
+        let source_session = save::resolve_source_session(conn, project);
+
         let mut saved = Vec::new();
         for mem in &memories {
             let slug = uri::slugify(&mem.text.chars().take(60).collect::<String>());
@@ -140,7 +149,7 @@ pub fn run(
                     content: mem.text.clone(),
                     tags: "[]".into(),
                     source_agent: agent.map(String::from),
-                    source_session: None,
+                    source_session: source_session.clone(),
                     importance: mem.importance,
                 },
             )?;
