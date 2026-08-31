@@ -37,24 +37,52 @@ if [ "${#PROMPT}" -lt 6 ]; then
   exit 0
 fi
 
-PROJECT=""
+# Project resolution is the CLI's job — pass the raw cwd and let
+# `project::resolve_for_cwd` map it (including git worktrees, which is where
+# agent work happens). This script used to send `basename "$CWD"`, which in a
+# worktree produced a name matching no registered project. Because the project
+# filter is a hard URI prefix match, that silently excluded every project
+# memory and injected only global noise.
+ARGS=(search --limit 3 --format context)
 if [ -n "$CWD" ]; then
-  PROJECT=$(basename "$CWD")
+  ARGS+=(--cwd "$CWD")
 fi
 
-# Run with a short timeout — if the DB is locked or slow, we'd rather skip
-# injection than delay the user's prompt.
-if command -v timeout >/dev/null 2>&1; then
-  RUN=(timeout 2 rememora)
-else
-  RUN=(rememora)
-fi
+# Bound the call — we'd rather skip injection than delay the user's prompt.
+# `timeout` is GNU coreutils and is NOT present on stock macOS, the primary
+# platform, so fall back to a background process we reap ourselves. Without
+# this the hook is unbounded on the prompt-submit critical path.
+run_bounded() {
+  if command -v timeout >/dev/null 2>&1; then
+    timeout 2 rememora "$@"
+    return $?
+  fi
 
-if [ -n "$PROJECT" ]; then
-  OUT=$("${RUN[@]}" search --project "$PROJECT" --limit 3 --format context "$PROMPT" 2>/dev/null || true)
-else
-  OUT=$("${RUN[@]}" search --limit 3 --format context "$PROMPT" 2>/dev/null || true)
-fi
+  local out_file rc pid waited
+  out_file=$(mktemp -t rememora-recall) || return 1
+  rememora "$@" >"$out_file" 2>/dev/null &
+  pid=$!
+
+  waited=0
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ "$waited" -ge 20 ]; then
+      kill -TERM "$pid" 2>/dev/null
+      wait "$pid" 2>/dev/null
+      rm -f "$out_file"
+      return 124
+    fi
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+
+  wait "$pid" 2>/dev/null
+  rc=$?
+  cat "$out_file"
+  rm -f "$out_file"
+  return $rc
+}
+
+OUT=$(run_bounded "${ARGS[@]}" "$PROMPT" 2>/dev/null || true)
 
 if [ -n "$OUT" ]; then
   echo "$OUT"
