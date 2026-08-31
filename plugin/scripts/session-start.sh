@@ -66,9 +66,25 @@ if [ -z "$SOURCE" ] || [ "$SOURCE" = "startup" ]; then
   rememora session start --agent claude-code --project "$PROJECT" --intent "Interactive session" 2>/dev/null || true
 fi
 
-# Consolidation gate runs on every source — cheap (exit-code only) and worth
-# catching on resume/compact too.
-rememora consolidate --check-only --project "$PROJECT" 2>/dev/null
-if [ $? -eq 42 ]; then
-  (rememora consolidate --project "$PROJECT" 2>/dev/null || true) &
+# Consolidation gate. `--check-only` signals "gate met" with exit 42, which
+# under the `set -e` above terminated this hook on the spot — so the `if` that
+# followed was unreachable, the hook exited 42 on every session where the gate
+# was met, and consolidation never ran once (`rememora status` still reports
+# "Consolidation runs: 0"). Capture the status explicitly instead of letting
+# `set -e` see a non-zero return.
+CONSOLIDATE_GATE=0
+rememora consolidate --check-only --project "$PROJECT" >/dev/null 2>&1 || CONSOLIDATE_GATE=$?
+
+# The trigger stays disabled pending the clustering fix. `find_clusters`
+# currently inverts BM25 (src/evolve.rs — a strong match scores LOWER than a
+# stopword match), so every memory collapses into one cluster per category, and
+# the merge path supersedes every member of a cluster on a single LLM decision
+# with no way to undo it. Firing this automatically would risk the user's
+# memory store. Re-enable by setting REMEMORA_AUTO_CONSOLIDATE=1 once clustering
+# is fixed and the supersede path is bounded and reversible.
+if [ "$CONSOLIDATE_GATE" -eq 42 ] && [ "${REMEMORA_AUTO_CONSOLIDATE:-0}" = "1" ]; then
+  (rememora consolidate --project "$PROJECT" >/dev/null 2>&1 || true) &
 fi
+
+# Hooks must fail soft — never block or disrupt a coding session.
+exit 0
