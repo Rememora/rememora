@@ -706,7 +706,7 @@ Before ending: `rememora session end &lt;id&gt; --summary "..." ...`
       </div>
 
       <h2 id="cmd-evolve">evolve</h2>
-      <p>LLM-driven memory consolidation — finds similar clusters and merges/supersedes/prunes.</p>
+      <p>LLM-driven memory consolidation — finds similar clusters and merges/supersedes them. The only command that applies consolidation, and a dry run unless you arm it.</p>
       <div class="code-window">
         <div class="code-header">
           <div class="code-dots"><span class="red"></span><span class="yellow"></span><span class="green"></span></div>
@@ -714,13 +714,16 @@ Before ending: `rememora session end &lt;id&gt; --summary "..." ...`
           <button class="code-copy">Copy</button>
         </div>
         <div class="code-body">
-<pre><span class="cmd">rememora</span> <span class="cmd">evolve</span> <span class="flag">--project</span> myapp             <span class="comment"># run consolidation</span>
-<span class="cmd">rememora</span> <span class="cmd">evolve</span> <span class="flag">--project</span> myapp <span class="flag">--dry-run</span>   <span class="comment"># preview clusters</span></pre>
+<pre><span class="cmd">rememora</span> <span class="cmd">evolve</span> <span class="flag">--project</span> myapp              <span class="comment"># preview: this is the default</span>
+<span class="cmd">rememora</span> <span class="cmd">evolve</span> <span class="flag">--project</span> myapp <span class="flag">--apply</span>      <span class="comment"># write the decisions</span>
+<span class="cmd">rememora</span> <span class="cmd">evolve</span> <span class="flag">--project</span> myapp <span class="flag">--dry-run</span>    <span class="comment"># force a preview, overriding --apply</span>
+<span class="cmd">rememora</span> <span class="cmd">evolve</span> <span class="flag">--project</span> myapp <span class="flag">--undo-log</span>   <span class="comment"># what applied runs did, and how to reverse it</span></pre>
         </div>
       </div>
+      <p><code>REMEMORA_APPLY=1</code> arms a run the same way <code>--apply</code> does; <code>--dry-run</code> beats both. An applied run is bounded and recorded: every id the model names must be in the cluster it was shown, one decision may retire at most 5 memories, clusters over 8 memories are never sent to the model, and the writes plus their undo record go in a single transaction. The undo record lives in the <code>evolve_undo</code> table <strong>inside the encrypted database</strong> — there is no cleartext journal file — and carries SQL that reverses exactly that decision.</p>
 
       <h2 id="cmd-consolidate">consolidate</h2>
-      <p>Smart deduplication with dual gate (24h age + 5 new memories threshold).</p>
+      <p>Proposes deduplication via a subagent, behind a dual gate (24h age + 5 new memories threshold). <strong>Advisory only — it never writes.</strong></p>
       <div class="code-window">
         <div class="code-header">
           <div class="code-dots"><span class="red"></span><span class="yellow"></span><span class="green"></span></div>
@@ -732,6 +735,7 @@ Before ending: `rememora session end &lt;id&gt; --summary "..." ...`
 <span class="cmd">rememora</span> <span class="cmd">consolidate</span> <span class="flag">--project</span> myapp <span class="flag">--check-only</span>  <span class="comment"># check gate only</span></pre>
         </div>
       </div>
+      <p>Unlike <code>evolve</code>, this command delegates to a Claude Code subagent that runs <code>rememora</code> itself, so none of <code>evolve</code>'s caps, id validation, transactions or journalling can apply to what it does. It therefore only proposes: the subagent runs with the CLI in read-only mode (<code>REMEMORA_READONLY=1</code>), under which every write command is refused. <code>--apply</code> is rejected with a pointer to <code>rememora evolve --apply</code>.</p>
 
       <h2 id="cmd-setup">setup</h2>
       <p>Auto-detect and configure agents to use Rememora.</p>
@@ -907,7 +911,7 @@ Before ending: `rememora session end &lt;id&gt; --summary "..." ...`
         <li><strong>JSONL Parsing</strong> — reads session files incrementally via byte-offset watermarks (never re-processes old content)</li>
         <li><strong>Signal Gate (Haiku)</strong> — fast YES/NO classification: "Does this transcript contain memorable knowledge?" (~$0.03 per call)</li>
         <li><strong>AUDN Curation (Sonnet)</strong> — full Add/Update/Delete/Noop cycle via a subagent with Bash access to <code>rememora save/search/supersede</code></li>
-        <li><strong>Consolidation</strong> — if gate conditions are met (24h + 5 new memories), triggers smart dedup via <code>evolve</code></li>
+        <li><strong>Consolidation</strong> — when the gate conditions are met (24h + 5 new memories), <code>consolidate</code> proposes dedup. It never applies it, so nothing that triggers this stage can retire a memory; applying is always a deliberate <code>rememora evolve --apply</code>.</li>
       </ol>
 
       <h2 id="claude-code-plugin">Claude Code Plugin</h2>
@@ -968,6 +972,8 @@ Before ending: `rememora session end &lt;id&gt; --summary "..." ...`
         <tbody>
           <tr><td><code>REMEMORA_KEY</code></td><td>Encryption key (hex string) for SQLCipher</td></tr>
           <tr><td><code>ANTHROPIC_API_KEY</code></td><td>Required for <code>extract</code>, <code>curate</code>, <code>evolve</code> commands</td></tr>
+          <tr><td><code>REMEMORA_APPLY</code></td><td>Set to <code>1</code> to arm <code>evolve</code>, the same as <code>--apply</code>. <code>--dry-run</code> still wins.</td></tr>
+          <tr><td><code>REMEMORA_READONLY</code></td><td>Set to <code>1</code> to refuse every command that can change a memory. <code>consolidate</code> sets it for the subagent it spawns.</td></tr>
         </tbody>
       </table>
 

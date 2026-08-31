@@ -4,6 +4,56 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use rememora::db;
 
+/// Environment variable that puts the whole CLI into read-only mode.
+///
+/// `consolidate` sets it in the environment of the subagent it spawns. That
+/// subagent has Bash and shells out to `rememora` itself, so telling it not to
+/// write is a request, not a mechanism; refusing the write here is the
+/// mechanism. Everything the subagent spawns inherits the variable.
+pub const READONLY_ENV: &str = "REMEMORA_READONLY";
+
+fn readonly_armed() -> bool {
+    std::env::var(READONLY_ENV).is_ok_and(|v| v == "1")
+}
+
+/// Fail-closed allowlist of the commands that may run in read-only mode.
+///
+/// Listing what is *permitted* rather than what is forbidden means a command
+/// added later is refused under the guard until someone deliberately adds it,
+/// instead of quietly inheriting write access.
+///
+/// `search`, `timeline` and `context` bump access counters as a side effect.
+/// The guard is about memory *content* — which of those never change — so they
+/// stay on the list; a consolidation subagent cannot verify anything without
+/// them.
+fn is_read_only_command(command: &Commands) -> bool {
+    matches!(
+        command,
+        Commands::Search { .. }
+            | Commands::Timeline { .. }
+            | Commands::Context { .. }
+            | Commands::Get { .. }
+            | Commands::Status
+            | Commands::Eval { .. }
+            | Commands::Export { .. }
+            | Commands::Usage { .. }
+    )
+}
+
+fn readonly_refusal(command: &Commands) -> Option<String> {
+    if readonly_armed() && !is_read_only_command(command) {
+        return Some(format!(
+            "Refusing to run: rememora is in read-only mode ({READONLY_ENV}=1).\n\
+             Only search, timeline, context, get, status, eval, export and usage are allowed.\n\
+             \n\
+             This mode is set for consolidation subagents so they cannot retire memories \
+             outside the bounded, journalled `rememora evolve --apply` path. If you reached \
+             this by accident, unset {READONLY_ENV}."
+        ));
+    }
+    None
+}
+
 #[derive(Parser)]
 #[command(name = "rememora", version, about = "Cross-agent memory system")]
 struct Cli {
@@ -318,15 +368,19 @@ enum Commands {
         project: Option<String>,
     },
 
-    /// Consolidate memories using subagent (smart dedup, prune, merge)
+    /// Propose consolidations using a subagent (advisory — never writes)
     Consolidate {
         /// Project scope
         #[arg(long)]
         project: Option<String>,
 
-        /// Show what would be done without modifying memory
+        /// Propose now, skipping the dual gate (consolidate never writes either way)
         #[arg(long)]
         dry_run: bool,
+
+        /// Not supported here — use `rememora evolve --apply` instead
+        #[arg(long)]
+        apply: bool,
 
         /// Only check if the dual gate (24h + 5 memories) is met (exit 42 = yes)
         #[arg(long)]
@@ -341,15 +395,24 @@ enum Commands {
         max_batch: usize,
     },
 
-    /// Consolidate similar/redundant memories using LLM
+    /// Consolidate similar/redundant memories using LLM (dry run unless --apply)
     Evolve {
         /// Project scope (required)
         #[arg(long)]
         project: Option<String>,
 
-        /// Show proposed changes without modifying the database
+        /// Force a dry run, overriding --apply and REMEMORA_APPLY
         #[arg(long)]
         dry_run: bool,
+
+        /// Write the decisions to the database. Without this (or REMEMORA_APPLY=1)
+        /// evolve only prints what it would do.
+        #[arg(long)]
+        apply: bool,
+
+        /// Print the undo journal for applied runs instead of consolidating
+        #[arg(long)]
+        undo_log: bool,
 
         /// Minimum similarity threshold for clustering (0.0-1.0)
         #[arg(long, default_value = "0.3")]
@@ -618,6 +681,13 @@ enum ProjectAction {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+
+    // Before anything else — including the commands that bypass db::open() and
+    // the first-run gate — so read-only mode cannot be sidestepped.
+    if let Some(refusal) = readonly_refusal(&cli.command) {
+        anyhow::bail!(refusal);
+    }
+
     let db_path = db::default_db_path();
 
     // Commands that bypass the normal db::open() flow
@@ -895,6 +965,7 @@ fn main() -> Result<()> {
         Commands::Consolidate {
             project,
             dry_run,
+            apply,
             check_only,
             min_similarity,
             max_batch,
@@ -903,6 +974,7 @@ fn main() -> Result<()> {
             &commands::consolidate::ConsolidateArgs {
                 project,
                 dry_run,
+                apply,
                 check_only,
                 min_similarity,
                 max_batch,
@@ -913,14 +985,20 @@ fn main() -> Result<()> {
         Commands::Evolve {
             project,
             dry_run,
+            apply,
+            undo_log,
             min_similarity,
             max_batch,
         } => commands::evolve::run(
             &conn,
-            project.as_deref(),
-            dry_run,
-            min_similarity,
-            max_batch,
+            &commands::evolve::EvolveArgs {
+                project: project.as_deref(),
+                dry_run,
+                apply,
+                undo_log,
+                min_similarity,
+                max_batch,
+            },
             cli.json,
         ),
 
@@ -995,5 +1073,74 @@ fn main() -> Result<()> {
                 },
             ),
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn command_of(argv: &[&str]) -> Commands {
+        let mut full = vec!["rememora"];
+        full.extend_from_slice(argv);
+        Cli::try_parse_from(full)
+            .unwrap_or_else(|e| panic!("failed to parse {argv:?}: {e}"))
+            .command
+    }
+
+    fn allowed(argv: &[&str]) -> bool {
+        is_read_only_command(&command_of(argv))
+    }
+
+    /// The read-only allowlist has to leave a consolidation subagent able to
+    /// verify what it is proposing.
+    #[test]
+    fn readonly_mode_allows_the_commands_a_proposal_needs() {
+        assert!(allowed(&["search", "zustand"]));
+        assert!(allowed(&["context", "--project", "t"]));
+        assert!(allowed(&["get", "rememora://projects/t/memories/decision/x"]));
+        assert!(allowed(&[
+            "timeline",
+            "--anchor",
+            "rememora://projects/t/memories/decision/x"
+        ]));
+        assert!(allowed(&["status"]));
+    }
+
+    /// Everything that can change a memory is refused, including the two the
+    /// consolidation prompt tells the subagent to reach for.
+    #[test]
+    fn readonly_mode_refuses_every_writing_command() {
+        assert!(!allowed(&["save", "a fact", "--category", "decision"]));
+        assert!(!allowed(&["supersede", "old", "--by", "new"]));
+        assert!(!allowed(&[
+            "relate",
+            "a",
+            "b",
+            "--relation-type",
+            "r",
+            "--reason",
+            "x"
+        ]));
+        assert!(!allowed(&["evolve", "--project", "t", "--apply"]));
+        assert!(!allowed(&["consolidate", "--project", "t"]));
+        assert!(!allowed(&["curate", "--auto"]));
+        assert!(!allowed(&[
+            "session", "start", "--agent", "a", "--intent", "i"
+        ]));
+        assert!(!allowed(&["project", "add", "p", "--description", "d"]));
+        assert!(!allowed(&["setup", "--apply"]));
+        assert!(!allowed(&["encrypt"]));
+        assert!(!allowed(&["decrypt"]));
+    }
+
+    /// The refusal is wired to the environment, not to the command alone.
+    #[test]
+    fn readonly_refusal_is_off_unless_the_env_var_is_set() {
+        assert!(
+            std::env::var(READONLY_ENV).is_err(),
+            "tests must not run with {READONLY_ENV} set"
+        );
+        assert!(readonly_refusal(&command_of(&["save", "x", "--category", "decision"])).is_none());
     }
 }

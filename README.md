@@ -129,7 +129,7 @@ rememora curate --auto --dry-run
 1. **JSONL parsing** — reads Claude Code session transcripts incrementally (watermark-based, never re-processes old content)
 2. **Signal gate** — fast Haiku classification: does this transcript contain memorable knowledge? (YES/NO)
 3. **AUDN curation** — Sonnet subagent with Bash access runs the full Add/Update/Delete/Noop cycle via `rememora save/search/supersede`
-4. **Consolidation** — smart dedup via BM25 clustering + LLM-powered merge/prune
+4. **Consolidation** — BM25 clustering + an LLM that proposes merges. Nothing in this pipeline retires a memory: applying consolidation is always a deliberate `rememora evolve --apply`.
 
 Integrates with Claude Code hooks for fully autonomous operation — memories are extracted after every conversation turn.
 
@@ -138,17 +138,43 @@ Integrates with Claude Code hooks for fully autonomous operation — memories ar
 Over time, memories accumulate duplicates and stale entries. Rememora consolidates them:
 
 ```bash
-# Find and merge similar memories using LLM
+# Preview clusters and what the LLM would do with them (the default)
 rememora evolve --project myapp
 
-# Preview clusters without applying changes
-rememora evolve --project myapp --dry-run
+# Actually write the decisions
+rememora evolve --project myapp --apply
+
+# Read back what an applied run did, and the SQL that reverses it
+rememora evolve --project myapp --undo-log
+
+# Ask a subagent what it would consolidate (advisory — never writes)
+rememora consolidate --project myapp
 
 # Check if consolidation gate is met (24h + 5 new memories)
 rememora consolidate --project myapp --check-only
 ```
 
-The consolidation system uses BM25 cross-search to find similar memory clusters, then an LLM decides whether to merge, supersede, prune, or keep each cluster.
+The consolidation system uses BM25 cross-search to find similar memory clusters, then an LLM decides whether to merge, supersede, or keep each cluster.
+
+**Both commands are dry-run by default.** `evolve` writes only with `--apply` (or
+`REMEMORA_APPLY=1`); `--dry-run` overrides both.
+
+**Only `evolve` can apply changes.** `consolidate` hands its clusters to a Claude
+Code subagent that would run `rememora supersede` itself, so none of `evolve`'s
+safety machinery applies to it. It therefore proposes and never writes: it runs
+its subagent with the CLI in read-only mode (`REMEMORA_READONLY=1`), under which
+every write command is refused.
+
+When `evolve --apply` writes, each decision is bounded and recorded:
+
+- the ids the model names must exist in the cluster it was shown
+- one decision may retire at most 5 memories; clusters larger than 8 are never
+  sent to the model at all
+- the writes and their undo record are one transaction — if the record cannot be
+  written, nothing is
+- the undo record lives in the `evolve_undo` table **inside the encrypted
+  database** (not in a cleartext file), and carries SQL that reverses exactly
+  that decision. Read it with `rememora evolve --undo-log`.
 
 ## Agent Orchestration
 
@@ -304,8 +330,9 @@ app reports "Encryption key not available", run `rememora init` first.
 | `rememora relate <uri-a> <uri-b>` | Link two contexts |
 | `rememora extract` | Extract memories from text via LLM |
 | `rememora curate --auto` | Curate memories from session transcripts |
-| `rememora evolve --project <name>` | LLM-driven memory consolidation |
-| `rememora consolidate --project <name>` | Smart dedup with dual gate |
+| `rememora evolve --project <name>` | LLM-driven memory consolidation (add `--apply` to write) |
+| `rememora evolve --undo-log` | Show what applied runs did, and the SQL that reverses them |
+| `rememora consolidate --project <name>` | Propose dedup via subagent, behind a dual gate (advisory — never writes) |
 | `rememora agent-run --repo X --issue N` | Dispatch issue to Claude CLI |
 | `rememora agent-loop --repo X` | Watch board + auto-dispatch |
 | `rememora setup` | Configure agents to use rememora |
@@ -414,7 +441,7 @@ Session JSONL → Watermark (incremental) → Signal Gate (Haiku) → AUDN Curat
 - **Watermark tracking** — byte offset per session file, never re-processes old content
 - **Signal gate** — fast Haiku YES/NO classification (min 500 chars, max 32KB transcript)
 - **AUDN cycle** — Sonnet subagent with Bash access runs Add/Update/Delete/Noop
-- **Consolidation** — BM25 clustering + LLM merge/supersede/prune with dual gate (24h + 5 new memories)
+- **Consolidation** — BM25 clustering + LLM merge/supersede proposals with dual gate (24h + 5 new memories); applying is opt-in (`rememora evolve --apply`)
 - **Audit trail** — curator log tracks every action with model, reason, and timestamp
 
 ### Three-Layer Integration
