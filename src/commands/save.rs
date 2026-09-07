@@ -18,8 +18,15 @@ pub struct SaveArgs {
 }
 
 pub fn run(conn: &Connection, args: &SaveArgs, json: bool) -> Result<()> {
+    // `--project` is a request, not the answer. In a git worktree the name an
+    // agent supplies is usually the worktree's own directory — a namespace no
+    // search will ever filter to. `resolve_write_target` folds that onto the
+    // main checkout's project and hands back the provenance that fold loses.
+    let cwd = current_dir();
+    let target = project::resolve_write_target(conn, args.project.as_deref(), &cwd);
+
     let slug = uri::slugify(&args.text.chars().take(60).collect::<String>());
-    let mem_uri = uri::build_memory_uri(args.project.as_deref(), &args.category, &slug);
+    let mem_uri = uri::build_memory_uri(target.project.as_deref(), &args.category, &slug);
     let parent = uri::parent(&mem_uri)?.unwrap_or_default();
 
     // Use explicit tiers if provided, otherwise derive from text
@@ -45,21 +52,48 @@ pub fn run(conn: &Connection, args: &SaveArgs, json: bool) -> Result<()> {
             content,
             tags,
             source_agent: args.agent.clone(),
-            source_session: resolve_source_session(conn, args.project.as_deref()),
+            source_session: resolve_source_session(conn, target.project.as_deref()),
             importance: args.importance,
+            worktree: target.worktree.clone(),
+            branch: target.branch.clone(),
         },
     )?;
 
     if json {
         println!(
             "{}",
-            serde_json::json!({"id": id, "uri": mem_uri})
+            serde_json::json!({
+                "id": id,
+                "uri": mem_uri,
+                "project": target.project,
+                "worktree": target.worktree,
+                "branch": target.branch,
+            })
         );
     } else {
         println!("{id}");
+        // Surface the rewrite, so an agent that asked for one project and got
+        // another finds out at the moment it happens rather than the next time
+        // a search comes back empty.
+        if let (Some(requested), Some(actual)) = (args.project.as_deref(), target.project.as_deref())
+        {
+            if requested != actual {
+                eprintln!("note: --project {requested} resolved to {actual} (worktree/main checkout)");
+            }
+        }
     }
 
     Ok(())
+}
+
+/// Process working directory as a string, or empty when it cannot be read.
+///
+/// An unreadable cwd is not a reason to fail a save — resolution simply falls
+/// back to whatever the caller asked for.
+fn current_dir() -> String {
+    std::env::current_dir()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }
 
 /// Attribute a memory to the session that is open right now, if any.
@@ -71,11 +105,15 @@ pub fn run(conn: &Connection, args: &SaveArgs, json: bool) -> Result<()> {
 /// both must attribute or the metric goes quiet again for whichever one does
 /// not.
 ///
-/// Project resolution mirrors `session::end_active` (issue #114) so the
-/// commands agree on which session is "the" active one: explicit `--project`,
-/// then registered-project lookup by cwd, then `basename(cwd)` — the string
-/// the SessionStart hook passes to `session start` from an unregistered
-/// directory.
+/// Project resolution goes through `project::resolve_write_target`, the same
+/// ladder `session start` and `session end-active` now use, so all three agree
+/// on which session is "the" active one. Callers pass the *already resolved*
+/// project; when they have none, cwd's own basename is fed through the ladder,
+/// which folds a worktree onto its main checkout before the lookup.
+///
+/// That agreement is the whole point: a session opened as `rememora` and a
+/// memory attributed to `worktree-brave-meadow-e668` never join, which is how
+/// `rememora eval`'s save rate read zero while saves were plainly happening.
 ///
 /// Every step is best-effort. A save outside any session is legitimate (an
 /// agent that never ran `session start`, a manual CLI save), and a save must
@@ -86,10 +124,9 @@ pub fn resolve_source_session(conn: &Connection, project: Option<&str>) -> Optio
         Some(p) => p.to_string(),
         None => {
             let cwd = std::env::current_dir().ok()?;
-            match project::detect_from_cwd(conn, cwd.to_str().unwrap_or("")) {
-                Ok(Some(p)) => p,
-                _ => cwd.file_name()?.to_str()?.to_string(),
-            }
+            let cwd_str = cwd.to_str()?;
+            let basename = cwd.file_name()?.to_str()?;
+            project::resolve_write_target(conn, Some(basename), cwd_str).project?
         }
     };
 
@@ -103,7 +140,13 @@ fn truncate(s: &str, max: usize) -> String {
     if s.len() <= max {
         s.to_string()
     } else {
-        format!("{}...", &s[..max])
+        // Byte slicing panics mid-codepoint. Any memory longer than `max` whose
+        // `max`th byte lands inside a multi-byte char — an em-dash at byte 200
+        // is the one that found this — used to crash the whole command. Walk
+        // back to the nearest char boundary instead. Same fix as
+        // `commands::evolve::truncate`.
+        let cut = (0..=max).rev().find(|&i| s.is_char_boundary(i)).unwrap_or(0);
+        format!("{}...", &s[..cut])
     }
 }
 
@@ -119,7 +162,7 @@ mod tests {
     #[test]
     fn resolves_the_active_session_for_an_explicit_project() {
         let conn = db::open_memory().unwrap();
-        let id = session::start(&conn, "claude-code", Some("myapp"), None, "work", None).unwrap();
+        let id = session::start(&conn, "claude-code", Some("myapp"), None, "work", None, &session::Provenance::default()).unwrap();
 
         assert_eq!(
             resolve_source_session(&conn, Some("myapp")),
@@ -136,12 +179,38 @@ mod tests {
         assert_eq!(resolve_source_session(&conn, Some("myapp")), None);
     }
 
+    /// `truncate` sliced by byte index, so a memory longer than the cut whose
+    /// boundary byte landed inside a multi-byte character panicked the whole
+    /// command. Found the hard way: an em-dash at byte 200 of a real memory
+    /// crashed `rememora save` outright, losing the write.
+    #[test]
+    fn truncate_does_not_panic_on_a_multibyte_boundary() {
+        // 'a' * 199 then an em-dash straddling bytes 199..202 — the cut at 200
+        // lands inside it.
+        let text = format!("{}—{}", "a".repeat(199), "b".repeat(50));
+        assert!(!text.is_char_boundary(200), "precondition for the bug");
+
+        let out = truncate(&text, 200);
+
+        assert!(out.starts_with(&"a".repeat(199)));
+        assert!(out.ends_with("..."));
+    }
+
+    /// A string that is entirely one oversized character must still truncate
+    /// rather than panic or slice mid-codepoint.
+    #[test]
+    fn truncate_handles_a_string_with_no_boundary_before_the_cut() {
+        let text = "—".repeat(100);
+        let out = truncate(&text, 2);
+        assert_eq!(out, "...");
+    }
+
     /// An ended session is not the active one — attribution must not latch
     /// onto it after the agent has gone.
     #[test]
     fn ignores_a_session_that_has_already_ended() {
         let conn = db::open_memory().unwrap();
-        let id = session::start(&conn, "codex", Some("myapp"), None, "work", None).unwrap();
+        let id = session::start(&conn, "codex", Some("myapp"), None, "work", None, &session::Provenance::default()).unwrap();
         session::end(&conn, &id, "done", None, None).unwrap();
 
         assert_eq!(resolve_source_session(&conn, Some("myapp")), None);

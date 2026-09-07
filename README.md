@@ -326,6 +326,7 @@ app reports "Encryption key not available", run `rememora init` first.
 | `rememora project add <name>` | Register a project |
 | `rememora project list` | List all projects |
 | `rememora project show <name>` | Show project details |
+| `rememora project reconcile [--apply]` | Re-home memories filed under project namespaces no project claims (dry run by default) |
 | `rememora supersede <old-id> --by <new-id>` | Replace outdated memory |
 | `rememora relate <uri-a> <uri-b>` | Link two contexts |
 | `rememora extract` | Extract memories from text via LLM |
@@ -382,6 +383,13 @@ Output formats for `search`:
 
 Timeline ordering: `--by ts` (default, creation time) or `--by hotness` (importance × recency × active_count). Project scope: explicit `--project` wins; otherwise inferred from the anchor URI.
 
+Project scope for `search`: an explicit `--project` is put through the same [resolution ladder](#project-resolution) writes use; with no `--project`, scope is inferred from the working directory. `--cwd <dir>` overrides *which* directory that is — the `UserPromptSubmit` hook passes the session cwd through it, so a search issued from a git worktree still filters to the main checkout's project.
+
+```bash
+rememora search "auth flow" --cwd /path/to/myapp/.agents/worktrees/issue-42
+# → scoped to "myapp", not to "issue-42"
+```
+
 ## Auto-Extract Memories
 
 Extract memories from session transcripts, notes, or any text using an LLM:
@@ -412,6 +420,53 @@ Requires `ANTHROPIC_API_KEY` environment variable. Uses Claude Haiku for fast, c
 | `event` | Milestones, releases, incidents | "v2.0 shipped 2026-03-01" |
 | `case` | Specific problem + solution | "iOS build fails with Hermes + RN 0.76" |
 | `pattern` | Reusable processes | "always run migrations before seeding" |
+
+## Project Resolution
+
+`--project` is a request, not the answer. Every write path used to name the project after whatever directory it happened to be standing in — `basename $PWD`, or Claude Code's encoded transcript directory (`-Users-me-Projects-myapp`). Agent work happens in git worktrees, so this produced project namespaces matching no registered project. Because the project filter is a hard `uri LIKE 'rememora://projects/<name>/%'` prefix match, those memories were unreachable from the moment they were written. On a real 300-context store, 55 contexts (18%) were filed under fabricated names and re-homed by `project reconcile`, across worktree basenames, encoded transcript paths, and case drift (`Ana` vs `ana`).
+
+Writes now resolve through a ladder — first match wins:
+
+1. `--project` naming a **registered** project wins verbatim, case-insensitively, in its canonical spelling — what keeps a deliberate cross-project save working.
+2. An encoded filesystem path resolves against the filesystem. The encoding is lossy (both `/` and `.` become `-`), so candidates are tried longest-first, and one is accepted only if it resolves to a registered project or is itself a **git working-tree root**. Nothing else qualifies. This rung exists for `curate`, `watch-transcript` and `project reconcile`, which derive the encoded name from a transcript directory; to exercise it by hand you must use `--project=-Users-…` (the space-separated form is parsed as a flag, since the value starts with `-`).
+3. The working directory resolves it, walking a git worktree back to its main checkout — but only for a name the tooling synthesised, never one you chose.
+4. Same gate: in a linked worktree with nothing registered, the **main checkout's** directory name — never the worktree's, so the name survives the worktree being deleted.
+5. Otherwise the requested name, verbatim.
+
+Omitting `--project` still means **global scope**. Nothing is auto-namespaced.
+
+**Only a name the tooling invented can be overridden.** Rungs 3 and 4 apply solely when the requested name is an encoded path, or the basename of the working directory, its toplevel, or its main checkout — exactly the shapes the hooks and the curator synthesise. A name you chose is left alone even when no project by that name is registered yet, because "save first, `rememora project add` later" is the normal workflow. Without that gate, `--project ana` from inside the `myapp` worktree would silently write ana's memory into `myapp`, `search --project ana` would return `myapp`'s memories, and `evolve --project ana` would consolidate `myapp`'s.
+
+**Resolution gives up rather than guesses.** Rung 2 walks shortened prefixes, and shortening a path until *something* exists always succeeds eventually — so accepting any real directory would reliably land on a generic ancestor and mint a project called `Projects` or your own username, colliding across every unrelated repo beneath it. A project *is* a repository; `~/Projects` and `~` are containers. When nothing qualifies, the name falls through the ladder untouched and `project reconcile` reports it instead of rewriting it.
+
+Applied on `save`, `extract --save`, `session start`, `session end-active`, `curate`, `watch-transcript`, `search`, `context`, `consolidate` and `evolve`. Not applied on `export`, `timeline`, `session resume` / `session list`, `eval` or `status` — those take the name you give them.
+
+**Reads degrade differently from writes.** With no `--project`, a resolution failure yields no filter at all (search everything) rather than a guessed name: an unfiltered search scores only marginally worse, while a wrong project name scores zero.
+
+`rememora save --json` returns the resolved `project`, `worktree` and `branch`. The plain-text path prints a note on stderr whenever it rewrites what you asked for:
+
+```
+note: --project foo resolved to myapp (worktree/main checkout)
+```
+
+**Provenance is kept, not folded away.** Migration 007 adds `worktree` and `branch` columns to both `contexts` and `sessions`, with partial indexes on `worktree IS NOT NULL`. A NULL `worktree` means "written from the main checkout" — a real answer, not a missing one. These are columns rather than `tags` entries because `tags` is agent-supplied free text that `context::update` overwrites wholesale, it feeds the FTS5 index (a `worktree:` tag would pollute BM25 for anyone searching the word "worktree"), and provenance wants an equality filter.
+
+### Repairing already-stranded memories
+
+Memories written before this existed are still filed under namespaces no project claims. `rememora project reconcile` finds them and re-homes them — dry run by default:
+
+```bash
+# Report every stranded namespace, where it belongs, and by what route
+rememora project reconcile
+
+# Commit the rewrite (a single transaction)
+rememora project reconcile --apply
+
+# Machine-readable plan or outcome
+rememora project reconcile --json
+```
+
+The dry run names the route it used for each namespace — `case-insensitive project name`, `encoded path`, `session cwd`, or `session cwd → main checkout` — because those carry different confidence and you should be able to judge each rewrite rather than trust the batch. Three outcomes: rewritten; "already coherent, just unregistered" (the fix there is `rememora project add`); or unresolved. Rows whose destination URI is already taken — the same memory saved twice, once under each name — are left in place and counted as conflicts for you to review.
 
 ## Architecture
 
@@ -462,13 +517,13 @@ Session JSONL → Watermark (incremental) → Signal Gate (Haiku) → AUDN Curat
 └─────────────────────────────────────────────┘
 ```
 
-### Database Schema (3 migrations)
+### Database Schema (7 migrations)
 
 | Table | Purpose |
 |-------|---------|
-| `contexts` | Unified memory storage (18 columns, ULID PKs, URI hierarchy, L0/L1/L2 layers) |
+| `contexts` | Unified memory storage (20 columns, ULID PKs, URI hierarchy, L0/L1/L2 layers, `worktree`/`branch` provenance) |
 | `contexts_fts` | FTS5 virtual table (auto-synced via triggers) |
-| `sessions` | Agent session tracking with parent chains for transfer |
+| `sessions` | Agent session tracking (15 columns) with parent chains for transfer and `worktree`/`branch` provenance |
 | `relations` | Bidirectional inter-context links (related, depends_on, derived_from, supersedes) |
 | `context_embeddings` | Vector storage (f32 BLOB, feature-gated) |
 | `vec_contexts` | sqlite-vec KNN index (feature-gated) |
@@ -515,7 +570,7 @@ Results are exported as **Braintrust-aligned JSONL** (`input/output/expected/sco
 ## Development
 
 ```bash
-cargo test          # 187 tests (lib + integration)
+cargo test          # 345 tests (lib + integration)
 cargo build         # Debug build
 cargo clippy        # Lint
 ```
@@ -524,12 +579,12 @@ cargo clippy        # Lint
 
 | Module | Purpose |
 |--------|---------|
-| `main.rs` | CLI entry point (clap, 19 commands) |
-| `db.rs` | SQLite connection, WAL, 3 migrations |
+| `main.rs` | CLI entry point (clap, 28 commands) |
+| `db.rs` | SQLite connection, WAL, 7 migrations (006/007 `ADD COLUMN`s are guarded in Rust, not SQL) |
 | `uri.rs` | `rememora://` URI parsing & building |
 | `models/context.rs` | Context CRUD + FTS5 |
 | `models/session.rs` | Session lifecycle + transfer chains |
-| `models/project.rs` | Project metadata + CWD detection |
+| `models/project.rs` | Project metadata, worktree-aware write-target resolution (`resolve_write_target`), stranded-namespace reconcile |
 | `models/relation.rs` | Bidirectional context links |
 | `models/watermark.rs` | Curation watermarks + curator log + consolidation runs |
 | `hierarchy.rs` | L0/L1 context assembly |

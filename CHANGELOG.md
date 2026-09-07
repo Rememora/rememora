@@ -4,12 +4,28 @@ All notable changes to Rememora will be documented in this file.
 
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] — 2026-09-08
+
+### Fixed
+
+- **Plugin hooks computed the wrong transcript path for any cwd containing a dot.** `stop-curate.sh` and `session-end.sh` encoded the working directory with `sed 's|/|-|g'`, but Claude Code replaces **both** `/` and `.` with `-` (`~/.claude` → `-Users-me--claude`). For a worktree at `.agents/worktrees/issue-N` — the layout `AGENTS.md` mandates — the hook looked for a transcript that does not exist and curation silently no-opped, in exactly the worktrees agents do their work in.
+- **`truncate()` panicked mid-codepoint.** Four copies sliced by byte index, so a memory longer than the cut whose boundary byte landed inside a multi-byte character crashed the command outright and lost the write (an em-dash at byte 200 was the trigger). `commands::evolve` already had the char-boundary-safe form; `save`, `extract`, `jsonl` and `jsonl_codex` did not.
+- **Memories written from a git worktree were unreachable.** Every write path named the project after whatever directory it was standing in — a worktree basename, or Claude Code's encoded transcript directory (`-Users-me-Projects-myapp`). Because the project filter is a hard `uri LIKE 'rememora://projects/<name>/%'` prefix match, a fabricated name did not degrade recall, it drove it to zero for project memories while still returning global ones — which reads to a user as "memory doesn't work" rather than as an error. On a real 300-context store, 55 contexts (18%) were filed under fabricated names, across three shapes: worktree basenames, encoded transcript paths, and case drift (`Ana` vs `ana`). `save`, `extract --save`, `session start`, `session end-active`, `curate`, `search`, `context`, `consolidate` and `evolve` now all resolve through `project::resolve_write_target`: a registered project name wins verbatim (case-insensitively), then an encoded path, then the working directory walked back through the worktree to its main checkout, then the main checkout's own name, then the requested name. Omitting `--project` still means global scope — nothing is auto-namespaced.
+
+### Added
+
+- **`rememora project reconcile [--apply]`** — finds project namespaces that no registered project claims and re-homes them onto their real project, reporting how each one resolved (case drift, encoded path, or the `cwd` recorded on a session row). Dry run by default; `--apply` commits as a single transaction. Namespaces that already have the right name and are merely unregistered are reported as such rather than rewritten, and rows whose destination URI is already occupied are left in place and counted as conflicts.
+- **Migration 007: worktree provenance.** `worktree` and `branch` columns on `contexts` and `sessions` record which tree and branch a memory was written from, so folding a worktree write onto the main project no longer loses where it came from. A `NULL` worktree means "written from the main checkout" — a real answer, not a missing one. Partial indexes keep the index proportional to worktree writes.
+- **`rememora save --json`** now returns the resolved `project`, `worktree` and `branch`, and the plain-text path prints a note on stderr when the requested project name is rewritten.
+
 ## [1.5.0] — 2026-04-26
 
 ### Added
 
 - **`rememora update [--check]`** — best-effort check against GitHub Releases for a newer rememora. Detects the install method from the running binary's path (Homebrew / `cargo install` / unknown) and prints a hint with the right upgrade command. Caches the API result for 24h at `~/.rememora/.update-check`. Set `REMEMORA_NO_UPDATE_CHECK=1` to disable. Bare `rememora update` always hits the network; `--check` respects the cache (use this from scripts/hooks). The marketplace plugin lives on its own lineage and updates via `claude plugin update rememora@rememora`.
 - **Opportunistic notification in `rememora setup --apply`** — if the cache shows a newer release, the upgrade hint is shown inline before the outro. Failures are silent (offline, parse error, rate-limited).
+
+[1.6.0]: https://github.com/Rememora/rememora/compare/v1.5.0...v1.6.0
 
 [1.5.0]: https://github.com/Rememora/rememora/compare/v1.4.1...v1.5.0
 

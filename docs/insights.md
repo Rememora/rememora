@@ -100,3 +100,23 @@ When testing whether an agent follows tool-use instructions, **conversational ph
 Passing scenarios use **actionable specifics**: session IDs, "initialize your memory system", explicit verbs like "search", "save". Failing scenarios used **vague language**: "remember this", "look that up", "save to memory so we remember it."
 
 **Fix:** Use directive language with domain-specific terms ("persistent memory", "as a case", "search") rather than conversational phrasing. Also provide `--append-system-prompt` with rememora CLI instructions to make evals self-contained.
+
+---
+
+## A Fabricated Project Name Is Worse Than No Project Name
+
+**Context:** Project scoping on `save` and `search`, where the filter is a hard `uri LIKE 'rememora://projects/<name>/%'` prefix match.
+
+Every write path used to name the project after whatever directory it ran in — `basename $PWD`, or Claude Code's encoded transcript directory (`-Users-me-Projects-myapp`). Agent work happens in git worktrees, so this produced namespaces matching no registered project. On a real 300-context store, 55 contexts (18%) were filed under fabricated names and re-homed by `project reconcile`, across worktree basenames, encoded transcript paths, and case drift (`Ana` vs `ana`).
+
+**The failure shape is the interesting part.** A prefix match has no partial credit: a wrong project name does not rank project memories lower, it excludes every one of them. Recall goes to zero rather than degrading. And because global memories still come back, the command exits 0 with plausible-looking output — so it reads to the user as "memory doesn't work" rather than as an error they can act on. A hard failure would have been strictly better; it would have been fixed the same day.
+
+**Fix:** Resolve rather than fabricate. `project::resolve_write_target` folds a worktree directory name, an encoded path, or a case variant onto the registered project's canonical name, and omitting `--project` still means global scope rather than an auto-guessed namespace.
+
+**The read and write sides degrade differently, on purpose.** A write has to pick some name, so its ladder ends by taking the caller at their word. A read does not: with no `--project`, resolution failure yields `None` — no filter, search everything. An unfiltered search scores only marginally worse than a correctly-scoped one (the extra noise is other projects' memories, which BM25 mostly ranks below the real hits), while a wrong name scores zero. When one branch degrades gracefully and the other falls off a cliff, the asymmetry belongs in the resolver, not in every caller.
+
+**The fix reintroduced the bug, and adversarial review caught it.** Decoding the encoded transcript path is genuinely ambiguous — the encoding maps both `/` and `.` to `-`, and `-` is itself a legal path character — so the first implementation tried shortened prefixes until one existed on disk and named the project after it. That rule always succeeds eventually. Given `-Users-me-Projects-deleted-thing` it walked back to `~/Projects` and produced a project called `Projects`; given a path under `~` it produced one named after the user. Both are fresh namespaces matching nothing, colliding across every unrelated repo beneath them — the original bug, rebuilt inside the tool meant to repair it, and written to disk by `reconcile`.
+
+The discriminator that works is definitional rather than heuristic: **a project *is* a repository; `~/Projects` and `~` are containers.** A candidate is accepted only if it resolves to a registered project or is itself a git working-tree root — plus an explicit exclusion for the home directory, since keeping dotfiles in a repo at `~` is common enough to reopen the hole. When nothing qualifies, resolution returns `None` and the caller's name survives untouched.
+
+**A resolver may only override a name the tooling invented.** The same ladder originally let the working directory win over any name that was not yet registered — which meant `--project ana` from inside the `myapp` worktree wrote ana's memory into `myapp`, `search --project ana` returned `myapp`'s, and `evolve --project ana` would have consolidated `myapp`'s. Since "save first, register later" is the normal workflow, that was the common path, not an edge case. The gate is a predicate over the *shape* of the requested name: an encoded path, or the basename of the working directory / its toplevel / its main checkout — precisely what the hooks and the curator synthesise. Anything else is a human's word, and a resolver has no standing to overrule it.

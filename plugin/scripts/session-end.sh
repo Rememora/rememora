@@ -23,12 +23,15 @@ INPUT=$(cat)
 CWD=$(echo "$INPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('cwd',''))" 2>/dev/null || echo "")
 SESSION_ID=$(echo "$INPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('session_id',''))" 2>/dev/null || echo "")
 
-# Pass the same project name session-start.sh used (basename of cwd). Without
-# this, `end-active` falls back to `detect_from_cwd` which only resolves
-# *registered* projects — running `claude -p` from `/tmp/<scratch>` (CI,
-# agent-loop, ad-hoc) would silently no-op and leak active session rows
-# forever (issue #114). The CLI also gained a basename-fallback so older
-# hooks keep working, but this explicit form is the canonical one.
+# Pass the same project name session-start.sh used (basename of cwd). Both ends
+# run it through `project::resolve_write_target`, so a worktree basename folds
+# onto the main checkout's project identically on open and on close — a session
+# opened as `rememora` from a worktree cannot be found by looking up
+# `worktree-brave-meadow-e668`.
+#
+# Passing it explicitly is what stopped `claude -p` from `/tmp/<scratch>` (CI,
+# agent-loop, ad-hoc) silently no-opping and leaking active session rows forever
+# (issue #114): `detect_from_cwd` alone only resolves *registered* projects.
 PROJECT_FOR_END=""
 if [ -n "$CWD" ]; then
   PROJECT_FOR_END=$(basename "$CWD")
@@ -41,7 +44,13 @@ else
 fi
 
 if [ -n "$CWD" ] && [ -n "$SESSION_ID" ]; then
-  ENCODED_CWD=$(echo "$CWD" | sed 's|/|-|g')
+  # Claude Code encodes the cwd by replacing BOTH '/' and '.' with '-'
+  # (`~/.claude` becomes `-Users-me--claude`). Encoding only '/' yielded a path
+  # that does not exist for any cwd containing a dot — including the
+  # `.agents/worktrees/issue-N` layout AGENTS.md mandates — so the transcript
+  # was never found and curation silently no-opped in exactly the worktrees
+  # agents work in. Must match `decoded_candidates` in src/models/project.rs.
+  ENCODED_CWD=$(echo "$CWD" | sed 's|[/.]|-|g')
   JSONL_PATH="$HOME/.claude/projects/${ENCODED_CWD}/${SESSION_ID}.jsonl"
   PROJECT=$(basename "$CWD")
 

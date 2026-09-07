@@ -320,7 +320,13 @@ fn truncate_str(s: &str, max: usize) -> String {
     if s.len() <= max {
         s.to_string()
     } else {
-        format!("{}…", &s[..max])
+        // Byte slicing panics mid-codepoint. Any memory longer than `max` whose
+        // `max`th byte lands inside a multi-byte char — an em-dash at byte 200
+        // is the one that found this — used to crash the whole command. Walk
+        // back to the nearest char boundary instead. Same fix as
+        // `commands::evolve::truncate`.
+        let cut = (0..=max).rev().find(|&i| s.is_char_boundary(i)).unwrap_or(0);
+        format!("{}…", &s[..cut])
     }
 }
 

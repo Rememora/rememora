@@ -10,6 +10,11 @@ Cross-agent memory system. Rust CLI backed by SQLite.
 - Hotness scoring: sigmoid(log1p(access_count)) * exp(-age/half_life)
 - Sessions with transfer chains for cross-agent continuity
 - FTS5 full-text search
+- Worktree-aware project resolution: `project::resolve_write_target` folds a git
+  worktree onto its main checkout on every write and scoping read path, so a
+  `--project` naming a worktree does not create a namespace nothing can search
+- `worktree`/`branch` provenance columns on `contexts` and `sessions`
+  (migration 007); a NULL worktree means "written from the main checkout"
 
 ## Key files
 
@@ -18,6 +23,7 @@ Cross-agent memory system. Rust CLI backed by SQLite.
 - `src/uri.rs` — rememora:// URI parsing
 - `src/models/context.rs` — Context CRUD + FTS5
 - `src/models/session.rs` — Session lifecycle
+- `src/models/project.rs` — Project registry, write-target resolution, reconcile
 - `src/hierarchy.rs` — L0/L1 context assembly
 - `src/search.rs` — BM25 search
 - `src/hotness.rs` — Scoring
@@ -43,3 +49,7 @@ cargo install --path .        # Install globally
 - Git worktrees for local agents must be created under `.agents/worktrees/`
 - Do not create agent worktrees under `.claude/`, `../`, or temporary sibling directories
 - If you need an isolated workspace for an issue, use a path like `.agents/worktrees/issue-<issue-number>`
+- Memories saved from a worktree are filed under the **main checkout's** project,
+  not the worktree directory, with the worktree and branch kept as provenance.
+  Keep passing `--project rememora` — a registered name always wins verbatim.
+  Never substitute the worktree's directory name for the project name.

@@ -134,6 +134,8 @@ impl MemoryBuilder {
                 source_agent: Some(self.agent.clone()),
                 source_session: None,
                 importance: self.importance,
+                worktree: None,
+                branch: None,
             },
         )
         .expect("Failed to insert test memory");
@@ -250,6 +252,7 @@ impl SessionBuilder {
             self.cwd.as_deref(),
             &self.intent,
             self.parent.as_deref(),
+            &session::Provenance::default(),
         )
         .expect("Failed to start test session");
 

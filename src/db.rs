@@ -8,6 +8,7 @@ const MIGRATION_003: &str = include_str!("migrations/003_curator.sql");
 const MIGRATION_004: &str = include_str!("migrations/004_agent_invocations.sql");
 const MIGRATION_005: &str = include_str!("migrations/005_hook_invocations.sql");
 const MIGRATION_006: &str = include_str!("migrations/006_access_recency.sql");
+const MIGRATION_007: &str = include_str!("migrations/007_worktree_provenance.sql");
 
 /// The one statement of migration 006 that cannot be replayed.
 ///
@@ -18,6 +19,22 @@ const MIGRATION_006: &str = include_str!("migrations/006_access_recency.sql");
 /// `migrations/006_access_recency.sql` with the rest of the migration, which is
 /// idempotent on its own and safe to re-run.
 const MIGRATION_006_ADD_COLUMN: &str = "ALTER TABLE contexts ADD COLUMN last_accessed_at TEXT;";
+
+/// The four non-replayable statements of migration 007, each guarded
+/// independently in `migrate()`.
+///
+/// Same constraint as `MIGRATION_006_ADD_COLUMN`, but four columns across two
+/// tables. They are listed as `(table, column)` pairs rather than one batch so
+/// that a database left half-migrated — by an interrupted pre-transaction
+/// build, or a restored file — gets each missing column added and each present
+/// one skipped, instead of failing on the first duplicate and abandoning the
+/// rest.
+const MIGRATION_007_ADD_COLUMNS: &[(&str, &str)] = &[
+    ("contexts", "worktree"),
+    ("contexts", "branch"),
+    ("sessions", "worktree"),
+    ("sessions", "branch"),
+];
 
 /// Register sqlite-vec extension before opening connections.
 /// Must be called before any Connection::open calls.
@@ -192,6 +209,32 @@ fn migrate(conn: &Connection) -> Result<()> {
         tx.execute_batch(MIGRATION_006)?;
         tx.execute(
             "INSERT INTO _migrations (name, applied_at) VALUES ('006_access_recency', datetime('now'))",
+            [],
+        )?;
+        tx.commit()?;
+    }
+
+    let applied_007: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM _migrations WHERE name = '007_worktree_provenance')",
+        [],
+        |row| row.get(0),
+    )?;
+
+    if !applied_007 {
+        // Same two guards as 006 — an IMMEDIATE transaction so "applied" and
+        // "recorded" are one fact, and a per-column existence check so a
+        // half-migrated database still opens.
+        let tx = Transaction::new_unchecked(conn, TransactionBehavior::Immediate)?;
+        for (table, column) in MIGRATION_007_ADD_COLUMNS {
+            if !column_exists(&tx, table, column)? {
+                // Both halves are compile-time literals from
+                // `MIGRATION_007_ADD_COLUMNS`, never user input.
+                tx.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} TEXT;"))?;
+            }
+        }
+        tx.execute_batch(MIGRATION_007)?;
+        tx.execute(
+            "INSERT INTO _migrations (name, applied_at) VALUES ('007_worktree_provenance', datetime('now'))",
             [],
         )?;
         tx.commit()?;

@@ -7,11 +7,20 @@ use rememora::models::project;
 use rememora::models::watermark;
 
 pub fn run(conn: &Connection, project_name: Option<&str>, auto: bool, cheatsheet: bool) -> Result<()> {
+    let cwd = std::env::current_dir()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+
+    // `--auto` is what the SessionStart hook uses to load context, so it has to
+    // see through a worktree the same way `save` and `search` do — a bare
+    // `detect_from_cwd` returns None from any worktree and the session opens
+    // with global memories only. An explicit `--project` goes through the same
+    // ladder so a fabricated name gets rewritten rather than filtering to
+    // nothing.
     let proj = if auto {
-        let cwd = std::env::current_dir()?;
-        project::detect_from_cwd(conn, cwd.to_str().unwrap_or(""))?
+        project::resolve_for_cwd(conn, &cwd)?
     } else {
-        project_name.map(String::from)
+        project::resolve_write_target(conn, project_name, &cwd).project
     };
 
     if cheatsheet {

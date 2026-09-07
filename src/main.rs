@@ -40,6 +40,22 @@ fn is_read_only_command(command: &Commands) -> bool {
     )
 }
 
+/// Rewrite a `--project` that names a worktree, an encoded transcript path, or
+/// a case variant into the project it actually means.
+///
+/// Most commands run this inside their own module, next to the rest of their
+/// resolution. `consolidate` and `evolve` take the name as a plain filter and
+/// pass it straight to a `uri LIKE` clause, so they are normalized here at the
+/// CLI boundary instead — a fabricated name would otherwise select zero
+/// memories and both commands would report "nothing to consolidate" rather than
+/// an error.
+fn normalize_project(conn: &rusqlite::Connection, project: Option<String>) -> Option<String> {
+    let cwd = std::env::current_dir()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    rememora::models::project::resolve_write_target(conn, project.as_deref(), &cwd).project
+}
+
 fn readonly_refusal(command: &Commands) -> Option<String> {
     if readonly_armed() && !is_read_only_command(command) {
         return Some(format!(
@@ -677,6 +693,18 @@ enum ProjectAction {
         /// Project name
         name: String,
     },
+
+    /// Re-home memories filed under project namespaces no project claims.
+    ///
+    /// Worktrees, Claude Code's encoded transcript directories, and case drift
+    /// each used to produce a project name matching nothing, stranding those
+    /// memories behind a URI prefix filter no search would ever use. Dry run by
+    /// default; `--apply` commits the rewrite.
+    Reconcile {
+        /// Commit the rewrite. Without this the command only reports.
+        #[arg(long)]
+        apply: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -865,6 +893,9 @@ fn main() -> Result<()> {
             }
             ProjectAction::List => commands::project::list(&conn, cli.json),
             ProjectAction::Show { name } => commands::project::show(&conn, &name, cli.json),
+            ProjectAction::Reconcile { apply } => {
+                commands::project::reconcile(&conn, apply, cli.json)
+            }
         },
 
         Commands::Relate {
@@ -972,7 +1003,7 @@ fn main() -> Result<()> {
         } => commands::consolidate::run(
             &conn,
             &commands::consolidate::ConsolidateArgs {
-                project,
+                project: normalize_project(&conn, project),
                 dry_run,
                 apply,
                 check_only,
@@ -989,18 +1020,23 @@ fn main() -> Result<()> {
             undo_log,
             min_similarity,
             max_batch,
-        } => commands::evolve::run(
-            &conn,
-            &commands::evolve::EvolveArgs {
-                project: project.as_deref(),
-                dry_run,
-                apply,
-                undo_log,
-                min_similarity,
-                max_batch,
-            },
-            cli.json,
-        ),
+        } => {
+            // Bound outside the call so `project.as_deref()` has something to
+            // borrow from — `EvolveArgs` holds a `&str`, not an owned name.
+            let project = normalize_project(&conn, project);
+            commands::evolve::run(
+                &conn,
+                &commands::evolve::EvolveArgs {
+                    project: project.as_deref(),
+                    dry_run,
+                    apply,
+                    undo_log,
+                    min_similarity,
+                    max_batch,
+                },
+                cli.json,
+            )
+        }
 
         Commands::Eval { project, days } => commands::eval::run(
             &conn,

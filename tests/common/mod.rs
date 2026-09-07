@@ -23,6 +23,8 @@ pub fn seed_test_data(conn: &Connection) {
         source_agent: Some("claude-code".into()),
         source_session: None,
         importance: 0.9,
+        worktree: None,
+        branch: None,
     }).expect("Failed to insert test memory");
 
     rememora::models::context::insert(conn, &rememora::models::context::InsertContext {
@@ -38,6 +40,8 @@ pub fn seed_test_data(conn: &Connection) {
         source_agent: Some("claude-code".into()),
         source_session: None,
         importance: 0.8,
+        worktree: None,
+        branch: None,
     }).expect("Failed to insert test preference");
 
     rememora::models::context::insert(conn, &rememora::models::context::InsertContext {
@@ -53,5 +57,7 @@ pub fn seed_test_data(conn: &Connection) {
         source_agent: Some("codex".into()),
         source_session: None,
         importance: 0.7,
+        worktree: None,
+        branch: None,
     }).expect("Failed to insert test entity");
 }

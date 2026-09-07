@@ -26,12 +26,14 @@ fn test_cross_agent_context_transfer() {
             source_agent: Some("claude-code".into()),
             source_session: None,
             importance: 0.9,
+            worktree: None,
+            branch: None,
         },
     )
     .unwrap();
 
     // Agent A ends session as transferred
-    let session_a = session::start(&conn, "claude-code", Some("xfer"), None, "auth flow", None).unwrap();
+    let session_a = session::start(&conn, "claude-code", Some("xfer"), None, "auth flow", None, &session::Provenance::default()).unwrap();
     session::end(
         &conn,
         &session_a,
@@ -60,15 +62,15 @@ fn test_multiple_transfer_chain() {
     rememora::models::project::add(&conn, "chain", None, "Chain test", &[]).unwrap();
 
     // Session 1 (Claude Code) → transferred
-    let s1 = session::start(&conn, "claude-code", Some("chain"), None, "start work", None).unwrap();
+    let s1 = session::start(&conn, "claude-code", Some("chain"), None, "start work", None, &session::Provenance::default()).unwrap();
     session::end(&conn, &s1, "Phase 1 done", Some("Need phase 2"), Some("transferred")).unwrap();
 
     // Session 2 (Codex) continues from s1 → transferred
-    let s2 = session::start(&conn, "codex", Some("chain"), None, "continue work", Some(&s1)).unwrap();
+    let s2 = session::start(&conn, "codex", Some("chain"), None, "continue work", Some(&s1), &session::Provenance::default()).unwrap();
     session::end(&conn, &s2, "Phase 2 done", Some("Need phase 3"), Some("transferred")).unwrap();
 
     // Session 3 (Claude Code) continues from s2
-    let s3 = session::start(&conn, "claude-code", Some("chain"), None, "finish work", Some(&s2)).unwrap();
+    let s3 = session::start(&conn, "claude-code", Some("chain"), None, "finish work", Some(&s2), &session::Provenance::default()).unwrap();
 
     // Verify chain
     let s3_record = session::get_by_id(&conn, &s3).unwrap().unwrap();

@@ -50,9 +50,17 @@ if [ -z "$CWD" ] || [ -z "$SESSION_ID" ]; then
   exit 0
 fi
 
-# Encode CWD to match Claude Code's project directory naming
+# Encode CWD to match Claude Code's project directory naming:
 # /Users/user/Projects/myproject → -Users-user-Projects-myproject
-ENCODED_CWD=$(echo "$CWD" | sed 's|/|-|g')
+#
+# Claude Code replaces BOTH '/' and '.' with '-'
+# (`~/.claude` becomes `-Users-me--claude`). Encoding only '/' produced a path
+# that does not exist for any cwd containing a dot — including the
+# `.agents/worktrees/issue-N` layout AGENTS.md mandates and the
+# `.claude/worktrees/` trees Claude Code creates itself — so the transcript was
+# never found and curation silently no-opped in exactly the worktrees agents
+# work in. Must match `decoded_candidates` in src/models/project.rs.
+ENCODED_CWD=$(echo "$CWD" | sed 's|[/.]|-|g')
 
 JSONL_PATH="$HOME/.claude/projects/${ENCODED_CWD}/${SESSION_ID}.jsonl"
 
@@ -60,7 +68,10 @@ if [ ! -f "$JSONL_PATH" ]; then
   exit 0
 fi
 
-# Detect project name from CWD
+# Candidate project name from CWD — a request, not the answer. `rememora curate`
+# resolves it (and the encoded transcript directory it already has) through
+# `project::resolve_write_target`, so a worktree basename folds onto the main
+# checkout rather than opening a namespace nothing can search.
 PROJECT=$(basename "$CWD")
 
 # Two gates guard the per-turn Stop-hook stampede of `rememora curate` (and its

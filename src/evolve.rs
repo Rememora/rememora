@@ -302,6 +302,8 @@ mod tests {
             created_at: String::new(),
             updated_at: String::new(),
             superseded_by: None,
+            worktree: None,
+            branch: None,
         }
     }
 
@@ -423,6 +425,8 @@ mod tests {
             created_at: String::new(),
             updated_at: String::new(),
             superseded_by: None,
+            worktree: None,
+            branch: None,
         };
         let query = build_search_query(&mem);
         assert!(query.contains("Zustand"));

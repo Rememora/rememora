@@ -295,6 +295,10 @@ Guidelines:
 
 - Search first when duplication is likely: `rememora search "<topic>" --project rememora`
 - Omit `--project` only for genuinely global user preferences
+- `--project rememora` is safe from inside a `.agents/worktrees/` worktree: a
+  registered project name always wins verbatim, and the worktree you wrote from
+  is recorded separately as provenance. Never substitute the worktree's
+  directory name for the project name.
 - Put ephemeral task state into `rememora session end ... --working-state`, not `rememora save`
 - Write the memory so it still makes sense when read out of context later
 - When correcting an outdated memory, save the replacement and supersede the old one if you know its ID

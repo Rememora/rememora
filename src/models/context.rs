@@ -22,9 +22,17 @@ pub struct ContextRecord {
     pub created_at: String,
     pub updated_at: String,
     pub superseded_by: Option<String>,
+    /// Linked worktree this was written from; `None` means the main checkout.
+    /// See migration 007 — provenance, deliberately separate from the project
+    /// the memory belongs to.
+    #[serde(default)]
+    pub worktree: Option<String>,
+    /// Branch checked out when this was written.
+    #[serde(default)]
+    pub branch: Option<String>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct InsertContext {
     pub uri: String,
     pub parent_uri: Option<String>,
@@ -38,6 +46,11 @@ pub struct InsertContext {
     pub source_agent: Option<String>,
     pub source_session: Option<String>,
     pub importance: f64,
+    /// Provenance from `project::WriteTarget`. Both default to `None`, which
+    /// reads as "written from the main checkout" — the right answer for the
+    /// non-git callers (tests, `project::add`) that never set them.
+    pub worktree: Option<String>,
+    pub branch: Option<String>,
 }
 
 pub fn insert(conn: &Connection, ctx: &InsertContext) -> Result<String> {
@@ -45,8 +58,8 @@ pub fn insert(conn: &Connection, ctx: &InsertContext) -> Result<String> {
     let now = chrono::Utc::now().to_rfc3339();
 
     conn.execute(
-        "INSERT INTO contexts (id, uri, parent_uri, context_type, category, name, abstract, overview, content, tags, source_agent, source_session, importance, active_count, created_at, updated_at, last_accessed_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 0, ?14, ?14, ?14)",
+        "INSERT INTO contexts (id, uri, parent_uri, context_type, category, name, abstract, overview, content, tags, source_agent, source_session, importance, active_count, created_at, updated_at, last_accessed_at, worktree, branch)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 0, ?14, ?14, ?14, ?15, ?16)",
         params![
             id,
             ctx.uri,
@@ -62,6 +75,8 @@ pub fn insert(conn: &Connection, ctx: &InsertContext) -> Result<String> {
             ctx.source_session,
             ctx.importance,
             now,
+            ctx.worktree,
+            ctx.branch,
         ],
     )?;
 
@@ -70,7 +85,7 @@ pub fn insert(conn: &Connection, ctx: &InsertContext) -> Result<String> {
 
 pub fn get_by_id(conn: &Connection, id: &str) -> Result<Option<ContextRecord>> {
     let mut stmt = conn.prepare(
-        "SELECT id, uri, parent_uri, context_type, category, name, abstract, overview, content, tags, source_agent, source_session, importance, active_count, created_at, updated_at, superseded_by
+        "SELECT id, uri, parent_uri, context_type, category, name, abstract, overview, content, tags, source_agent, source_session, importance, active_count, created_at, updated_at, superseded_by, worktree, branch
          FROM contexts WHERE id = ?1",
     )?;
 
@@ -83,7 +98,7 @@ pub fn get_by_id(conn: &Connection, id: &str) -> Result<Option<ContextRecord>> {
 
 pub fn get_by_uri(conn: &Connection, uri: &str) -> Result<Option<ContextRecord>> {
     let mut stmt = conn.prepare(
-        "SELECT id, uri, parent_uri, context_type, category, name, abstract, overview, content, tags, source_agent, source_session, importance, active_count, created_at, updated_at, superseded_by
+        "SELECT id, uri, parent_uri, context_type, category, name, abstract, overview, content, tags, source_agent, source_session, importance, active_count, created_at, updated_at, superseded_by, worktree, branch
          FROM contexts WHERE uri = ?1",
     )?;
 
@@ -96,7 +111,7 @@ pub fn get_by_uri(conn: &Connection, uri: &str) -> Result<Option<ContextRecord>>
 
 pub fn list_by_parent(conn: &Connection, parent_uri: &str) -> Result<Vec<ContextRecord>> {
     let mut stmt = conn.prepare(
-        "SELECT id, uri, parent_uri, context_type, category, name, abstract, overview, content, tags, source_agent, source_session, importance, active_count, created_at, updated_at, superseded_by
+        "SELECT id, uri, parent_uri, context_type, category, name, abstract, overview, content, tags, source_agent, source_session, importance, active_count, created_at, updated_at, superseded_by, worktree, branch
          FROM contexts WHERE parent_uri = ?1 AND superseded_by IS NULL
          ORDER BY importance DESC, created_at DESC",
     )?;
@@ -182,7 +197,7 @@ pub fn last_accessed_at(conn: &Connection, id: &str) -> Result<Option<String>> {
 
 pub fn list_by_scope(conn: &Connection, context_type: Option<&str>, category: Option<&str>, project: Option<&str>, limit: usize) -> Result<Vec<ContextRecord>> {
     let mut sql = String::from(
-        "SELECT id, uri, parent_uri, context_type, category, name, abstract, overview, content, tags, source_agent, source_session, importance, active_count, created_at, updated_at, superseded_by
+        "SELECT id, uri, parent_uri, context_type, category, name, abstract, overview, content, tags, source_agent, source_session, importance, active_count, created_at, updated_at, superseded_by, worktree, branch
          FROM contexts WHERE superseded_by IS NULL",
     );
     let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
@@ -239,6 +254,8 @@ fn row_to_context(row: &rusqlite::Row) -> rusqlite::Result<ContextRecord> {
         created_at: row.get(14)?,
         updated_at: row.get(15)?,
         superseded_by: row.get(16)?,
+        worktree: row.get(17)?,
+        branch: row.get(18)?,
     })
 }
 

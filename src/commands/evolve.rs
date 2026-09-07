@@ -479,6 +479,13 @@ fn apply_decision(
                         source_agent: best.source_agent.clone(),
                         source_session: None,
                         importance,
+                        // A consolidated memory spans a whole cluster, which
+                        // generally spans several worktrees; inheriting one
+                        // member's provenance would assert something false.
+                        // The originals are superseded, not deleted, so their
+                        // own `worktree`/`branch` remain the record.
+                        worktree: None,
+                        branch: None,
                     },
                 )?;
 
@@ -832,6 +839,8 @@ mod tests {
                 source_agent: Some("claude-code".into()),
                 source_session: None,
                 importance: 0.5,
+                worktree: None,
+                branch: None,
             },
         )
         .unwrap()

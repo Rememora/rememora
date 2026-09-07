@@ -90,7 +90,8 @@ fn list_peers(
     let mut sql = String::from(
         "SELECT id, uri, parent_uri, context_type, category, name, abstract,
                 overview, content, tags, source_agent, source_session,
-                importance, active_count, created_at, updated_at, superseded_by
+                importance, active_count, created_at, updated_at, superseded_by,
+                worktree, branch
          FROM contexts
          WHERE superseded_by IS NULL AND id != ?1",
     );
@@ -133,6 +134,8 @@ fn list_peers(
                 created_at: row.get(14)?,
                 updated_at: row.get(15)?,
                 superseded_by: row.get(16)?,
+                worktree: row.get(17)?,
+                branch: row.get(18)?,
             })
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;

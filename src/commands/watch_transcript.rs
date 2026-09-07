@@ -13,6 +13,7 @@ use std::time::Duration;
 use rememora::curator::{self, Signal};
 use rememora::jsonl_codex;
 use rememora::models::agent_invocation::{self, Caller};
+use rememora::models::project;
 use rememora::models::watermark;
 
 /// How often `--follow` mode re-checks the file for new content.
@@ -99,7 +100,7 @@ fn run_once(conn: &Connection, args: &WatchTranscriptArgs, json_output: bool) ->
 
     // Signal gate (Haiku).
     let gate = curator::signal_gate(&transcript)?;
-    let project_for_telemetry = resolve_project(args, &parse_result.cwd, &args.path);
+    let project_for_telemetry = resolve_project(conn, args, &parse_result.cwd, &args.path);
     if let Some(t) = &gate.telemetry {
         agent_invocation::try_insert(
             conn,
@@ -183,7 +184,42 @@ fn run_once(conn: &Connection, args: &WatchTranscriptArgs, json_output: bool) ->
 
 /// Project resolution order: explicit `--project` → `session_meta.cwd`
 /// basename → path-based fallback → `"unknown"`.
-fn resolve_project(args: &WatchTranscriptArgs, cwd: &Option<String>, path: &Path) -> String {
+///
+/// The candidate is then put through [`project::resolve_write_target`], the same
+/// ladder every other write path uses, against the transcript's *own* recorded
+/// `cwd` rather than this process's. That distinction matters here: a Codex
+/// session recorded in a worktree yields `worktree-brave-meadow-e668` as the
+/// basename, and `watch-transcript` is typically run from somewhere else
+/// entirely — so resolving against the process cwd would strand the memories
+/// the curator then writes, which is the whole bug this ladder exists to close.
+fn resolve_project(
+    conn: &Connection,
+    args: &WatchTranscriptArgs,
+    cwd: &Option<String>,
+    path: &Path,
+) -> String {
+    let candidate = resolve_project_candidate(args, cwd, path);
+
+    // Prefer the transcript's recorded cwd; fall back to this process's only
+    // when the transcript did not record one.
+    let resolve_dir = cwd.clone().unwrap_or_else(|| {
+        std::env::current_dir()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    });
+
+    project::resolve_write_target(conn, Some(&candidate), &resolve_dir)
+        .project
+        .unwrap_or(candidate)
+}
+
+/// The raw candidate name, before resolution. Kept separate so the ordering
+/// stays directly testable without a database.
+fn resolve_project_candidate(
+    args: &WatchTranscriptArgs,
+    cwd: &Option<String>,
+    path: &Path,
+) -> String {
     if let Some(p) = args.project.as_deref() {
         return p.to_string();
     }
@@ -213,7 +249,7 @@ mod tests {
             project: Some("my-app".into()),
             dry_run: false,
         };
-        let got = resolve_project(&args, &Some("/Users/me/other".into()), &args.path);
+        let got = resolve_project_candidate(&args, &Some("/Users/me/other".into()), &args.path);
         assert_eq!(got, "my-app");
     }
 
@@ -226,7 +262,7 @@ mod tests {
             project: None,
             dry_run: false,
         };
-        let got = resolve_project(&args, &Some("/Users/me/homeserver".into()), &args.path);
+        let got = resolve_project_candidate(&args, &Some("/Users/me/homeserver".into()), &args.path);
         assert_eq!(got, "homeserver");
     }
 
@@ -239,7 +275,7 @@ mod tests {
             project: None,
             dry_run: false,
         };
-        let got = resolve_project(&args, &None, &args.path);
+        let got = resolve_project_candidate(&args, &None, &args.path);
         assert_eq!(got, "session");
     }
 }

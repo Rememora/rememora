@@ -4,6 +4,7 @@ use std::io::Read;
 
 use rememora::models::agent_invocation::{self, Caller};
 use rememora::models::context::{self, InsertContext};
+use rememora::models::project;
 use rememora::uri;
 
 use crate::commands::save;
@@ -123,17 +124,25 @@ pub fn run(
     }
 
     if save {
-        // Same attribution as `commands::save`, resolved once for the batch:
-        // `extract --save` is a shipped memory-creation path, so leaving it on
+        // Same project resolution as `commands::save`, resolved once for the
+        // batch: `extract --save` is a shipped memory-creation path, so it has
+        // to fold a worktree onto the main checkout too, or it reopens the same
+        // stranded-namespace hole from a different door.
+        let cwd = std::env::current_dir()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let target = project::resolve_write_target(conn, project, &cwd);
+
+        // Same attribution as `commands::save`: `extract --save` leaving
         // `source_session: None` would keep writing permanently unattributed
         // rows and hold `eval`'s `unattributed_memories` above zero forever.
         // Best-effort by design — see `save::resolve_source_session`.
-        let source_session = save::resolve_source_session(conn, project);
+        let source_session = save::resolve_source_session(conn, target.project.as_deref());
 
         let mut saved = Vec::new();
         for mem in &memories {
             let slug = uri::slugify(&mem.text.chars().take(60).collect::<String>());
-            let mem_uri = uri::build_memory_uri(project, &mem.category, &slug);
+            let mem_uri = uri::build_memory_uri(target.project.as_deref(), &mem.category, &slug);
             let parent = uri::parent(&mem_uri)?.unwrap_or_default();
 
             let id = context::insert(
@@ -151,6 +160,8 @@ pub fn run(
                     source_agent: agent.map(String::from),
                     source_session: source_session.clone(),
                     importance: mem.importance,
+                    worktree: target.worktree.clone(),
+                    branch: target.branch.clone(),
                 },
             )?;
             saved.push(serde_json::json!({
@@ -201,6 +212,12 @@ fn truncate(s: &str, max: usize) -> String {
     if s.len() <= max {
         s.to_string()
     } else {
-        format!("{}...", &s[..max])
+        // Byte slicing panics mid-codepoint. Any memory longer than `max` whose
+        // `max`th byte lands inside a multi-byte char — an em-dash at byte 200
+        // is the one that found this — used to crash the whole command. Walk
+        // back to the nearest char boundary instead. Same fix as
+        // `commands::evolve::truncate`.
+        let cut = (0..=max).rev().find(|&i| s.is_char_boundary(i)).unwrap_or(0);
+        format!("{}...", &s[..cut])
     }
 }

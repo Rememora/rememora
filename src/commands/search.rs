@@ -46,18 +46,31 @@ pub struct SearchArgs {
 /// Project to filter on: an explicit `--project` wins, otherwise resolve from
 /// the working directory.
 ///
-/// Resolution failure yields `None` (search everything) rather than a guessed
-/// name. See `project::resolve_for_cwd` for why that asymmetry matters.
+/// An explicit `--project` is still put through `resolve_write_target`, because
+/// the read side has to make the same rewrite the write side does. An agent in
+/// a worktree that saves under a fabricated name and then searches under the
+/// same fabricated name would otherwise agree with itself perfectly and find
+/// nothing — the project filter is a hard URI prefix match, so a name matching
+/// no project silently excludes every project memory and returns only global
+/// ones. That reads as "memory doesn't work" rather than as an error.
+///
+/// Resolution failure with no `--project` yields `None` (search everything)
+/// rather than a guessed name. See `project::resolve_for_cwd` for why that
+/// asymmetry matters.
 fn effective_project(conn: &Connection, args: &SearchArgs) -> Option<String> {
-    if args.project.is_some() {
-        return args.project.clone();
-    }
+    let cwd = args
+        .cwd
+        .clone()
+        .or_else(|| {
+            std::env::current_dir()
+                .ok()
+                .map(|p| p.to_string_lossy().into_owned())
+        })
+        .unwrap_or_default();
 
-    let cwd = args.cwd.clone().or_else(|| {
-        std::env::current_dir()
-            .ok()
-            .map(|p| p.to_string_lossy().into_owned())
-    })?;
+    if args.project.is_some() {
+        return project::resolve_write_target(conn, args.project.as_deref(), &cwd).project;
+    }
 
     // Best-effort: a resolution error must never fail the search, because this
     // runs on the prompt-submit critical path.
