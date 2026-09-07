@@ -41,6 +41,17 @@ if [ -n "$INPUT" ]; then
   SOURCE=$(echo "$INPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('source',''))" 2>/dev/null || echo "")
 fi
 
+# A *request*, not the answer. In a git worktree — where agent work happens —
+# this names the worktree, which is not a project. `session start` and
+# `consolidate` (the two commands used below) both run it through
+# `project::resolve_write_target`, which folds a worktree onto its main checkout
+# and records the worktree separately. Not every command that accepts --project
+# resolves — `export`, `timeline`, `eval` and `session list` take the name as
+# given — but none of those is used here.
+#
+# Deliberately still sent rather than dropped: a freshly updated plugin can meet
+# an older installed CLI that predates the resolver and needs *some* name.
+# Passing the basename is correct-or-better against both.
 PROJECT=$(basename "$PWD")
 
 # Context injection — skip entirely on `clear` (user wants a clean slate).

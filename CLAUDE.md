@@ -8,3 +8,6 @@
   - `.claude/agents/rememora-developer.md` for ticket implementation work
   - `.claude/agents/rememora-triage.md` for project board triage work
 - Use `.agents/worktrees/` for any new local git worktrees
+- Memories written from a worktree are filed under the main checkout's project
+  (`rememora`), with the worktree and branch recorded as provenance — keep
+  passing `--project rememora` as usual

@@ -5,7 +5,7 @@ use rememora::models::session;
 #[test]
 fn test_start_session() {
     let conn = common::create_test_db();
-    let id = session::start(&conn, "claude-code", Some("myapp"), Some("/tmp/test"), "auth flow", None).unwrap();
+    let id = session::start(&conn, "claude-code", Some("myapp"), Some("/tmp/test"), "auth flow", None, &session::Provenance::default()).unwrap();
 
     let s = session::get_by_id(&conn, &id).unwrap().unwrap();
     assert_eq!(s.status, "active");
@@ -19,7 +19,7 @@ fn test_start_session() {
 #[test]
 fn test_end_session() {
     let conn = common::create_test_db();
-    let id = session::start(&conn, "claude-code", Some("myapp"), None, "test", None).unwrap();
+    let id = session::start(&conn, "claude-code", Some("myapp"), None, "test", None, &session::Provenance::default()).unwrap();
 
     session::end(&conn, &id, "Completed the work", None, None).unwrap();
 
@@ -32,7 +32,7 @@ fn test_end_session() {
 #[test]
 fn test_end_session_transferred() {
     let conn = common::create_test_db();
-    let id = session::start(&conn, "claude-code", Some("myapp"), None, "auth flow", None).unwrap();
+    let id = session::start(&conn, "claude-code", Some("myapp"), None, "auth flow", None, &session::Provenance::default()).unwrap();
 
     session::end(
         &conn,
@@ -52,9 +52,9 @@ fn test_end_session_transferred() {
 fn test_get_latest_for_project() {
     let conn = common::create_test_db();
 
-    session::start(&conn, "claude-code", Some("myapp"), None, "first", None).unwrap();
+    session::start(&conn, "claude-code", Some("myapp"), None, "first", None, &session::Provenance::default()).unwrap();
     std::thread::sleep(std::time::Duration::from_millis(10)); // ensure different timestamps
-    let id2 = session::start(&conn, "codex", Some("myapp"), None, "second", None).unwrap();
+    let id2 = session::start(&conn, "codex", Some("myapp"), None, "second", None, &session::Provenance::default()).unwrap();
 
     let latest = session::get_latest_for_project(&conn, "myapp").unwrap().unwrap();
     assert_eq!(latest.id, id2);
@@ -65,9 +65,9 @@ fn test_get_latest_for_project() {
 fn test_list_sessions() {
     let conn = common::create_test_db();
 
-    session::start(&conn, "claude-code", Some("myapp"), None, "one", None).unwrap();
-    session::start(&conn, "codex", Some("myapp"), None, "two", None).unwrap();
-    session::start(&conn, "gemini", Some("other"), None, "three", None).unwrap();
+    session::start(&conn, "claude-code", Some("myapp"), None, "one", None, &session::Provenance::default()).unwrap();
+    session::start(&conn, "codex", Some("myapp"), None, "two", None, &session::Provenance::default()).unwrap();
+    session::start(&conn, "gemini", Some("other"), None, "three", None, &session::Provenance::default()).unwrap();
 
     let myapp_sessions = session::list(&conn, Some("myapp"), 10).unwrap();
     assert_eq!(myapp_sessions.len(), 2);
@@ -84,11 +84,11 @@ fn test_get_active_for_project() {
     let conn = common::create_test_db();
 
     // Create an active session and an ended session
-    let id1 = session::start(&conn, "claude-code", Some("myapp"), None, "first", None).unwrap();
+    let id1 = session::start(&conn, "claude-code", Some("myapp"), None, "first", None, &session::Provenance::default()).unwrap();
     session::end(&conn, &id1, "Done", None, None).unwrap();
 
     std::thread::sleep(std::time::Duration::from_millis(10));
-    let id2 = session::start(&conn, "codex", Some("myapp"), None, "second", None).unwrap();
+    let id2 = session::start(&conn, "codex", Some("myapp"), None, "second", None, &session::Provenance::default()).unwrap();
 
     // Should find the active session (id2), not the ended one (id1)
     let active = session::get_active_for_project(&conn, "myapp").unwrap().unwrap();
@@ -101,7 +101,7 @@ fn test_get_active_for_project() {
 fn test_get_active_for_project_none_when_all_ended() {
     let conn = common::create_test_db();
 
-    let id = session::start(&conn, "claude-code", Some("myapp"), None, "work", None).unwrap();
+    let id = session::start(&conn, "claude-code", Some("myapp"), None, "work", None, &session::Provenance::default()).unwrap();
     session::end(&conn, &id, "Done", None, None).unwrap();
 
     let active = session::get_active_for_project(&conn, "myapp").unwrap();
@@ -121,9 +121,9 @@ fn test_get_active_for_project_returns_most_recent() {
     let conn = common::create_test_db();
 
     // Two active sessions for the same project — should return most recent
-    session::start(&conn, "claude-code", Some("myapp"), None, "first active", None).unwrap();
+    session::start(&conn, "claude-code", Some("myapp"), None, "first active", None, &session::Provenance::default()).unwrap();
     std::thread::sleep(std::time::Duration::from_millis(10));
-    let id2 = session::start(&conn, "codex", Some("myapp"), None, "second active", None).unwrap();
+    let id2 = session::start(&conn, "codex", Some("myapp"), None, "second active", None, &session::Provenance::default()).unwrap();
 
     let active = session::get_active_for_project(&conn, "myapp").unwrap().unwrap();
     assert_eq!(active.id, id2);
@@ -133,10 +133,10 @@ fn test_get_active_for_project_returns_most_recent() {
 fn test_parent_session_chain() {
     let conn = common::create_test_db();
 
-    let id1 = session::start(&conn, "claude-code", Some("myapp"), None, "start work", None).unwrap();
+    let id1 = session::start(&conn, "claude-code", Some("myapp"), None, "start work", None, &session::Provenance::default()).unwrap();
     session::end(&conn, &id1, "Partial progress", None, Some("transferred")).unwrap();
 
-    let id2 = session::start(&conn, "codex", Some("myapp"), None, "continue work", Some(&id1)).unwrap();
+    let id2 = session::start(&conn, "codex", Some("myapp"), None, "continue work", Some(&id1), &session::Provenance::default()).unwrap();
 
     let s2 = session::get_by_id(&conn, &id2).unwrap().unwrap();
     assert_eq!(s2.parent_session.as_deref(), Some(id1.as_str()));

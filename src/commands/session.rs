@@ -10,10 +10,46 @@ pub fn start(conn: &Connection, agent: &str, project: Option<&str>, intent: &str
         .ok()
         .and_then(|p| p.to_str().map(String::from));
 
-    let id = session::start(conn, agent, project, cwd.as_deref(), intent, parent)?;
+    // The SessionStart hook passes `basename $PWD`, which in a worktree names
+    // the worktree. Resolve it to the main checkout's project so the session
+    // row joins with the memories saved during it — `save` and `end-active`
+    // run the same ladder.
+    //
+    // Unlike a memory, a session with no project is useless — nothing can look
+    // it up again — so an omitted `--project` falls back to cwd's basename and
+    // goes through the ladder, rather than resolving to global scope.
+    let cwd_str = cwd.as_deref().unwrap_or_default();
+    let requested = match project {
+        Some(p) => Some(p.to_string()),
+        None => std::path::Path::new(cwd_str)
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned()),
+    };
+    let target = project::resolve_write_target(conn, requested.as_deref(), cwd_str);
+
+    let id = session::start(
+        conn,
+        agent,
+        target.project.as_deref(),
+        cwd.as_deref(),
+        intent,
+        parent,
+        &session::Provenance {
+            worktree: target.worktree.as_deref(),
+            branch: target.branch.as_deref(),
+        },
+    )?;
 
     if json {
-        println!("{}", serde_json::json!({"id": id}));
+        println!(
+            "{}",
+            serde_json::json!({
+                "id": id,
+                "project": target.project,
+                "worktree": target.worktree,
+                "branch": target.branch,
+            })
+        );
     } else {
         println!("{id}");
     }
@@ -50,27 +86,23 @@ pub fn end_active(
     auto_summary: bool,
     json: bool,
 ) -> Result<()> {
-    // Resolve project: explicit flag, then registered-project lookup by cwd,
-    // then basename(cwd) — the same string `session start` uses when called
-    // from a hook in an unregistered directory.
-    //
-    // Issue #114: previously this stopped at `detect_from_cwd`, which only
-    // returns Some when a project's registered `path` is a prefix of cwd.
-    // Running `claude -p` from `/tmp/<scratch>` (CI, agent-loop, ad-hoc)
-    // would no-op silently and leak `[active]` session rows.
-    let resolved_project = if let Some(p) = project {
-        Some(p.to_string())
-    } else {
-        let cwd = std::env::current_dir()?;
-        let cwd_str = cwd.to_str().unwrap_or("");
-        match project::detect_from_cwd(conn, cwd_str)? {
-            Some(p) => Some(p),
-            None => cwd
-                .file_name()
-                .and_then(|n| n.to_str())
-                .map(|s| s.to_string()),
-        }
+    // Resolve project through the same ladder `session start` used to open the
+    // row, so the two agree on the name. Issue #114 fixed the case where this
+    // stopped at `detect_from_cwd` and leaked `[active]` rows from unregistered
+    // directories; the worktree fix extends that — a session opened as
+    // `rememora` from a worktree cannot be closed by looking up
+    // `worktree-brave-meadow-e668`.
+    let cwd = std::env::current_dir()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let requested = match project {
+        Some(p) => Some(p.to_string()),
+        None => std::path::Path::new(&cwd)
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned()),
     };
+    let resolved_project =
+        project::resolve_write_target(conn, requested.as_deref(), &cwd).project;
 
     let project_name = match resolved_project {
         Some(p) => p,

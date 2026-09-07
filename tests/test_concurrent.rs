@@ -31,6 +31,8 @@ fn test_concurrent_writes() {
                     source_agent: None,
                     source_session: None,
                     importance: 0.5,
+                    worktree: None,
+                    branch: None,
                 },
             )
             .unwrap();
@@ -55,6 +57,8 @@ fn test_concurrent_writes() {
                     source_agent: None,
                     source_session: None,
                     importance: 0.5,
+                    worktree: None,
+                    branch: None,
                 },
             )
             .unwrap();

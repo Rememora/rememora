@@ -171,7 +171,7 @@ fn search_with_fts(
         "SELECT c.id, c.uri, c.parent_uri, c.context_type, c.category, c.name,
                 c.abstract, c.overview, c.content, c.tags, c.source_agent,
                 c.source_session, c.importance, c.active_count, c.created_at,
-                c.updated_at, c.superseded_by, rank
+                c.updated_at, c.superseded_by, c.worktree, c.branch, rank
          FROM contexts_fts fts
          JOIN contexts c ON c.rowid = fts.rowid
          WHERE contexts_fts MATCH ?1
@@ -211,7 +211,7 @@ fn search_with_fts(
 
     let rows = stmt
         .query_map(params_ref.as_slice(), |row| {
-            let rank: f64 = row.get(17)?;
+            let rank: f64 = row.get(19)?;
             Ok(SearchResult {
                 context: ContextRecord {
                     id: row.get(0)?,
@@ -231,6 +231,8 @@ fn search_with_fts(
                     created_at: row.get(14)?,
                     updated_at: row.get(15)?,
                     superseded_by: row.get(16)?,
+                    worktree: row.get(17)?,
+                    branch: row.get(18)?,
                 },
                 rank,
             })
@@ -395,7 +397,7 @@ fn vector_search(
         SELECT c.id, c.uri, c.parent_uri, c.context_type, c.category, c.name,
                c.abstract, c.overview, c.content, c.tags, c.source_agent,
                c.source_session, c.importance, c.active_count, c.created_at,
-               c.updated_at, c.superseded_by, knn.distance
+               c.updated_at, c.superseded_by, c.worktree, c.branch, knn.distance
         FROM knn
         JOIN contexts c ON c.id = knn.context_id
         WHERE c.superseded_by IS NULL",
@@ -431,7 +433,7 @@ fn vector_search(
 
     let rows = stmt
         .query_map(params_ref.as_slice(), |row| {
-            let distance: f64 = row.get(17)?;
+            let distance: f64 = row.get(19)?;
             // Cosine distance: 0 = identical, 2 = opposite → similarity = 1 - distance
             let similarity = 1.0 - distance;
             Ok(SearchResult {
@@ -453,6 +455,8 @@ fn vector_search(
                     created_at: row.get(14)?,
                     updated_at: row.get(15)?,
                     superseded_by: row.get(16)?,
+                    worktree: row.get(17)?,
+                    branch: row.get(18)?,
                 },
                 rank: similarity,
             })

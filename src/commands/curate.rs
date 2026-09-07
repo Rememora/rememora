@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use rememora::curator::{self, Signal};
 use rememora::jsonl;
 use rememora::models::agent_invocation::{self, Caller};
+use rememora::models::project;
 use rememora::models::watermark;
 
 pub struct CurateArgs {
@@ -110,16 +111,16 @@ fn curate_file(
 
     // Record the signal-gate call if the subagent actually ran (it short-
     // circuits for transcripts shorter than MIN_TRANSCRIPT_CHARS).
-    let project_for_telemetry = args
-        .project
-        .clone()
-        .or_else(|| detect_project_from_path(path).map(str::to_string));
+    // Resolved once and reused for both the telemetry row and the curator
+    // prompt, so a transcript cannot be billed to one project and curated into
+    // another.
+    let resolved_project = detect_project_from_path(conn, args.project.as_deref(), path);
     if let Some(t) = &gate.telemetry {
         agent_invocation::try_insert(
             conn,
             &agent_invocation::record_from_subagent(
                 Caller::SignalGate,
-                project_for_telemetry.clone(),
+                resolved_project.clone(),
                 None,
                 t,
             ),
@@ -137,12 +138,7 @@ fn curate_file(
         return Ok(FileResult::NoSignal);
     }
 
-    // Detect project
-    let project = args
-        .project
-        .as_deref()
-        .or_else(|| detect_project_from_path(path))
-        .unwrap_or("unknown");
+    let project = resolved_project.as_deref().unwrap_or("unknown");
 
     if !json_output {
         eprintln!("    → signal detected, curating for project '{project}'...");
@@ -348,14 +344,37 @@ fn find_claude_session_files() -> Result<Vec<PathBuf>> {
     Ok(files)
 }
 
-/// Try to detect the project name from the JSONL file path.
+/// The project a transcript belongs to: `--project` if given, else derived from
+/// where Claude Code filed the transcript.
 ///
-/// Claude Code stores sessions in `~/.claude/projects/<encoded-path>/`.
-/// The directory name is the project path with `/` replaced by `-`.
-fn detect_project_from_path(path: &Path) -> Option<&str> {
+/// Claude Code stores sessions in `~/.claude/projects/<encoded-cwd>/`, where the
+/// encoding replaces `/` and `.` with `-`. This function used to return that
+/// directory name *as the project name*, which is how a real store ended up
+/// with `rememora://projects/-Users-ovidb-Projects-rememora-rememora/...`
+/// alongside the actual `rememora` namespace — 27 memories filed under names no
+/// search would ever filter to, because the project filter is a hard URI prefix
+/// match.
+///
+/// Both inputs now go through `project::resolve_write_target`, which knows how
+/// to turn an encoded path back into a project and folds worktrees onto their
+/// main checkout. `None` means the caller should fall back to `"unknown"`.
+fn detect_project_from_path(
+    conn: &Connection,
+    requested: Option<&str>,
+    path: &Path,
+) -> Option<String> {
     // Path looks like: ~/.claude/projects/-Users-user-Projects-myproject/session.jsonl
-    // The parent directory name encodes the project path
-    path.parent()
+    let encoded = path
+        .parent()
         .and_then(|p| p.file_name())
-        .and_then(|n| n.to_str())
+        .and_then(|n| n.to_str());
+
+    let cwd = std::env::current_dir()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+
+    // The transcript's own directory is more authoritative than the curator's
+    // process cwd — `curate` is backgrounded from a hook and can run from
+    // anywhere — so an explicit `--project` wins, then the encoded path.
+    project::resolve_write_target(conn, requested.or(encoded), &cwd).project
 }

@@ -28,6 +28,8 @@ fn insert_memory(
             source_agent: Some("claude-code".into()),
             source_session: None,
             importance,
+            worktree: None,
+            branch: None,
         },
     )
     .unwrap()

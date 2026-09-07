@@ -17,16 +17,35 @@ pub struct SessionRecord {
     pub token_estimate: i64,
     pub parent_session: Option<String>,
     pub status: String,
+    /// Linked worktree the session ran in; `None` means the main checkout.
+    /// Migration 007 — `cwd` records the raw directory, this records what it
+    /// *means* once the project has been folded onto the main checkout.
+    #[serde(default)]
+    pub worktree: Option<String>,
+    /// Branch checked out when the session started.
+    #[serde(default)]
+    pub branch: Option<String>,
 }
 
-pub fn start(conn: &Connection, agent: &str, project: Option<&str>, cwd: Option<&str>, intent: &str, parent_session: Option<&str>) -> Result<String> {
+/// Provenance for a session, mirroring the `worktree`/`branch` columns.
+///
+/// A struct rather than two more positional parameters: `start` already takes
+/// six, and two adjacent `Option<&str>` in a row is exactly the shape that gets
+/// silently transposed at a call site.
+#[derive(Debug, Clone, Default)]
+pub struct Provenance<'a> {
+    pub worktree: Option<&'a str>,
+    pub branch: Option<&'a str>,
+}
+
+pub fn start(conn: &Connection, agent: &str, project: Option<&str>, cwd: Option<&str>, intent: &str, parent_session: Option<&str>, prov: &Provenance<'_>) -> Result<String> {
     let id = ulid::Ulid::new().to_string();
     let now = chrono::Utc::now().to_rfc3339();
 
     conn.execute(
-        "INSERT INTO sessions (id, agent, project, cwd, started_at, intent, parent_session, status)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'active')",
-        params![id, agent, project, cwd, now, intent, parent_session],
+        "INSERT INTO sessions (id, agent, project, cwd, started_at, intent, parent_session, status, worktree, branch)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'active', ?8, ?9)",
+        params![id, agent, project, cwd, now, intent, parent_session, prov.worktree, prov.branch],
     )?;
 
     Ok(id)
@@ -51,7 +70,7 @@ pub fn end(conn: &Connection, id: &str, summary: &str, working_state: Option<&st
 
 pub fn get_by_id(conn: &Connection, id: &str) -> Result<Option<SessionRecord>> {
     let mut stmt = conn.prepare(
-        "SELECT id, agent, project, cwd, started_at, ended_at, summary, intent, working_state, message_count, token_estimate, parent_session, status
+        "SELECT id, agent, project, cwd, started_at, ended_at, summary, intent, working_state, message_count, token_estimate, parent_session, status, worktree, branch
          FROM sessions WHERE id = ?1",
     )?;
 
@@ -64,7 +83,7 @@ pub fn get_by_id(conn: &Connection, id: &str) -> Result<Option<SessionRecord>> {
 
 pub fn get_latest_for_project(conn: &Connection, project: &str) -> Result<Option<SessionRecord>> {
     let mut stmt = conn.prepare(
-        "SELECT id, agent, project, cwd, started_at, ended_at, summary, intent, working_state, message_count, token_estimate, parent_session, status
+        "SELECT id, agent, project, cwd, started_at, ended_at, summary, intent, working_state, message_count, token_estimate, parent_session, status, worktree, branch
          FROM sessions WHERE project = ?1
          ORDER BY started_at DESC LIMIT 1",
     )?;
@@ -78,7 +97,7 @@ pub fn get_latest_for_project(conn: &Connection, project: &str) -> Result<Option
 
 pub fn get_active_for_project(conn: &Connection, project: &str) -> Result<Option<SessionRecord>> {
     let mut stmt = conn.prepare(
-        "SELECT id, agent, project, cwd, started_at, ended_at, summary, intent, working_state, message_count, token_estimate, parent_session, status
+        "SELECT id, agent, project, cwd, started_at, ended_at, summary, intent, working_state, message_count, token_estimate, parent_session, status, worktree, branch
          FROM sessions WHERE project = ?1 AND status = 'active'
          ORDER BY started_at DESC LIMIT 1",
     )?;
@@ -93,13 +112,13 @@ pub fn get_active_for_project(conn: &Connection, project: &str) -> Result<Option
 pub fn list(conn: &Connection, project: Option<&str>, limit: usize) -> Result<Vec<SessionRecord>> {
     let (sql, param_values): (String, Vec<Box<dyn rusqlite::types::ToSql>>) = if let Some(proj) = project {
         (
-            "SELECT id, agent, project, cwd, started_at, ended_at, summary, intent, working_state, message_count, token_estimate, parent_session, status
+            "SELECT id, agent, project, cwd, started_at, ended_at, summary, intent, working_state, message_count, token_estimate, parent_session, status, worktree, branch
              FROM sessions WHERE project = ?1 ORDER BY started_at DESC LIMIT ?2".to_string(),
             vec![Box::new(proj.to_string()) as Box<dyn rusqlite::types::ToSql>, Box::new(limit as i64)],
         )
     } else {
         (
-            "SELECT id, agent, project, cwd, started_at, ended_at, summary, intent, working_state, message_count, token_estimate, parent_session, status
+            "SELECT id, agent, project, cwd, started_at, ended_at, summary, intent, working_state, message_count, token_estimate, parent_session, status, worktree, branch
              FROM sessions ORDER BY started_at DESC LIMIT ?1".to_string(),
             vec![Box::new(limit as i64) as Box<dyn rusqlite::types::ToSql>],
         )
@@ -129,5 +148,7 @@ fn row_to_session(row: &rusqlite::Row) -> rusqlite::Result<SessionRecord> {
         token_estimate: row.get(10)?,
         parent_session: row.get(11)?,
         status: row.get(12)?,
+        worktree: row.get(13)?,
+        branch: row.get(14)?,
     })
 }

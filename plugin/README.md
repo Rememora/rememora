@@ -5,6 +5,7 @@ Persistent cross-agent memory for Claude Code. Automatically saves decisions, bu
 ## What it does
 
 - **SessionStart hook**: Loads project context from rememora automatically
+- **UserPromptSubmit hook**: Injects the top FTS5 hits for your prompt, scoped via `rememora search --cwd` so a git worktree resolves to its main checkout
 - **Stop hook**: Curates memories from the transcript after each agent turn (one in-flight curate per session, via a kernel-level concurrency gate)
 - **SessionEnd hook**: Closes the active rememora session and runs a final curation pass
 - **Model-invoked save skill**: Claude autonomously saves knowledge when it makes decisions, fixes bugs, or discovers patterns
@@ -27,7 +28,7 @@ claude plugin install rememora@rememora --scope project
 ## Requirements
 
 - `rememora` CLI installed and on PATH (`cargo install rememora` or via Homebrew)
-- A registered project: `rememora project add <name> --path <cwd>`
+- A registered project pointed at the **main checkout**, not a worktree: `rememora project add <name> --path /path/to/main/checkout`. Work done in a linked git worktree resolves back to that project automatically — see [Project resolution](#project-resolution).
 
 ## Escape hatches
 
@@ -56,14 +57,30 @@ Other tunables:
 4. After each agent turn, the **Stop hook** forks `rememora curate` against the session transcript to extract anything Claude missed. The curate process is fully detached — launched in its own session via `setsid` (or `nohup` + `disown` on stock macOS) with stdin/stdout/stderr redirected to `/dev/null`, so it cannot hold the hook's pipe and block Claude Code waiting for EOF. At most one curate runs in-flight per session (enforced by a `pgrep`-based concurrency gate); a secondary `REMEMORA_CURATE_COOLDOWN_SECS` (default `300`) frequency gate rate-limits consecutive runs
 5. On **session end**, the hook closes the active rememora session and runs a final curation pass so the tail of the session is never lost
 
+## Project resolution
+
+The hooks do not decide which project you are in. They pass along the raw facts they have and let the CLI resolve them:
+
+- `prompt-search.sh` passes the session cwd verbatim: `rememora search --cwd "$CWD"`
+- `session-start.sh` passes `basename "$PWD"`, and `session-end.sh` / `stop-curate.sh` pass `basename "$CWD"` from the hook payload, as `--project`
+- `stop-curate.sh` additionally derives Claude Code's encoded transcript directory (`-Users-me-Projects-myapp`) to locate the session JSONL
+
+Every one of those goes through `project::resolve_write_target` inside the CLI, which folds a worktree directory name, an encoded path, or a case variant (`Ana` vs `ana`) onto the registered project's canonical name. That is why a hook can safely send a bare basename: inside a linked worktree it resolves to the main checkout's project, and outside one it was already correct.
+
+This matters because the project filter is a hard `uri LIKE 'rememora://projects/<name>/%'` prefix match — a name matching no registered project does not rank memories lower, it excludes all of them, and the command still exits 0 with the global memories. So **register the main checkout, not a worktree.**
+
+If memories were already saved under a fabricated name, `rememora project reconcile` reports where each one belongs (dry run by default) and `rememora project reconcile --apply` re-homes them.
+
 ## Plugin structure
 
 ```
 plugin/
 ├── hooks/
-│   └── hooks.json              # SessionStart + Stop + SessionEnd hooks
+│   └── hooks.json              # Setup + SessionStart + UserPromptSubmit + Stop + SessionEnd hooks
 ├── scripts/
+│   ├── setup-check.sh          # First-run check that the CLI is installed
 │   ├── session-start.sh        # Load context + start session
+│   ├── prompt-search.sh        # Inject top FTS5 hits (`rememora search --cwd`)
 │   ├── stop-curate.sh          # Fork `rememora curate` per agent turn
 │   └── session-end.sh          # End active session + final curation pass
 ├── skills/

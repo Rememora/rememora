@@ -49,7 +49,7 @@ fn test_session_context() {
     let conn = common::create_test_db();
     common::seed_test_data(&conn);
 
-    let id = session::start(&conn, "claude-code", Some("testproj"), None, "auth flow", None).unwrap();
+    let id = session::start(&conn, "claude-code", Some("testproj"), None, "auth flow", None, &session::Provenance::default()).unwrap();
     session::end(&conn, &id, "Login done", Some("Token refresh WIP"), None).unwrap();
 
     let latest = hierarchy::get_session_context(&conn, "testproj").unwrap().unwrap();
@@ -62,7 +62,7 @@ fn test_full_assembly_to_markdown() {
     let conn = common::create_test_db();
     common::seed_test_data(&conn);
 
-    let id = session::start(&conn, "claude-code", Some("testproj"), None, "testing", None).unwrap();
+    let id = session::start(&conn, "claude-code", Some("testproj"), None, "testing", None, &session::Provenance::default()).unwrap();
     session::end(&conn, &id, "Test complete", Some("All good"), None).unwrap();
 
     let assembly = hierarchy::assemble(&conn, Some("testproj")).unwrap();
@@ -123,6 +123,8 @@ fn test_global_mode_aggregates_across_projects() {
                     source_agent: Some("claude-code".to_string()),
                     source_session: None,
                     importance: 0.5,
+                    worktree: None,
+                    branch: None,
                 },
             )
             .unwrap();

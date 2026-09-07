@@ -54,6 +54,7 @@
           <li><a href="#memories">Memories</a></li>
           <li><a href="#sessions">Sessions</a></li>
           <li><a href="#projects">Projects</a></li>
+          <li><a href="#project-resolution">Project Resolution</a></li>
           <li><a href="#categories">Categories</a></li>
           <li><a href="#tiered-loading">Tiered Loading</a></li>
           <li><a href="#search">Search</a></li>
@@ -380,7 +381,7 @@ Before ending: `rememora session end &lt;id&gt; --summary "..." ...`
       </ul>
 
       <h2 id="projects">Projects</h2>
-      <p>Projects scope memories and sessions. Register once, then auto-detect from working directory:</p>
+      <p>Projects scope memories and sessions. Register the <strong>main checkout</strong> once, then auto-detect from the working directory &mdash; including from a linked git worktree, which resolves back to the checkout it belongs to rather than to its own directory name:</p>
       <div class="code-window">
         <div class="code-header">
           <div class="code-dots"><span class="red"></span><span class="yellow"></span><span class="green"></span></div>
@@ -390,9 +391,64 @@ Before ending: `rememora session end &lt;id&gt; --summary "..." ...`
         <div class="code-body">
 <pre><span class="prompt">$</span> <span class="cmd">rememora</span> <span class="cmd">project add</span> myapp <span class="flag">--path</span> /path/to/myapp
 <span class="prompt">$</span> <span class="cmd">cd</span> /path/to/myapp
-<span class="prompt">$</span> <span class="cmd">rememora</span> <span class="cmd">context</span> <span class="flag">--auto</span>  <span class="comment"># auto-detects "myapp"</span></pre>
+<span class="prompt">$</span> <span class="cmd">rememora</span> <span class="cmd">context</span> <span class="flag">--auto</span>  <span class="comment"># auto-detects "myapp"</span>
+
+<span class="comment"># A linked worktree resolves to its main checkout</span>
+<span class="prompt">$</span> <span class="cmd">cd</span> /path/to/myapp/.agents/worktrees/issue-42
+<span class="prompt">$</span> <span class="cmd">rememora</span> <span class="cmd">context</span> <span class="flag">--auto</span>  <span class="comment"># still "myapp", not "issue-42"</span></pre>
         </div>
       </div>
+
+      <h2 id="project-resolution">Project Resolution</h2>
+      <p>A <code>--project</code> value is a request, not the answer. Every write path used to name the project after whatever directory it happened to be standing in &mdash; <code>basename $PWD</code>, or Claude Code&rsquo;s encoded transcript directory (<code>-Users-me-Projects-myapp</code>). Agent work happens in git worktrees, so this produced project namespaces matching no registered project. Because the project filter is a hard <code>uri LIKE 'rememora://projects/&lt;name&gt;/%'</code> prefix match, those memories were unreachable from the moment they were written. On a real 300-context store, 55 contexts (18%) were filed under fabricated names and re-homed by <code>project reconcile</code>, across worktree basenames, encoded transcript paths, and case drift (<code>Ana</code> vs <code>ana</code>).</p>
+      <p>Writes now resolve through a ladder &mdash; first match wins:</p>
+      <ol>
+        <li><code>--project</code> naming a <strong>registered</strong> project wins verbatim, case-insensitively, in its canonical spelling &mdash; what keeps a deliberate cross-project save working.</li>
+        <li>An encoded filesystem path resolves against the filesystem. The encoding is lossy (both <code>/</code> and <code>.</code> become <code>-</code>), so candidates are tried longest-first, and one is accepted only if it resolves to a registered project or is itself a <strong>git working-tree root</strong>. Nothing else qualifies. This rung exists for <code>curate</code>, <code>watch-transcript</code> and <code>project reconcile</code>, which derive the encoded name from a transcript directory; to exercise it by hand use <code>--project=-Users-&hellip;</code>, since a space-separated value starting with <code>-</code> is parsed as a flag.</li>
+        <li>The working directory resolves it, walking a git worktree back to its main checkout &mdash; but only for a name the tooling synthesised, never one you chose.</li>
+        <li>Same gate: in a linked worktree with nothing registered, the <strong>main checkout&rsquo;s</strong> directory name &mdash; never the worktree&rsquo;s, so the name survives the worktree being deleted.</li>
+        <li>Otherwise the requested name, verbatim.</li>
+      </ol>
+      <p>Omitting <code>--project</code> still means <strong>global scope</strong>. Nothing is auto-namespaced.</p>
+      <p><strong>Only a name the tooling invented can be overridden.</strong> Rungs 3 and 4 apply solely when the requested name is an encoded path, or the basename of the working directory, its toplevel, or its main checkout &mdash; exactly the shapes the hooks and the curator synthesise. A name you chose is left alone even when no project by that name is registered yet, because &ldquo;save first, <code>rememora project add</code> later&rdquo; is the normal workflow. Without that gate, <code>--project ana</code> from inside the <code>myapp</code> worktree would silently write ana&rsquo;s memory into <code>myapp</code>, and <code>search --project ana</code> would return <code>myapp</code>&rsquo;s.</p>
+      <p><strong>Resolution gives up rather than guesses.</strong> Shortening a path until <em>something</em> exists always succeeds eventually, so accepting any real directory would reliably land on a generic ancestor and mint a project called <code>Projects</code> or your own username, colliding across every unrelated repo beneath it. A project <em>is</em> a repository; <code>~/Projects</code> and <code>~</code> are containers. When nothing qualifies, the name falls through untouched and <code>project reconcile</code> reports it instead of rewriting it.</p>
+      <p>Applied on <code>save</code>, <code>extract --save</code>, <code>session start</code>, <code>session end-active</code>, <code>curate</code>, <code>watch-transcript</code>, <code>search</code>, <code>context</code>, <code>consolidate</code> and <code>evolve</code>. Not applied on <code>export</code>, <code>timeline</code>, <code>session resume</code> / <code>session list</code>, <code>eval</code> or <code>status</code> &mdash; those take the name you give them.</p>
+      <p><strong>Reads degrade differently from writes.</strong> With no <code>--project</code>, a resolution failure yields no filter at all (search everything) rather than a guessed name: an unfiltered search scores only marginally worse, while a wrong project name scores zero.</p>
+      <div class="code-window">
+        <div class="code-header">
+          <div class="code-dots"><span class="red"></span><span class="yellow"></span><span class="green"></span></div>
+          <span class="code-title">example &mdash; a save from inside a worktree</span>
+          <span></span>
+        </div>
+        <div class="code-body">
+<pre><span class="prompt">$</span> <span class="cmd">cd</span> /path/to/myapp/.agents/worktrees/issue-42
+<span class="prompt">$</span> <span class="cmd">rememora</span> <span class="cmd">save</span> <span class="string">"Token refresh needs an idempotency key"</span> <span class="flag">--project</span> issue-42
+<span class="output">01JARW...</span>
+<span class="output">note: --project issue-42 resolved to myapp (worktree/main checkout)</span>
+
+<span class="prompt">$</span> <span class="cmd">rememora</span> <span class="cmd">save</span> <span class="string">"..."</span> <span class="flag">--project</span> issue-42 <span class="flag">--json</span>
+<span class="output">{"branch":"fix/issue-42","id":"01JARW...","project":"myapp",
+ "uri":"rememora://projects/myapp/memories/entity/...","worktree":"issue-42"}</span></pre>
+        </div>
+      </div>
+      <h3>Provenance</h3>
+      <p>Folding a worktree write onto the main checkout would lose which tree produced it, so migration 007 records it separately: <code>contexts</code> and <code>sessions</code> each carry <code>worktree</code> and <code>branch</code> columns, with partial indexes on <code>worktree IS NOT NULL</code>. A NULL <code>worktree</code> means &ldquo;written from the main checkout&rdquo; &mdash; a real answer, not a missing one.</p>
+      <p>Deliberately columns rather than <code>tags</code> entries: <code>tags</code> is agent-supplied free text that an update overwrites wholesale, it feeds the FTS5 index (a <code>worktree:</code> tag would pollute BM25 for anyone searching the word &ldquo;worktree&rdquo;), and provenance wants an equality filter, not a match.</p>
+      <h3>Repairing already-stranded memories</h3>
+      <p>Memories written before this existed are still filed under namespaces no project claims. <code>rememora project reconcile</code> finds them and re-homes them &mdash; a dry run unless you arm it, because it rewrites URIs.</p>
+      <div class="code-window">
+        <div class="code-header">
+          <div class="code-dots"><span class="red"></span><span class="yellow"></span><span class="green"></span></div>
+          <span class="code-title">usage</span>
+          <button class="code-copy">Copy</button>
+        </div>
+        <div class="code-body">
+<pre><span class="cmd">rememora</span> <span class="cmd">project reconcile</span>            <span class="comment"># report only: this is the default</span>
+<span class="cmd">rememora</span> <span class="cmd">project reconcile</span> <span class="flag">--apply</span>    <span class="comment"># commit the rewrite, one transaction</span>
+<span class="cmd">rememora</span> <span class="cmd">project reconcile</span> <span class="flag">--json</span>     <span class="comment"># machine-readable plan or outcome</span></pre>
+        </div>
+      </div>
+      <p>The dry run names the route it used for each namespace &mdash; <code>case-insensitive project name</code>, <code>encoded path</code>, <code>session cwd</code>, or <code>session cwd &rarr; main checkout</code> &mdash; because those carry different confidence and you should be able to judge each rewrite rather than trust the batch. Three outcomes: rewritten; &ldquo;already coherent, just unregistered&rdquo; (the fix there is <code>rememora project add</code>); or unresolved. Rows whose destination URI is already taken &mdash; the same memory saved twice, once under each name &mdash; are left in place and counted as conflicts for you to review.</p>
 
       <h2 id="categories">Categories</h2>
       <table>
@@ -465,7 +521,7 @@ Before ending: `rememora session end &lt;id&gt; --summary "..." ...`
         <thead><tr><th>Flag</th><th>Required</th><th>Description</th></tr></thead>
         <tbody>
           <tr><td><code>--category</code></td><td>Yes</td><td>Memory category</td></tr>
-          <tr><td><code>--project</code></td><td>No</td><td>Project scope (global if omitted)</td></tr>
+          <tr><td><code>--project</code></td><td>No</td><td>Project scope, resolved through the <a href="#project-resolution">resolution ladder</a> &mdash; a worktree name, an encoded transcript path, or a case variant folds onto the registered project. Global if omitted (nothing is auto-namespaced). With <code>--json</code> the resolved <code>project</code>, <code>worktree</code> and <code>branch</code> come back in the output; otherwise a rewrite is reported on stderr.</td></tr>
           <tr><td><code>--importance</code></td><td>No</td><td>0.0-1.0, default 0.5</td></tr>
           <tr><td><code>--tags</code></td><td>No</td><td>Comma-separated tags</td></tr>
           <tr><td><code>--name</code></td><td>No</td><td>Display name (auto-generated if omitted)</td></tr>
@@ -486,6 +542,7 @@ Before ending: `rememora session end &lt;id&gt; --summary "..." ...`
     <span class="flag">--category</span> &lt;category&gt; \
     <span class="flag">--limit</span> &lt;n&gt; \
     <span class="flag">--format</span> &lt;full|compact|context&gt; \
+    <span class="flag">--cwd</span> &lt;dir&gt; \
     <span class="flag">--json</span></pre>
         </div>
       </div>
@@ -497,6 +554,7 @@ Before ending: `rememora session end &lt;id&gt; --summary "..." ...`
           <tr><td><code>context</code></td><td>One line per hit, byte-capped (2 KB)</td><td><code>UserPromptSubmit</code> hook injection</td></tr>
         </tbody>
       </table>
+      <p><code>--cwd &lt;dir&gt;</code> sets the directory project scope is resolved from when <code>--project</code> is omitted; it defaults to the process working directory, and a linked git worktree resolves to its main checkout. The <code>UserPromptSubmit</code> hook passes the session cwd through it. An explicit <code>--project</code> is put through the same ladder writes use, so a fabricated name is rewritten rather than filtering to nothing &mdash; see <a href="#project-resolution">Project Resolution</a>.</p>
       <div class="code-window">
         <div class="code-header">
           <div class="code-dots"><span class="red"></span><span class="yellow"></span><span class="green"></span></div>
@@ -626,9 +684,12 @@ Before ending: `rememora session end &lt;id&gt; --summary "..." ...`
         <div class="code-body">
 <pre><span class="cmd">rememora</span> <span class="cmd">project add</span> &lt;name&gt; <span class="flag">--path</span> &lt;dir&gt; <span class="flag">--description</span> <span class="string">"..."</span> <span class="flag">--stack</span> <span class="string">"..."</span>
 <span class="cmd">rememora</span> <span class="cmd">project list</span>
-<span class="cmd">rememora</span> <span class="cmd">project show</span> &lt;name&gt;</pre>
+<span class="cmd">rememora</span> <span class="cmd">project show</span> &lt;name&gt;
+<span class="cmd">rememora</span> <span class="cmd">project reconcile</span>            <span class="comment"># dry run: stranded namespaces + where they belong</span>
+<span class="cmd">rememora</span> <span class="cmd">project reconcile</span> <span class="flag">--apply</span>    <span class="comment"># re-home them, one transaction</span></pre>
         </div>
       </div>
+      <p>Register the <strong>main checkout</strong>, not a worktree. <code>project reconcile</code> repairs memories filed under a project namespace no registered project claims &mdash; see <a href="#project-resolution">Project Resolution</a>.</p>
 
       <h2 id="cmd-get">get</h2>
       <p>Retrieve a specific context by URI.</p>
@@ -894,8 +955,8 @@ Before ending: `rememora session end &lt;id&gt; --summary "..." ...`
       <table>
         <thead><tr><th>Table</th><th>Purpose</th></tr></thead>
         <tbody>
-          <tr><td><code>contexts</code></td><td>All memories, projects, resources (unified, 18 columns)</td></tr>
-          <tr><td><code>sessions</code></td><td>Agent sessions with lifecycle tracking</td></tr>
+          <tr><td><code>contexts</code></td><td>All memories, projects, resources (unified, 20 columns, incl. <code>worktree</code>/<code>branch</code> provenance)</td></tr>
+          <tr><td><code>sessions</code></td><td>Agent sessions with lifecycle tracking (15 columns, incl. <code>worktree</code>/<code>branch</code> provenance)</td></tr>
           <tr><td><code>relations</code></td><td>Bidirectional links between contexts</td></tr>
           <tr><td><code>contexts_fts</code></td><td>FTS5 full-text index (auto-synced via triggers)</td></tr>
           <tr><td><code>context_embeddings</code></td><td>384-dim vectors (feature-gated)</td></tr>

@@ -328,6 +328,8 @@ mod tests {
                 created_at: String::new(),
                 updated_at: String::new(),
                 superseded_by: None,
+                worktree: None,
+                branch: None,
             },
             rank: 1.0,
         }

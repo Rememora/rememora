@@ -16,6 +16,8 @@ fn make_test_insert(uri: &str, name: &str) -> InsertContext {
         source_agent: Some("claude-code".to_string()),
         source_session: None,
         importance: 0.5,
+        worktree: None,
+        branch: None,
     }
 }
 

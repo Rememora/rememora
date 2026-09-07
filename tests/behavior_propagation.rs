@@ -114,6 +114,8 @@ fn children_get_boosted_when_parent_matches() {
             source_agent: Some("claude-code".to_string()),
             source_session: None,
             importance: 0.5,
+            worktree: None,
+            branch: None,
         },
     )
     .unwrap();
