@@ -4,6 +4,16 @@ All notable changes to Rememora will be documented in this file.
 
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Removed
+
+- **Automatic Claude Code / Gemini CLI hooks.** Rememora no longer wires `SessionStart`, `UserPromptSubmit`, `Stop`, or `SessionEnd` hooks — nothing fires curate/evolve/context-injection on its own anymore. `rememora setup --apply` self-heals any existing install by stripping rememora-managed entries it finds in `settings.json` and removing any previously-deployed scripts under `~/.rememora/hooks/`. The plugin's `Setup` hook (a one-time "is the CLI on PATH" check) is unaffected.
+
+### Added
+
+- **`rememora dream [--project <name>] [--dry-run]`** — the manual replacement for what the hooks used to do automatically: curates pending session transcripts, then evolves (applying the decisions unless `--dry-run`). Run it by hand, or wire it to your own cron/launchd job.
+
 ## [1.6.0] — 2026-09-08
 
 ### Fixed
