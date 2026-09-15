@@ -232,11 +232,11 @@
       <h2 id="agent-setup">Agent Setup</h2>
 
       <div class="glass-card" style="text-align: left; margin-bottom: 32px; border-color: rgba(85, 239, 196, 0.2);">
-        <p style="margin: 0; font-size: 0.95rem;"><strong style="color: var(--accent-2);">Just install the plugin.</strong> That's all you need. The plugin gives your agent hooks and skills that handle everything automatically &mdash; loading context, saving memories, searching before implementations, and curating knowledge from transcripts. Your agent doesn't need to learn any commands.</p>
+        <p style="margin: 0; font-size: 0.95rem;"><strong style="color: var(--accent-2);">Just install the plugin.</strong> That's all you need. Rememora fires nothing automatically &mdash; no hook captures memory on your behalf. The plugin gives your agent instructions and skills so it loads context, saves memories, and searches before implementations on its own judgment, plus <code>rememora dream</code> for a manual catch-up pass whenever you want one.</p>
       </div>
 
       <h3>Claude Code: Install as Plugin (Recommended)</h3>
-      <p>Two commands, fully autonomous from there:</p>
+      <p>Two commands:</p>
 
       <div class="code-window">
         <div class="code-header">
@@ -262,13 +262,10 @@
       <table>
         <thead><tr><th>Component</th><th>Type</th><th>What it does</th></tr></thead>
         <tbody>
-          <tr><td><code>SessionStart</code></td><td>Hook</td><td>Loads project context (L0 + L1) and opens a tracked session</td></tr>
-          <tr><td><code>UserPromptSubmit</code></td><td>Hook</td><td>Injects top-3 FTS5 hits matching your prompt into the agent&rsquo;s context</td></tr>
-          <tr><td><code>Stop</code></td><td>Hook</td><td>Curates memories from the session transcript after each turn (gated)</td></tr>
-          <tr><td><code>SessionEnd</code></td><td>Hook</td><td>Final-pass curation + closes the active session row</td></tr>
           <tr><td><code>rememora-save</code></td><td>Skill</td><td>Claude autonomously saves decisions, bug fixes, patterns</td></tr>
           <tr><td><code>rememora-search</code></td><td>Skill</td><td>Claude autonomously searches before implementations</td></tr>
           <tr><td><code>/rememora</code></td><td>Command</td><td>Manual save, search, or status check</td></tr>
+          <tr><td><code>rememora dream</code></td><td>Command</td><td>Manual catch-up: curate pending sessions, then evolve (apply unless <code>--dry-run</code>)</td></tr>
         </tbody>
       </table>
 
@@ -276,9 +273,6 @@
       <table>
         <thead><tr><th>Variable</th><th>Default</th><th>Effect</th></tr></thead>
         <tbody>
-          <tr><td><code>REMEMORA_CURATE_COOLDOWN_SECS</code></td><td><code>300</code></td><td>Minimum idle seconds between automatic curation runs from the <code>Stop</code> hook, per session. Concurrency gate (<code>pgrep</code> on session_id) is independent and always active. Set to <code>0</code> to disable just the cooldown.</td></tr>
-          <tr><td><code>REMEMORA_DISABLE_HOOKS</code></td><td>unset</td><td>Kill-switch for all four hooks. Useful for debugging or temporary opt-out.</td></tr>
-          <tr><td><code>REMEMORA_CURATE_CHILD</code></td><td>unset</td><td>Set internally by the curator on its <code>claude -p</code> subprocesses so the entire hook chain is a no-op inside curator children. Not intended for user override.</td></tr>
           <tr><td><code>REMEMORA_NO_UPDATE_CHECK</code></td><td>unset</td><td>Disables the GitHub-Releases update check entirely (see <code>rememora update</code>).</td></tr>
         </tbody>
       </table>
@@ -410,7 +404,7 @@ Before ending: `rememora session end &lt;id&gt; --summary "..." ...`
         <li>Otherwise the requested name, verbatim.</li>
       </ol>
       <p>Omitting <code>--project</code> still means <strong>global scope</strong>. Nothing is auto-namespaced.</p>
-      <p><strong>Only a name the tooling invented can be overridden.</strong> Rungs 3 and 4 apply solely when the requested name is an encoded path, or the basename of the working directory, its toplevel, or its main checkout &mdash; exactly the shapes the hooks and the curator synthesise. A name you chose is left alone even when no project by that name is registered yet, because &ldquo;save first, <code>rememora project add</code> later&rdquo; is the normal workflow. Without that gate, <code>--project ana</code> from inside the <code>myapp</code> worktree would silently write ana&rsquo;s memory into <code>myapp</code>, and <code>search --project ana</code> would return <code>myapp</code>&rsquo;s.</p>
+      <p><strong>Only a name the tooling invented can be overridden.</strong> Rungs 3 and 4 apply solely when the requested name is an encoded path, or the basename of the working directory, its toplevel, or its main checkout &mdash; exactly the shapes the curator synthesises. A name you chose is left alone even when no project by that name is registered yet, because &ldquo;save first, <code>rememora project add</code> later&rdquo; is the normal workflow. Without that gate, <code>--project ana</code> from inside the <code>myapp</code> worktree would silently write ana&rsquo;s memory into <code>myapp</code>, and <code>search --project ana</code> would return <code>myapp</code>&rsquo;s.</p>
       <p><strong>Resolution gives up rather than guesses.</strong> Shortening a path until <em>something</em> exists always succeeds eventually, so accepting any real directory would reliably land on a generic ancestor and mint a project called <code>Projects</code> or your own username, colliding across every unrelated repo beneath it. A project <em>is</em> a repository; <code>~/Projects</code> and <code>~</code> are containers. When nothing qualifies, the name falls through untouched and <code>project reconcile</code> reports it instead of rewriting it.</p>
       <p>Applied on <code>save</code>, <code>extract --save</code>, <code>session start</code>, <code>session end-active</code>, <code>curate</code>, <code>watch-transcript</code>, <code>search</code>, <code>context</code>, <code>consolidate</code> and <code>evolve</code>. Not applied on <code>export</code>, <code>timeline</code>, <code>session resume</code> / <code>session list</code>, <code>eval</code> or <code>status</code> &mdash; those take the name you give them.</p>
       <p><strong>Reads degrade differently from writes.</strong> With no <code>--project</code>, a resolution failure yields no filter at all (search everything) rather than a guessed name: an unfiltered search scores only marginally worse, while a wrong project name scores zero.</p>
@@ -551,10 +545,10 @@ Before ending: `rememora session end &lt;id&gt; --summary "..." ...`
         <tbody>
           <tr><td><code>full</code> (default)</td><td>Multi-line per hit with name, URI, metadata</td><td>Human in terminal</td></tr>
           <tr><td><code>compact</code></td><td>One line per hit with score, ~75 tok/hit</td><td>Agent filtering before a <code>timeline</code> / <code>get</code></td></tr>
-          <tr><td><code>context</code></td><td>One line per hit, byte-capped (2 KB)</td><td><code>UserPromptSubmit</code> hook injection</td></tr>
+          <tr><td><code>context</code></td><td>One line per hit, byte-capped (2 KB)</td><td>Injecting into a prompt cheaply</td></tr>
         </tbody>
       </table>
-      <p><code>--cwd &lt;dir&gt;</code> sets the directory project scope is resolved from when <code>--project</code> is omitted; it defaults to the process working directory, and a linked git worktree resolves to its main checkout. The <code>UserPromptSubmit</code> hook passes the session cwd through it. An explicit <code>--project</code> is put through the same ladder writes use, so a fabricated name is rewritten rather than filtering to nothing &mdash; see <a href="#project-resolution">Project Resolution</a>.</p>
+      <p><code>--cwd &lt;dir&gt;</code> sets the directory project scope is resolved from when <code>--project</code> is omitted; it defaults to the process working directory, and a linked git worktree resolves to its main checkout. An explicit <code>--project</code> is put through the same ladder writes use, so a fabricated name is rewritten rather than filtering to nothing &mdash; see <a href="#project-resolution">Project Resolution</a>.</p>
       <div class="code-window">
         <div class="code-header">
           <div class="code-dots"><span class="red"></span><span class="yellow"></span><span class="green"></span></div>
@@ -972,20 +966,11 @@ Before ending: `rememora session end &lt;id&gt; --summary "..." ...`
         <li><strong>JSONL Parsing</strong> — reads session files incrementally via byte-offset watermarks (never re-processes old content)</li>
         <li><strong>Signal Gate (Haiku)</strong> — fast YES/NO classification: "Does this transcript contain memorable knowledge?" (~$0.03 per call)</li>
         <li><strong>AUDN Curation (Sonnet)</strong> — full Add/Update/Delete/Noop cycle via a subagent with Bash access to <code>rememora save/search/supersede</code></li>
-        <li><strong>Consolidation</strong> — when the gate conditions are met (24h + 5 new memories), <code>consolidate</code> proposes dedup. It never applies it, so nothing that triggers this stage can retire a memory; applying is always a deliberate <code>rememora evolve --apply</code>.</li>
+        <li><strong>Consolidation</strong> — <code>rememora consolidate</code> proposes dedup on demand, behind a dual gate (24h + 5 new memories) you check with <code>--check-only</code>. It never applies anything itself; applying is always a deliberate <code>rememora evolve --apply</code>, or run both stages in one pass with <code>rememora dream</code>.</li>
       </ol>
 
       <h2 id="claude-code-plugin">Claude Code Plugin</h2>
-      <p>Full integration with Claude Code via hooks and skills:</p>
-      <h3>Hooks (automatic)</h3>
-      <table>
-        <thead><tr><th>Hook</th><th>Trigger</th><th>Action</th></tr></thead>
-        <tbody>
-          <tr><td><code>SessionStart</code></td><td>Conversation begins</td><td>Load context + start rememora session + check consolidation gate</td></tr>
-          <tr><td><code>SessionEnd</code></td><td>Conversation ends</td><td>Close active rememora session</td></tr>
-          <tr><td><code>Stop</code></td><td>Each assistant turn</td><td>Curate memories from transcript</td></tr>
-        </tbody>
-      </table>
+      <p>Full integration with Claude Code via skills — no automatic hooks. Nothing captures memory on your behalf; the model decides to act, or you run a command yourself.</p>
       <h3>Skills (model-invoked)</h3>
       <table>
         <thead><tr><th>Skill</th><th>When</th><th>Action</th></tr></thead>
@@ -995,6 +980,7 @@ Before ending: `rememora session end &lt;id&gt; --summary "..." ...`
           <tr><td><code>rememora-init</code></td><td>Manual <code>/rememora</code> command</td><td>Initialize context loading</td></tr>
         </tbody>
       </table>
+      <p>Whenever you want rememora to catch up on anything it missed, run <code>rememora dream [--project &lt;name&gt;] [--dry-run]</code> &mdash; it curates pending session transcripts, then evolves the resulting memories (applying the decisions unless <code>--dry-run</code>). Run it by hand, or wire it to your own cron/launchd job; the plugin installs no schedule.</p>
 
       <h2 id="agent-orchestration">Agent Orchestration</h2>
       <p>The <code>agent-run</code> and <code>agent-loop</code> commands provide autonomous issue dispatch:</p>
