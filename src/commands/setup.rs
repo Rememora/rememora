@@ -3,110 +3,17 @@ use std::path::PathBuf;
 
 const REMEMORA_MARKER: &str = "## Rememora";
 
-// Markers identifying canonical Rememora hook entries. These are substring
-// fingerprints used by `hooks_already_configured` to confirm the deployed
-// command is in place. They reference the deployed-script paths under
-// `~/.rememora/hooks/` so the marker tracks the exact form `setup --apply`
-// writes today (issue #111).
-const REMEMORA_HOOK_MARKER: &str = ".rememora/hooks/session-start.sh";
-const REMEMORA_CURATE_MARKER: &str = ".rememora/hooks/stop-curate.sh";
-const REMEMORA_PROMPT_HOOK_MARKER: &str = ".rememora/hooks/prompt-search.sh";
-const REMEMORA_SESSION_END_MARKER: &str = ".rememora/hooks/session-end.sh";
-
-// Bundled plugin hook scripts — embedded at compile time so CLI-only
-// installs (Homebrew, cargo) get the same observability-instrumented
-// scripts the marketplace plugin ships (issue #111). On every
-// `setup --apply` we redeploy these to `~/.rememora/hooks/<name>.sh`
-// so they upgrade in lockstep with the CLI binary.
-const BUNDLED_SESSION_START_SH: &str = include_str!("../../plugin/scripts/session-start.sh");
-const BUNDLED_SESSION_END_SH: &str = include_str!("../../plugin/scripts/session-end.sh");
-const BUNDLED_STOP_CURATE_SH: &str = include_str!("../../plugin/scripts/stop-curate.sh");
-const BUNDLED_PROMPT_SEARCH_SH: &str = include_str!("../../plugin/scripts/prompt-search.sh");
-
-/// Filename + content pairs for every script we redeploy under `~/.rememora/hooks/`.
-const BUNDLED_HOOK_SCRIPTS: &[(&str, &str)] = &[
-    ("session-start.sh", BUNDLED_SESSION_START_SH),
-    ("session-end.sh", BUNDLED_SESSION_END_SH),
-    ("stop-curate.sh", BUNDLED_STOP_CURATE_SH),
-    ("prompt-search.sh", BUNDLED_PROMPT_SEARCH_SH),
-];
-
-/// Embedded canonical hook manifest — single source of truth for hook *shape*.
-///
-/// `setup --apply` parses this at runtime to recover the envelope structure
-/// (top-level `hooks.<Name>` is an array of `{matcher?, hooks: [{type, command}]}`)
-/// expected by Claude Code's settings.json. It deliberately does NOT use the
-/// embedded plugin commands — those reference `${CLAUDE_PLUGIN_ROOT}` which
-/// only resolves in the marketplace plugin install. We replace each leaf
-/// `command` with the standalone CLI form used by Homebrew/cargo installs.
-const PLUGIN_HOOKS_MANIFEST: &str = include_str!("../../plugin/hooks/hooks.json");
-
-/// Canonical Rememora hook list written by `setup --apply`.
-///
-/// This is the single source of truth for which hooks setup wires into each
-/// agent's `settings.json`. The *shape* (matcher, envelope) comes from
-/// `plugin/hooks/hooks.json` (embedded above); the *commands* are inline
-/// standalone forms so CLI-only installs (Homebrew, cargo) get identical
-/// behavior without needing the plugin tree on disk.
-struct HookSpec {
-    /// Top-level hook event name (`SessionStart`, `UserPromptSubmit`, ...).
-    event: &'static str,
-    /// Marker substring used to detect a pre-existing Rememora entry so we
-    /// do not write the hook twice if the user re-runs `setup --apply`.
-    marker: &'static str,
-    /// Shell command written to `settings.json`.
-    command: &'static str,
-}
-
-fn rememora_hooks() -> &'static [HookSpec] {
-    // The events listed here must each have a matching entry in
-    // `plugin/hooks/hooks.json` (validated by `setup_hooks_match_manifest_subset`).
-    // We deliberately exclude `Setup`: it's a marketplace-only event whose
-    // command depends on `${CLAUDE_PLUGIN_ROOT}` and has no CLI-install analogue.
-    //
-    // Issue #111: each command points at the bundled plugin script deployed
-    // to `~/.rememora/hooks/<name>.sh` by `deploy_hook_scripts()`. This gives
-    // CLI installs (Homebrew, cargo) the same `_emit` recursion-gate
-    // telemetry (`hook_invocations` table) the marketplace plugin already
-    // had, and lets the scripts upgrade in lockstep with the CLI binary
-    // (every `setup --apply` redeploys them).
-    //
-    // Tilde expansion is performed by the shell that runs the hook command;
-    // Claude Code launches hooks via `bash -c`, so `~` resolves correctly
-    // without us having to bake an absolute path that would differ per host.
-    &[
-        HookSpec {
-            event: "SessionStart",
-            marker: REMEMORA_HOOK_MARKER,
-            command: "bash ~/.rememora/hooks/session-start.sh 2>/dev/null || true",
-        },
-        HookSpec {
-            event: "UserPromptSubmit",
-            marker: REMEMORA_PROMPT_HOOK_MARKER,
-            command: "bash ~/.rememora/hooks/prompt-search.sh 2>/dev/null || true",
-        },
-        HookSpec {
-            event: "SessionEnd",
-            marker: REMEMORA_SESSION_END_MARKER,
-            command: "bash ~/.rememora/hooks/session-end.sh 2>/dev/null || true",
-        },
-        HookSpec {
-            event: "Stop",
-            marker: REMEMORA_CURATE_MARKER,
-            command: "bash ~/.rememora/hooks/stop-curate.sh 2>/dev/null || true",
-        },
-    ]
-}
-
 /// Substrings whose presence in a hook's `command` field marks the entry as
-/// rememora-managed. Used by the migration path in `write_hooks` to identify
-/// and replace older flat-shape (or otherwise broken) rememora entries that
-/// pre-date this version of setup.
+/// rememora-managed. Used by `strip_rememora_hooks` to find and remove any
+/// automatic hook wiring a previous version of `setup --apply` installed.
 ///
-/// Keep this in sync with the markers used by `rememora_hooks()` plus any
-/// historical command fragments we know we shipped (e.g. `rememora session`).
-/// The `.rememora/hooks/` token catches the new deployed-script form added
-/// in #111.
+/// Rememora no longer fires anything automatically from Claude Code / Gemini
+/// CLI lifecycle hooks — memory capture happens via explicit CLI invocation
+/// (`rememora save` / `rememora curate` / `rememora dream`) or an agent's own
+/// judgment, not an unattended Stop/SessionStart/SessionEnd/UserPromptSubmit
+/// trigger. `.rememora/hooks/` catches the deployed-script command form
+/// shipped by older versions; the `rememora <verb>` tokens catch the earlier
+/// inline-command form that predates it.
 const REMEMORA_COMMAND_TOKENS: &[&str] = &[
     "rememora context",
     "rememora search",
@@ -119,42 +26,11 @@ fn is_rememora_command(cmd: &str) -> bool {
     REMEMORA_COMMAND_TOKENS.iter().any(|t| cmd.contains(t))
 }
 
-/// Look up the `matcher` value for an event in the embedded manifest, if any.
-/// Returns `None` for events that have no matcher (e.g. SessionEnd, Stop).
-/// Panics if the manifest cannot be parsed — that's a build-time invariant.
-fn manifest_matcher_for(event: &str) -> Option<String> {
-    let parsed: serde_json::Value = serde_json::from_str(PLUGIN_HOOKS_MANIFEST)
-        .expect("embedded plugin/hooks/hooks.json must be valid JSON");
-    parsed
-        .get("hooks")
-        .and_then(|h| h.get(event))
-        .and_then(|arr| arr.as_array())
-        .and_then(|arr| arr.first())
-        .and_then(|entry| entry.get("matcher"))
-        .and_then(|m| m.as_str())
-        .map(|s| s.to_string())
-}
-
-/// Build the canonical envelope-shape JSON entry for a single hook spec:
-/// `{"matcher"?: "...", "hooks": [{"type": "command", "command": "..."}]}`.
-fn build_envelope_entry(spec: &HookSpec) -> serde_json::Value {
-    let mut obj = serde_json::Map::new();
-    if let Some(matcher) = manifest_matcher_for(spec.event) {
-        obj.insert("matcher".to_string(), serde_json::Value::String(matcher));
-    }
-    obj.insert(
-        "hooks".to_string(),
-        serde_json::json!([{
-            "type": "command",
-            "command": spec.command,
-        }]),
-    );
-    serde_json::Value::Object(obj)
-}
-
 // ---------------------------------------------------------------------------
-// Instruction snippets — behavioral triggers + urgency framing (Layer 2 + 3)
-// Session start/end moved to hooks (Layer 1) — see write_hooks()
+// Instruction snippets — behavioral triggers + urgency framing.
+// These are the only automatic-capture guidance rememora ships now: no hook
+// fires on the agent's behalf, so these snippets are what tells it to call
+// `rememora search`/`save`/`session` itself.
 // ---------------------------------------------------------------------------
 
 const CLAUDE_CODE_SNIPPET: &str = r#"
@@ -163,6 +39,8 @@ const CLAUDE_CODE_SNIPPET: &str = r#"
 You have access to `rememora`, a persistent memory system shared across agents and sessions.
 Your context will be lost when this session ends. Anything not saved to rememora is gone forever.
 You are not the only agent on this project — save what others will need, search before you assume.
+Nothing here runs automatically — no hook captures memory on your behalf. Every search, save, and
+session call below is something you invoke yourself, as you work.
 
 ### When to SEARCH (before acting)
 - Before implementing anything non-trivial → `rememora search "relevant topic" --project <name>`
@@ -184,6 +62,10 @@ Save immediately when any of these happen — do not batch or defer:
 - Anything already in the project README or docs
 - Temporary debugging state
 
+### Catching up
+If session transcripts have piled up without being curated, or memories need dedup/consolidation,
+run `rememora dream [--project <name>]` — it curates pending sessions then consolidates in one pass.
+
 ### Sessions
 - Start: `rememora session start --agent claude-code --project <name> --intent "..."`
 - End: `rememora session end <id> --summary "..." --working-state "..."`
@@ -196,6 +78,8 @@ const CODEX_SNIPPET: &str = r#"
 You have access to `rememora`, a persistent memory system shared across agents and sessions.
 Your context will be lost when this session ends. Anything not saved to rememora is gone forever.
 You are not the only agent on this project — save what others will need, search before you assume.
+Nothing here runs automatically — no hook captures memory on your behalf. Every search, save, and
+session call below is something you invoke yourself, as you work.
 
 ### When to SEARCH (before acting)
 - Before implementing anything non-trivial → `rememora search "relevant topic" --project <name>`
@@ -216,6 +100,10 @@ Save immediately when any of these happen — do not batch or defer:
 - Git history (use `git log`)
 - Anything already in the project README or docs
 - Temporary debugging state
+
+### Catching up
+If session transcripts have piled up without being curated, or memories need dedup/consolidation,
+run `rememora dream [--project <name>]` — it curates pending sessions then consolidates in one pass.
 
 ### Sessions
 - Start: `rememora session start --agent codex --project <name> --intent "..."`
@@ -229,6 +117,8 @@ const GEMINI_SNIPPET: &str = r#"
 You have access to `rememora`, a persistent memory system shared across agents and sessions.
 Your context will be lost when this session ends. Anything not saved to rememora is gone forever.
 You are not the only agent on this project — save what others will need, search before you assume.
+Nothing here runs automatically — no hook captures memory on your behalf. Every search, save, and
+session call below is something you invoke yourself, as you work.
 
 ### When to SEARCH (before acting)
 - Before implementing anything non-trivial → `rememora search "relevant topic" --project <name>`
@@ -250,6 +140,10 @@ Save immediately when any of these happen — do not batch or defer:
 - Anything already in the project README or docs
 - Temporary debugging state
 
+### Catching up
+If session transcripts have piled up without being curated, or memories need dedup/consolidation,
+run `rememora dream [--project <name>]` — it curates pending sessions then consolidates in one pass.
+
 ### Sessions
 - Start: `rememora session start --agent gemini --project <name> --intent "..."`
 - End: `rememora session end <id> --summary "..." --working-state "..."`
@@ -261,20 +155,21 @@ struct AgentConfig {
     /// Path to the instruction/markdown file
     config_path: PathBuf,
     snippet: &'static str,
-    /// Path to the settings/hooks JSON file (if hooks are supported)
+    /// Path to the settings/hooks JSON file, if the agent has one. Used only
+    /// to detect and strip stale rememora-managed hook entries left by an
+    /// older `setup --apply` — we no longer write anything here.
     hooks_path: Option<PathBuf>,
-    /// Note to display about hooks (e.g., feature-gate warning)
-    hooks_note: Option<&'static str>,
 }
 
 fn home() -> PathBuf {
     dirs::home_dir().expect("Could not determine home directory")
 }
 
-/// Directory under which `setup --apply` deploys the bundled plugin hook
-/// scripts. Tracks `REMEMORA_DB` (mirrors `crypto::default_key_file_path`)
-/// so integration tests pointed at a scratch DB do not stomp the user's
-/// real `~/.rememora/hooks/`.
+/// Directory older versions of `setup --apply` deployed bundled hook scripts
+/// to. Tracks `REMEMORA_DB` (mirrors `crypto::default_key_file_path`) so
+/// integration tests pointed at a scratch DB do not stomp the user's real
+/// `~/.rememora/hooks/`. Used only for one-time cleanup — nothing deploys
+/// scripts here anymore.
 pub fn default_hooks_dir() -> PathBuf {
     if let Ok(p) = std::env::var("REMEMORA_DB") {
         let db = PathBuf::from(p);
@@ -283,39 +178,6 @@ pub fn default_hooks_dir() -> PathBuf {
         }
     }
     home().join(".rememora").join("hooks")
-}
-
-/// Write every bundled plugin hook script to `dir/<name>.sh` with mode 0755.
-/// Overwrites existing files so the deployed copy stays in lockstep with the
-/// CLI binary on every `setup --apply` (issue #111).
-fn deploy_hook_scripts(dir: &std::path::Path) -> Result<()> {
-    std::fs::create_dir_all(dir)
-        .with_context(|| format!("Failed to create hooks dir {}", dir.display()))?;
-    for (name, body) in BUNDLED_HOOK_SCRIPTS {
-        let target = dir.join(name);
-        std::fs::write(&target, body)
-            .with_context(|| format!("Failed to write {}", target.display()))?;
-        set_executable(&target).with_context(|| {
-            format!("Failed to set 0755 perms on {}", target.display())
-        })?;
-    }
-    Ok(())
-}
-
-#[cfg(unix)]
-fn set_executable(path: &std::path::Path) -> Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    let mut perms = std::fs::metadata(path)?.permissions();
-    perms.set_mode(0o755);
-    std::fs::set_permissions(path, perms)?;
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn set_executable(_path: &std::path::Path) -> Result<()> {
-    // Non-Unix: shells launched from Claude Code on Windows run via WSL/bash
-    // anyway; the executable bit is irrelevant to `bash <path>`.
-    Ok(())
 }
 
 fn detect_agents() -> Vec<AgentConfig> {
@@ -329,7 +191,6 @@ fn detect_agents() -> Vec<AgentConfig> {
             snippet: CLAUDE_CODE_SNIPPET,
 
             hooks_path: Some(home().join(".claude").join("settings.json")),
-            hooks_note: None,
         });
     }
 
@@ -341,7 +202,6 @@ fn detect_agents() -> Vec<AgentConfig> {
             snippet: CODEX_SNIPPET,
 
             hooks_path: None,
-            hooks_note: Some("Codex hooks require `codex_hooks = true` in config.toml (experimental)"),
         });
     }
 
@@ -353,7 +213,6 @@ fn detect_agents() -> Vec<AgentConfig> {
             snippet: GEMINI_SNIPPET,
 
             hooks_path: Some(home().join(".gemini").join("settings.json")),
-            hooks_note: None,
         });
     }
 
@@ -378,12 +237,11 @@ fn already_configured(path: &PathBuf) -> bool {
     }
 }
 
-fn hooks_already_configured(path: &PathBuf) -> bool {
-    // Healthy state requires (a) every canonical hook to be present AND
-    // (b) every rememora-managed entry to live inside the canonical
-    // envelope (`{hooks: [{type, command}]}`). The second clause is the
-    // migration trigger for #107: pre-fix installs wrote flat-shape
-    // `{type, command}` entries which Claude Code silently rejects.
+/// True if `path` contains any rememora-managed hook entry (legacy flat
+/// shape or canonical envelope shape) that `setup --apply` should strip.
+/// Missing/unreadable/malformed files mean "nothing to clean up", not an
+/// error — `setup` never fails on this check.
+fn hooks_need_cleanup(path: &PathBuf) -> bool {
     let Ok(content) = std::fs::read_to_string(path) else {
         return false;
     };
@@ -393,29 +251,12 @@ fn hooks_already_configured(path: &PathBuf) -> bool {
     let Some(hooks) = root.get("hooks").and_then(|h| h.as_object()) else {
         return false;
     };
-    for spec in rememora_hooks() {
-        let Some(arr) = hooks.get(spec.event).and_then(|v| v.as_array()) else {
-            return false;
-        };
-        let canonical_match = arr.iter().any(|entry| {
-            entry
-                .get("hooks")
-                .and_then(|h| h.as_array())
-                .map(|inner| {
-                    inner.iter().any(|leaf| {
-                        leaf.get("command")
-                            .and_then(|c| c.as_str())
-                            .map(|s| s.contains(spec.marker))
-                            .unwrap_or(false)
-                    })
-                })
-                .unwrap_or(false)
-        });
-        if !canonical_match {
-            return false;
-        }
-    }
-    true
+    hooks.values().any(|entry| {
+        entry
+            .as_array()
+            .map(|arr| arr.iter().any(entry_is_rememora_managed))
+            .unwrap_or(false)
+    })
 }
 
 fn tilde_path(path: &std::path::Path) -> String {
@@ -427,68 +268,39 @@ fn tilde_path(path: &std::path::Path) -> String {
     path.display().to_string()
 }
 
-/// Merge rememora hooks into an existing settings.json, preserving all
-/// non-rememora user content.
+/// Remove every rememora-managed hook entry from an existing settings.json,
+/// preserving all non-rememora user content untouched.
 ///
-/// Writes each hook in Claude Code's canonical envelope shape:
-/// ```json
-/// "<EventName>": [
-///   { "matcher": "...", "hooks": [{ "type": "command", "command": "..." }] }
-/// ]
-/// ```
-///
-/// Migration for #107: any entry whose `command` (or any nested
-/// `hooks[].command`) looks rememora-managed (per `is_rememora_command`) is
-/// removed and replaced with the canonical envelope. Non-rememora entries
-/// in the same event array are preserved untouched. This heals settings.json
-/// files written by the broken pre-fix `setup --apply` (which produced
-/// flat-shape `{type, command}` entries that Claude Code silently rejected).
-fn write_hooks(path: &PathBuf) -> Result<()> {
-    let mut root: serde_json::Value = if path.exists() {
-        let content = std::fs::read_to_string(path)?;
-        if content.trim().is_empty() {
-            serde_json::json!({})
-        } else {
-            serde_json::from_str(&content)?
-        }
-    } else {
-        serde_json::json!({})
+/// Rememora no longer wires anything into Claude Code / Gemini CLI lifecycle
+/// hooks — this heals any settings.json an older `setup --apply` wrote by
+/// deleting those entries (both the legacy flat shape and the canonical
+/// envelope shape; see `is_rememora_command`). An event array that ends up
+/// empty is dropped entirely rather than left as `"Event": []`. A missing or
+/// empty file is a no-op, not an error.
+fn strip_rememora_hooks(path: &PathBuf) -> Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+    let content = std::fs::read_to_string(path)?;
+    if content.trim().is_empty() {
+        return Ok(());
+    }
+    let mut root: serde_json::Value = serde_json::from_str(&content)?;
+
+    let Some(hooks_obj) = root.get_mut("hooks").and_then(|h| h.as_object_mut()) else {
+        return Ok(());
     };
 
-    let hooks = root
-        .as_object_mut()
-        .expect("settings.json must be an object")
-        .entry("hooks")
-        .or_insert_with(|| serde_json::json!({}));
-
-    let hooks_obj = hooks
-        .as_object_mut()
-        .expect("hooks must be an object");
-
-    for spec in rememora_hooks() {
-        let entry = hooks_obj
-            .entry(spec.event.to_string())
-            .or_insert_with(|| serde_json::json!([]));
+    hooks_obj.retain(|_event, entry| {
         let Some(arr) = entry.as_array_mut() else {
             // Some other tool wrote a non-array under this key — leave it
             // alone rather than clobbering user state.
-            continue;
+            return true;
         };
-
-        // Strip every rememora-managed entry (flat-shape OR envelope-shape)
-        // so the migration pass cannot leave duplicates. Non-rememora
-        // entries — user-managed hooks pointing at unrelated commands —
-        // stay where they are.
         arr.retain(|item| !entry_is_rememora_managed(item));
+        !arr.is_empty()
+    });
 
-        // Append the canonical envelope.
-        arr.push(build_envelope_entry(spec));
-    }
-
-    // Write back with pretty formatting
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
     let formatted = serde_json::to_string_pretty(&root)?;
     std::fs::write(path, formatted)?;
 
@@ -543,14 +355,14 @@ pub fn run(apply: bool) -> Result<()> {
 
     for agent in &agents {
         let instructions_done = already_configured(&agent.config_path);
-        let hooks_done = agent.hooks_path.as_ref().map(hooks_already_configured).unwrap_or(true);
+        let needs_cleanup = agent.hooks_path.as_ref().map(hooks_need_cleanup).unwrap_or(false);
 
-        let action = if instructions_done && hooks_done {
+        let action = if instructions_done && !needs_cleanup {
             Action::AlreadyConfigured
         } else {
             Action::NeedsWork {
                 instructions: !instructions_done,
-                hooks: !hooks_done && agent.hooks_path.is_some(),
+                hooks_cleanup: needs_cleanup,
             }
         };
         actions.push((agent, action));
@@ -568,7 +380,7 @@ pub fn run(apply: bool) -> Result<()> {
                     agent.name, path,
                 ))?;
             }
-            Action::NeedsWork { instructions, hooks } => {
+            Action::NeedsWork { instructions, hooks_cleanup } => {
                 let mut parts = Vec::new();
                 if *instructions {
                     if agent.config_path.exists() {
@@ -577,25 +389,14 @@ pub fn run(apply: bool) -> Result<()> {
                         parts.push("instructions (create)");
                     }
                 }
-                if *hooks {
-                    if let Some(hp) = &agent.hooks_path {
-                        if hp.exists() {
-                            parts.push("hooks (merge)");
-                        } else {
-                            parts.push("hooks (create)");
-                        }
-                    }
+                if *hooks_cleanup {
+                    parts.push("hooks (remove stale rememora entries)");
                 }
                 cliclack::log::info(format!(
                     "{:<13} {} — will configure: {}",
                     agent.name, path, parts.join(", "),
                 ))?;
             }
-        }
-
-        // Show hooks note if applicable
-        if let Some(note) = agent.hooks_note {
-            cliclack::log::warning(format!("  ⚠ {}", note))?;
         }
     }
 
@@ -604,18 +405,16 @@ pub fn run(apply: bool) -> Result<()> {
         .filter(|(_, a)| !matches!(a, Action::AlreadyConfigured))
         .collect();
 
-    // Deploy bundled plugin hook scripts to `~/.rememora/hooks/` BEFORE the
-    // "already configured" early-return — otherwise users who upgrade the
-    // rememora CLI (Homebrew, cargo install, marketplace plugin) would end up
-    // running the *old* shell scripts indefinitely, since their settings.json
-    // already points at canonical hook paths and the old per-agent action is
-    // `AlreadyConfigured` (issue #115). `deploy_hook_scripts` is idempotent
-    // (overwrites in place) so it's safe to run on every `--apply`.
+    // One-time cleanup: remove any hook scripts an older `setup --apply`
+    // deployed to `~/.rememora/hooks/`. Rememora no longer fires anything
+    // automatically, so nothing reads these anymore. Idempotent — a no-op
+    // once the directory is gone.
     let hooks_dir = default_hooks_dir();
-    if apply {
-        deploy_hook_scripts(&hooks_dir)?;
+    if apply && hooks_dir.exists() {
+        std::fs::remove_dir_all(&hooks_dir)
+            .with_context(|| format!("Failed to remove {}", hooks_dir.display()))?;
         cliclack::log::success(format!(
-            "Deployed hook scripts to {}",
+            "Removed deployed hook scripts at {}",
             tilde_path(&hooks_dir),
         ))?;
     }
@@ -646,9 +445,9 @@ pub fn run(apply: bool) -> Result<()> {
 
     // Apply changes
     for (agent, action) in &actions {
-        let (needs_instructions, needs_hooks) = match action {
+        let (needs_instructions, needs_hooks_cleanup) = match action {
             Action::AlreadyConfigured => continue,
-            Action::NeedsWork { instructions, hooks } => (*instructions, *hooks),
+            Action::NeedsWork { instructions, hooks_cleanup } => (*instructions, *hooks_cleanup),
         };
 
         // --- Instructions ---
@@ -674,8 +473,8 @@ pub fn run(apply: bool) -> Result<()> {
             cliclack::log::success(format!("{}: instructions configured", agent.name))?;
         }
 
-        // --- Hooks ---
-        if needs_hooks {
+        // --- Hooks cleanup ---
+        if needs_hooks_cleanup {
             if let Some(hooks_path) = &agent.hooks_path {
                 // Backup existing hooks file
                 if hooks_path.exists() {
@@ -683,9 +482,9 @@ pub fn run(apply: bool) -> Result<()> {
                     std::fs::copy(hooks_path, &backup)?;
                 }
 
-                write_hooks(hooks_path)?;
+                strip_rememora_hooks(hooks_path)?;
                 cliclack::log::success(format!(
-                    "{}: hooks configured ({})",
+                    "{}: removed automatic rememora hooks ({})",
                     agent.name,
                     tilde_path(hooks_path),
                 ))?;
@@ -854,7 +653,7 @@ enum Action {
     AlreadyConfigured,
     NeedsWork {
         instructions: bool,
-        hooks: bool,
+        hooks_cleanup: bool,
     },
 }
 
@@ -862,211 +661,61 @@ enum Action {
 mod tests {
     use super::*;
 
-    /// Helper: walk a hook event array and return all leaf `command` strings
-    /// (i.e. the `hooks[].command` reachable through the envelope).
-    fn collect_envelope_commands(arr: &[serde_json::Value]) -> Vec<String> {
-        let mut out = Vec::new();
-        for entry in arr {
-            if let Some(inner) = entry.get("hooks").and_then(|h| h.as_array()) {
-                for leaf in inner {
-                    if let Some(c) = leaf.get("command").and_then(|c| c.as_str()) {
-                        out.push(c.to_string());
-                    }
+    #[test]
+    fn hooks_need_cleanup_false_for_missing_or_hookless_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("does-not-exist.json");
+        assert!(!hooks_need_cleanup(&missing));
+
+        let empty = dir.path().join("settings.json");
+        std::fs::write(&empty, r#"{"permissions": {"allow": ["Bash(ls:*)"]}}"#).unwrap();
+        assert!(!hooks_need_cleanup(&empty));
+    }
+
+    #[test]
+    fn hooks_need_cleanup_true_for_legacy_and_envelope_shapes() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let legacy = dir.path().join("legacy.json");
+        std::fs::write(
+            &legacy,
+            serde_json::to_string(&serde_json::json!({
+                "hooks": {
+                    "Stop": [
+                        { "type": "command", "command": "bash -c '(rememora curate --auto) &'" }
+                    ]
                 }
-            }
-        }
-        out
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(hooks_need_cleanup(&legacy), "legacy flat-shape entry should be detected");
+
+        let envelope = dir.path().join("envelope.json");
+        std::fs::write(
+            &envelope,
+            serde_json::to_string(&serde_json::json!({
+                "hooks": {
+                    "Stop": [
+                        { "hooks": [{ "type": "command", "command": "bash ~/.rememora/hooks/stop-curate.sh 2>/dev/null || true" }] }
+                    ]
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(hooks_need_cleanup(&envelope), "deployed-script envelope entry should be detected");
     }
 
-    /// `setup --apply` must wire exactly the canonical hook list.
+    /// `strip_rememora_hooks` must remove every rememora-managed entry —
+    /// legacy flat shape and canonical envelope shape alike — while leaving
+    /// user-managed hooks and unrelated settings.json content untouched.
     #[test]
-    fn rememora_hooks_includes_user_prompt_submit() {
-        // Issue #101 regression guard — UserPromptSubmit (FTS5 injection)
-        // shipped in PR #87 but was missing from `setup --apply` for several
-        // releases.
-        let events: Vec<&str> = rememora_hooks().iter().map(|h| h.event).collect();
-        assert!(
-            events.contains(&"UserPromptSubmit"),
-            "UserPromptSubmit hook missing from rememora_hooks(); got: {events:?}",
-        );
-    }
-
-    #[test]
-    fn rememora_hooks_match_expected_set() {
-        let mut events: Vec<&str> = rememora_hooks().iter().map(|h| h.event).collect();
-        events.sort();
-        // Setup intentionally excludes the manifest's `Setup` hook
-        // (marketplace-only, requires `${CLAUDE_PLUGIN_ROOT}`).
-        assert_eq!(
-            events,
-            vec!["SessionEnd", "SessionStart", "Stop", "UserPromptSubmit"],
-        );
-    }
-
-    /// Drift guard: every event in `rememora_hooks()` must also appear in the
-    /// embedded plugin manifest. The manifest may include additional events
-    /// (currently `Setup`) that we deliberately skip.
-    #[test]
-    fn setup_hooks_match_manifest_subset() {
-        let parsed: serde_json::Value =
-            serde_json::from_str(PLUGIN_HOOKS_MANIFEST).expect("manifest parses");
-        let manifest_events: std::collections::HashSet<String> = parsed
-            .get("hooks")
-            .and_then(|h| h.as_object())
-            .expect("manifest has hooks object")
-            .keys()
-            .cloned()
-            .collect();
-
-        for spec in rememora_hooks() {
-            assert!(
-                manifest_events.contains(spec.event),
-                "rememora_hooks() lists {} but it is absent from plugin/hooks/hooks.json (drift)",
-                spec.event,
-            );
-        }
-    }
-
-    /// `write_hooks` must emit canonical envelope shape — Claude Code rejects
-    /// flat `{type, command}` entries silently, which is the root cause of #107.
-    #[test]
-    fn write_hooks_emits_canonical_envelope_shape() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("settings.json");
-        write_hooks(&path).expect("write_hooks");
-
-        let raw = std::fs::read_to_string(&path).unwrap();
-        let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
-        let hooks = parsed
-            .get("hooks")
-            .and_then(|v| v.as_object())
-            .expect("hooks object present");
-
-        // Top-level keys must be exactly the four hook events setup writes.
-        let mut keys: Vec<&str> = hooks.keys().map(|s| s.as_str()).collect();
-        keys.sort();
-        assert_eq!(
-            keys,
-            vec!["SessionEnd", "SessionStart", "Stop", "UserPromptSubmit"],
-        );
-
-        for spec in rememora_hooks() {
-            let arr = hooks
-                .get(spec.event)
-                .and_then(|v| v.as_array())
-                .unwrap_or_else(|| panic!("{} array missing", spec.event));
-            assert_eq!(arr.len(), 1, "{} should have a single envelope", spec.event);
-
-            let entry = &arr[0];
-            // Every envelope entry must have a `hooks` array of `{type: command, command: ...}`.
-            let inner = entry
-                .get("hooks")
-                .and_then(|h| h.as_array())
-                .unwrap_or_else(|| panic!("{} envelope missing inner hooks array", spec.event));
-            assert_eq!(inner.len(), 1, "{} should have one inner leaf", spec.event);
-            let leaf = &inner[0];
-            assert_eq!(
-                leaf.get("type").and_then(|t| t.as_str()),
-                Some("command"),
-                "{} leaf must be type=command",
-                spec.event,
-            );
-            let cmd = leaf
-                .get("command")
-                .and_then(|c| c.as_str())
-                .unwrap_or_else(|| panic!("{} leaf missing command string", spec.event));
-            assert!(
-                cmd.contains(spec.marker),
-                "{} leaf command does not contain marker {:?}: {}",
-                spec.event,
-                spec.marker,
-                cmd,
-            );
-
-            // Flat-shape fields must NOT appear at envelope level.
-            assert!(
-                entry.get("type").is_none(),
-                "{} envelope must not have top-level `type` (flat shape leaked)",
-                spec.event,
-            );
-            assert!(
-                entry.get("command").is_none(),
-                "{} envelope must not have top-level `command` (flat shape leaked)",
-                spec.event,
-            );
-        }
-    }
-
-    /// SessionStart in the plugin manifest carries a `matcher` value Claude
-    /// Code uses to scope the hook. Setup must propagate it.
-    #[test]
-    fn write_hooks_propagates_session_start_matcher() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("settings.json");
-        write_hooks(&path).unwrap();
-
-        let parsed: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        let entry = &parsed
-            .get("hooks")
-            .and_then(|h| h.get("SessionStart"))
-            .and_then(|v| v.as_array())
-            .unwrap()[0];
-
-        assert_eq!(
-            entry.get("matcher").and_then(|m| m.as_str()),
-            Some("startup|clear|compact|resume"),
-        );
-
-        // Other events (SessionEnd, Stop, UserPromptSubmit) have no matcher in
-        // the manifest — the field must be absent on those envelopes.
-        for ev in ["SessionEnd", "Stop", "UserPromptSubmit"] {
-            let e = &parsed
-                .get("hooks")
-                .and_then(|h| h.get(ev))
-                .and_then(|v| v.as_array())
-                .unwrap()[0];
-            assert!(
-                e.get("matcher").is_none(),
-                "{ev} envelope should not have a matcher",
-            );
-        }
-    }
-
-    /// Re-running `write_hooks` must be idempotent: each event ends up with
-    /// exactly one envelope entry, no duplicate rememora commands.
-    #[test]
-    fn write_hooks_is_idempotent() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("settings.json");
-        write_hooks(&path).unwrap();
-        write_hooks(&path).unwrap();
-
-        let parsed: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        let hooks = parsed.get("hooks").and_then(|v| v.as_object()).unwrap();
-
-        for spec in rememora_hooks() {
-            let arr = hooks.get(spec.event).and_then(|v| v.as_array()).unwrap();
-            assert_eq!(arr.len(), 1, "{} duplicated after re-run", spec.event);
-            let cmds = collect_envelope_commands(arr);
-            let count = cmds.iter().filter(|c| c.contains(spec.marker)).count();
-            assert_eq!(count, 1, "{} marker duplicated after re-run", spec.event);
-        }
-    }
-
-    /// Migration: a settings.json written by the broken pre-#107 setup —
-    /// flat-shape `{type, command}` entries directly under each event — must
-    /// be healed in place on the next `setup --apply`. User-managed
-    /// non-rememora entries in the same arrays must be preserved.
-    #[test]
-    fn write_hooks_migrates_flat_shape_to_envelope() {
+    fn strip_rememora_hooks_removes_managed_entries_preserves_others() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.json");
 
-        // Seed the file with the exact flat shape the broken setup produced,
-        // plus a couple of non-rememora user-managed entries we must preserve.
-        let broken = serde_json::json!({
+        let seeded = serde_json::json!({
             "permissions": { "allow": ["Bash(ls:*)"] },
             "hooks": {
                 "SessionStart": [
@@ -1074,20 +723,21 @@ mod tests {
                     { "type": "command", "command": "echo user-hook-please-keep" }
                 ],
                 "UserPromptSubmit": [
-                    { "type": "command", "command": "bash -c 'rememora search --limit 3 --format context blah'" }
+                    { "hooks": [{ "type": "command", "command": "bash ~/.rememora/hooks/prompt-search.sh 2>/dev/null || true" }] }
                 ],
                 "SessionEnd": [
                     { "type": "command", "command": "rememora session end-active --auto-summary 2>/dev/null || true" }
                 ],
                 "Stop": [
-                    { "type": "command", "command": "bash -c '(rememora curate --auto 2>/dev/null || true) &'" }
+                    { "hooks": [{ "type": "command", "command": "bash ~/.rememora/hooks/stop-curate.sh 2>/dev/null || true" }] },
+                    { "hooks": [{ "type": "command", "command": "echo also-keep-this-one" }] }
                 ]
             }
         });
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(&path, serde_json::to_string_pretty(&broken).unwrap()).unwrap();
+        std::fs::write(&path, serde_json::to_string_pretty(&seeded).unwrap()).unwrap();
 
-        write_hooks(&path).expect("migration write_hooks");
+        strip_rememora_hooks(&path).expect("strip_rememora_hooks");
 
         let parsed: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
@@ -1100,154 +750,80 @@ mod tests {
                 .and_then(|a| a.as_array())
                 .map(|a| a.len()),
             Some(1),
-            "non-hooks settings clobbered by migration",
+            "non-hooks settings clobbered by strip",
         );
 
         let hooks = parsed.get("hooks").and_then(|v| v.as_object()).unwrap();
 
-        // Each event has exactly one rememora envelope entry now…
-        for spec in rememora_hooks() {
-            let arr = hooks.get(spec.event).and_then(|v| v.as_array()).unwrap();
-            let envelopes: Vec<_> = arr
-                .iter()
-                .filter(|e| e.get("hooks").is_some())
-                .collect();
-            assert_eq!(
-                envelopes.len(),
-                1,
-                "{} should have exactly one envelope entry post-migration",
-                spec.event,
-            );
-            // …and it must be canonical-shape (no top-level type/command).
-            let env = envelopes[0];
-            assert!(env.get("type").is_none(), "{} migrated entry still flat", spec.event);
-            assert!(
-                env.get("command").is_none(),
-                "{} migrated entry still flat",
-                spec.event,
-            );
-            // The flat-shape rememora entry must be gone (no entry has a
-            // top-level `command` containing rememora tokens).
-            for entry in arr {
-                if let Some(cmd) = entry.get("command").and_then(|c| c.as_str()) {
-                    assert!(
-                        !is_rememora_command(cmd),
-                        "{} still has flat-shape rememora entry: {}",
-                        spec.event,
-                        cmd,
-                    );
-                }
-            }
-        }
+        // SessionEnd and UserPromptSubmit had nothing but rememora entries —
+        // the whole event key should be gone, not left as an empty array.
+        assert!(hooks.get("SessionEnd").is_none(), "SessionEnd should be fully removed");
+        assert!(hooks.get("UserPromptSubmit").is_none(), "UserPromptSubmit should be fully removed");
 
-        // Non-rememora user hook on SessionStart must be preserved.
+        // SessionStart keeps only the user-managed entry.
         let ss = hooks.get("SessionStart").and_then(|v| v.as_array()).unwrap();
-        let preserved = ss.iter().any(|e| {
-            e.get("command")
-                .and_then(|c| c.as_str())
-                .map(|s| s.contains("user-hook-please-keep"))
-                .unwrap_or(false)
-        });
-        assert!(preserved, "user-managed non-rememora hook was clobbered");
+        assert_eq!(ss.len(), 1);
+        assert_eq!(
+            ss[0].get("command").and_then(|c| c.as_str()),
+            Some("echo user-hook-please-keep"),
+        );
+
+        // Stop keeps only the user-managed entry.
+        let stop = hooks.get("Stop").and_then(|v| v.as_array()).unwrap();
+        assert_eq!(stop.len(), 1);
+        let stop_cmd = stop[0]
+            .get("hooks")
+            .and_then(|h| h.as_array())
+            .and_then(|a| a.first())
+            .and_then(|leaf| leaf.get("command"))
+            .and_then(|c| c.as_str());
+        assert_eq!(stop_cmd, Some("echo also-keep-this-one"));
     }
 
-    /// Issue #111: bundled plugin scripts must land on disk under the hooks
-    /// dir with mode 0755 and contain the recursion-gate telemetry calls
-    /// (`rememora debug record-hook-event`) that populate `hook_invocations`.
-    /// Without this, Homebrew/cargo installs get zero observability — the
-    /// inline `(rememora curate --auto) &` form never emitted hook events.
     #[test]
-    fn deploy_hook_scripts_writes_executable_files_with_telemetry() {
+    fn strip_rememora_hooks_is_noop_on_missing_or_hookless_file() {
         let dir = tempfile::tempdir().unwrap();
-        deploy_hook_scripts(dir.path()).expect("deploy_hook_scripts");
+        let missing = dir.path().join("does-not-exist.json");
+        strip_rememora_hooks(&missing).expect("missing file is a no-op");
+        assert!(!missing.exists(), "strip must not create a file that wasn't there");
 
-        let expected = [
-            "session-start.sh",
-            "session-end.sh",
-            "stop-curate.sh",
-            "prompt-search.sh",
-        ];
-        for name in expected {
-            let p = dir.path().join(name);
-            assert!(p.exists(), "{} must be deployed", name);
-
-            // Mode 0755 on Unix.
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let mode = std::fs::metadata(&p).unwrap().permissions().mode() & 0o777;
-                assert_eq!(mode, 0o755, "{} must be 0755, got 0o{:o}", name, mode);
-            }
-
-            // Sanity: file is non-empty and has a bash shebang.
-            let body = std::fs::read_to_string(&p).unwrap();
-            assert!(
-                body.starts_with("#!/usr/bin/env bash"),
-                "{} missing bash shebang",
-                name,
-            );
-        }
-
-        // The Stop-hook recursion gate is the entire reason #111 exists:
-        // verify the deployed copy still contains the `record-hook-event`
-        // telemetry call so `hook_invocations` will populate when it runs.
-        let stop_curate = std::fs::read_to_string(dir.path().join("stop-curate.sh")).unwrap();
-        assert!(
-            stop_curate.contains("rememora debug record-hook-event"),
-            "stop-curate.sh must call `rememora debug record-hook-event` so \
-             hook_invocations populates for Homebrew/cargo installs (#111)",
+        let hookless = dir.path().join("settings.json");
+        let content = r#"{"permissions": {"allow": ["Bash(ls:*)"]}}"#;
+        std::fs::write(&hookless, content).unwrap();
+        strip_rememora_hooks(&hookless).expect("hookless file is a no-op");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&hookless).unwrap()).unwrap();
+        assert_eq!(
+            parsed.get("permissions").and_then(|p| p.get("allow")).and_then(|a| a.as_array()).map(|a| a.len()),
+            Some(1),
         );
     }
 
-    /// `deploy_hook_scripts` must be idempotent — running it twice is a
-    /// no-error overwrite (the issue spec calls for re-deploy on every
-    /// `setup --apply` so scripts upgrade in lockstep with the CLI binary).
     #[test]
-    fn deploy_hook_scripts_is_idempotent() {
-        let dir = tempfile::tempdir().unwrap();
-        deploy_hook_scripts(dir.path()).expect("first deploy");
-        // Tamper with one script to simulate a stale version on disk.
-        let stop = dir.path().join("stop-curate.sh");
-        std::fs::write(&stop, "#!/usr/bin/env bash\n# stale\n").unwrap();
-        // Second deploy must overwrite it.
-        deploy_hook_scripts(dir.path()).expect("second deploy");
-        let body = std::fs::read_to_string(&stop).unwrap();
-        assert!(
-            body.contains("rememora debug record-hook-event"),
-            "second deploy did not overwrite stale stop-curate.sh",
-        );
-    }
-
-    /// Issue #111: settings.json's inline commands must reference the
-    /// deployed-script paths under `~/.rememora/hooks/`. Without this, the
-    /// `_emit` recursion-gate telemetry inside the scripts never runs and
-    /// `hook_invocations` stays empty for CLI installs.
-    #[test]
-    fn write_hooks_references_deployed_script_paths() {
+    fn strip_rememora_hooks_is_idempotent() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.json");
-        write_hooks(&path).unwrap();
+        std::fs::write(
+            &path,
+            serde_json::to_string(&serde_json::json!({
+                "hooks": {
+                    "Stop": [
+                        { "hooks": [{ "type": "command", "command": "bash ~/.rememora/hooks/stop-curate.sh 2>/dev/null || true" }] }
+                    ]
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        strip_rememora_hooks(&path).unwrap();
+        strip_rememora_hooks(&path).unwrap();
 
         let parsed: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        let hooks = parsed.get("hooks").and_then(|v| v.as_object()).unwrap();
-
-        let cases = [
-            ("SessionStart", "~/.rememora/hooks/session-start.sh"),
-            ("SessionEnd", "~/.rememora/hooks/session-end.sh"),
-            ("Stop", "~/.rememora/hooks/stop-curate.sh"),
-            ("UserPromptSubmit", "~/.rememora/hooks/prompt-search.sh"),
-        ];
-        for (event, expected_path) in cases {
-            let arr = hooks.get(event).and_then(|v| v.as_array()).unwrap();
-            let cmds = collect_envelope_commands(arr);
-            assert!(
-                cmds.iter().any(|c| c.contains(expected_path)),
-                "{} command must reference {} (got: {:?})",
-                event,
-                expected_path,
-                cmds,
-            );
-        }
+        assert!(
+            parsed.get("hooks").and_then(|h| h.get("Stop")).is_none(),
+            "second run should still be a clean no-op",
+        );
     }
 }
