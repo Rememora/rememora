@@ -8,8 +8,8 @@
     {
       "name": "rememora",
       "source": "./plugin",
-      "description": "Persistent cross-agent memory for Claude Code. Auto-saves decisions, bug fixes, and patterns. Searches memory before implementations.",
-      "version": "1.6.0",
+      "description": "Persistent cross-agent memory for Claude Code. Saves decisions, bug fixes, and patterns; searches memory before implementations — on the model's own judgment or on demand.",
+      "version": "1.7.0",
       "author": {
         "name": "Rememora"
       },

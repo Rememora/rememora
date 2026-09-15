@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 [![Homebrew](https://img.shields.io/badge/brew-Rememora%2Ftap-orange?style=flat-square)](https://github.com/Rememora/homebrew-tap)
 
-> **What's new in v1.5.0** — `rememora update [--check]` surfaces a one-line upgrade hint matched to your install method (Homebrew / cargo / unknown). 1.4.0 and 1.4.1 before it made the autonomous memory pipeline actually work end-to-end on modern Claude Code (the curator parser was inert in 1.2.x — Stop hook fired but no memories were ever saved). Full notes: [v1.5.0](https://github.com/Rememora/rememora/releases/tag/v1.5.0) · [v1.4.1](https://github.com/Rememora/rememora/releases/tag/v1.4.1) · [v1.4.0](https://github.com/Rememora/rememora/releases/tag/v1.4.0) · [CHANGELOG](CHANGELOG.md)
+> **What's new in v1.7.0** — Rememora no longer wires any automatic Claude Code / Gemini CLI hooks; `rememora setup --apply` self-heals any existing install by stripping them out. `rememora dream` is the new manual catch-up command (curate + evolve in one pass). v1.6.0 before it fixed memories written from a git worktree being unreachable (worktree-aware project resolution + `rememora project reconcile`) and made memory consolidation bounded and reversible (`rememora evolve --apply`/`--undo-log`). Full notes: [v1.7.0](https://github.com/Rememora/rememora/releases/tag/v1.7.0) · [v1.6.0](https://github.com/Rememora/rememora/releases/tag/v1.6.0) · [CHANGELOG](CHANGELOG.md)
 
 Persistent, cross-agent memory for AI coding agents. One SQLite database, shared by every agent you use.
 
