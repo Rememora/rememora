@@ -160,10 +160,7 @@ fn build_subagent_command(prompt: &str, model: &str) -> Command {
         "Bash",
         "--allowedTools",
         "Bash(rememora:*)",
-    ])
-    // Mark curate-spawned Claude Code children so their Stop hooks do not
-    // recursively curate the child session JSONL.
-    .env("REMEMORA_CURATE_CHILD", "1");
+    ]);
     cmd
 }
 
@@ -340,16 +337,6 @@ mod tests {
             msg.contains("type") || msg.contains("result"),
             "error should mention the missing result entry, got: {msg}",
         );
-    }
-
-    #[test]
-    fn test_subagent_command_marks_curate_child() {
-        let cmd = build_subagent_command("test prompt", "haiku");
-        let env_value = cmd
-            .get_envs()
-            .find_map(|(key, value)| (key == "REMEMORA_CURATE_CHILD").then_some(value));
-
-        assert_eq!(env_value.flatten(), Some(std::ffi::OsStr::new("1")));
     }
 
     #[test]
