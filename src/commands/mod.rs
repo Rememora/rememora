@@ -5,6 +5,7 @@ pub mod context;
 pub mod curate;
 pub mod debug_hook;
 pub mod desktop;
+pub mod dream;
 pub mod encrypt;
 pub mod eval;
 pub mod evolve;

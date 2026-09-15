@@ -411,6 +411,21 @@ enum Commands {
         max_batch: usize,
     },
 
+    /// Run memory upkeep end-to-end on demand: curate pending sessions, then
+    /// evolve (apply unless --dry-run). The manual replacement for the
+    /// automatic Stop/SessionEnd hooks rememora used to fire — nothing runs
+    /// unless you invoke this (or wire it to your own cron/launchd job).
+    Dream {
+        /// Project scope. Omit to curate every auto-discovered session file
+        /// and evolve across all projects.
+        #[arg(long)]
+        project: Option<String>,
+
+        /// Show what would happen without writing anything.
+        #[arg(long)]
+        dry_run: bool,
+    },
+
     /// Consolidate similar/redundant memories using LLM (dry run unless --apply)
     Evolve {
         /// Project scope (required)
@@ -1010,6 +1025,12 @@ fn main() -> Result<()> {
                 min_similarity,
                 max_batch,
             },
+            cli.json,
+        ),
+
+        Commands::Dream { project, dry_run } => commands::dream::run(
+            &conn,
+            &commands::dream::DreamArgs { project, dry_run },
             cli.json,
         ),
 
