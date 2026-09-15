@@ -5,13 +5,13 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 [![Homebrew](https://img.shields.io/badge/brew-Rememora%2Ftap-orange?style=flat-square)](https://github.com/Rememora/homebrew-tap)
 
-> **What's new in v1.5.0** — `rememora update [--check]` surfaces a one-line upgrade hint matched to your install method (Homebrew / cargo / unknown). 1.4.0 and 1.4.1 before it made the autonomous memory pipeline actually work end-to-end on modern Claude Code (the curator parser was inert in 1.2.x — Stop hook fired but no memories were ever saved). Full notes: [v1.5.0](https://github.com/Rememora/rememora/releases/tag/v1.5.0) · [v1.4.1](https://github.com/Rememora/rememora/releases/tag/v1.4.1) · [v1.4.0](https://github.com/Rememora/rememora/releases/tag/v1.4.0) · [CHANGELOG](CHANGELOG.md)
+> **What's new in v1.7.0** — Rememora no longer wires any automatic Claude Code / Gemini CLI hooks; `rememora setup --apply` self-heals any existing install by stripping them out. `rememora dream` is the new manual catch-up command (curate + evolve in one pass). v1.6.0 before it fixed memories written from a git worktree being unreachable (worktree-aware project resolution + `rememora project reconcile`) and made memory consolidation bounded and reversible (`rememora evolve --apply`/`--undo-log`). Full notes: [v1.7.0](https://github.com/Rememora/rememora/releases/tag/v1.7.0) · [v1.6.0](https://github.com/Rememora/rememora/releases/tag/v1.6.0) · [CHANGELOG](CHANGELOG.md)
 
 Persistent, cross-agent memory for AI coding agents. One SQLite database, shared by every agent you use.
 
 **The problem:** Claude Code, Codex, and Gemini CLI each lose context between sessions. Switch agents mid-task and you start from scratch. Come back to a project after a week and the agent has forgotten everything.
 
-**Rememora fixes this.** A fast Rust CLI that any agent can call via Bash to save and retrieve memories, transfer working context between agents, and build up project knowledge over time — with autonomous curation that extracts memories from session transcripts without manual intervention.
+**Rememora fixes this.** A fast Rust CLI that any agent can call via Bash to save and retrieve memories, transfer working context between agents, and build up project knowledge over time — with LLM-powered curation that extracts memories from session transcripts on demand (`rememora curate` / `rememora dream`), never from an automatic hook.
 
 ```bash
 # Agent A (Claude Code) saves a decision
@@ -33,7 +33,7 @@ rememora context --project myapp
 - **Full-text search** — BM25 via SQLite FTS5, zero external dependencies
 - **Vector search** — optional cosine similarity via sqlite-vec + sentence-transformers (feature-gated)
 - **Hybrid search** — reciprocal rank fusion (RRF) merging BM25 + vector results
-- **Autonomous curation** — LLM-powered memory extraction from Claude Code session transcripts
+- **On-demand curation** — LLM-powered memory extraction from Claude Code session transcripts, triggered by `rememora curate`/`rememora dream` or the model's own judgment — never an automatic hook
 - **Memory consolidation** — smart dedup, merge, and pruning of stale memories via LLM
 - **Agent orchestration** — dispatch GitHub issues to Claude CLI with quality gates and retry loops
 - **Eval benchmark** — multi-scenario harness measuring instruction compliance and autonomous behavior
@@ -112,7 +112,7 @@ rememora session start --agent codex --project myapp \
 
 ## Autonomous Curation
 
-Rememora can automatically extract memories from Claude Code sessions without manual intervention:
+Rememora extracts memories from Claude Code sessions on demand — nothing runs automatically:
 
 ```bash
 # Auto-discover and curate all Claude Code session transcripts
@@ -131,7 +131,7 @@ rememora curate --auto --dry-run
 3. **AUDN curation** — Sonnet subagent with Bash access runs the full Add/Update/Delete/Noop cycle via `rememora save/search/supersede`
 4. **Consolidation** — BM25 clustering + an LLM that proposes merges. Nothing in this pipeline retires a memory: applying consolidation is always a deliberate `rememora evolve --apply`.
 
-Integrates with Claude Code hooks for fully autonomous operation — memories are extracted after every conversation turn.
+Run it yourself whenever you want to catch up, or reach for `rememora dream` to curate and evolve in one pass — see [Agent Setup](#agent-setup).
 
 ## Memory Consolidation
 
@@ -202,9 +202,15 @@ rememora agent-loop --repo owner/repo --once
 
 ## Agent Setup
 
+Rememora fires nothing automatically — no hook captures memory on your behalf, in the plugin or
+otherwise. Every path below works the same way: an agent instructions file (`CLAUDE.md`/
+`AGENTS.md`/`GEMINI.md`) tells the agent when to search, save, and manage sessions, and it invokes
+`rememora` itself as it works. Run `rememora dream` whenever you want a manual catch-up pass
+(curate pending sessions + evolve) — by hand, or from your own cron/launchd job.
+
 ### Claude Code (Recommended: Plugin)
 
-Install Rememora as a Claude Code plugin for **fully autonomous operation**:
+Install Rememora as a Claude Code plugin:
 
 ```bash
 # 1. Add the Rememora marketplace
@@ -217,19 +223,15 @@ claude plugin install rememora@rememora
 claude plugin install rememora@rememora --scope project
 ```
 
-This gives you four hooks + three skills that work automatically — no manual commands needed:
+This gives you the instructions block plus three skills:
 
 | Component | What it does |
 |-----------|-------------|
-| **SessionStart hook** | Loads project context (L0 + L1) and opens a tracked session |
-| **UserPromptSubmit hook** | Injects top-3 FTS5 hits matching your prompt into the agent's context |
-| **Stop hook** | Curates memories from the session transcript after each turn (gated) |
-| **SessionEnd hook** | Final-pass curation + closes the active session row |
 | **rememora-save skill** | Claude autonomously saves decisions, bug fixes, patterns |
 | **rememora-search skill** | Claude autonomously searches before implementations |
 | **`/rememora` command** | Manual save, search, or status check |
 
-After installing, restart Claude Code. The plugin auto-detects your project from the working directory and now ships verified end-to-end on the marketplace install path (sandbox iter 12 confirmed: 3 substantive turns → 7 memories captured autonomously, fresh session recalls all 3 architectural decisions).
+After installing, restart Claude Code. The plugin auto-detects your project from the working directory.
 
 **Updating the plugin:**
 
@@ -238,15 +240,9 @@ claude plugin marketplace update rememora    # refresh the marketplace cache
 claude plugin update rememora@rememora       # update the plugin (note the @marketplace suffix)
 ```
 
-**Configuration:**
-
-- `REMEMORA_CURATE_COOLDOWN_SECS` (default: `300`) — minimum idle seconds between automatic curation runs from the `Stop` hook, per session. The plugin enforces **at most one in-flight `rememora curate` per session** via a kernel-level concurrency gate (`pgrep` on the session ID); this setting layers on top as a secondary frequency gate, bounding how long to wait after a curate *finishes* before another is allowed. Set to `0` to disable the cooldown — the concurrency gate still applies. A final curation pass always runs at `SessionEnd` regardless of cooldown, so the tail of the session is never lost.
-- `REMEMORA_DISABLE_HOOKS=1` — kill-switch for all four hooks. Useful for debugging.
-- `REMEMORA_CURATE_CHILD=1` — set internally by the curator on its `claude -p` subprocesses so the entire hook chain is a no-op inside curator children (no spurious session rows, no context injection, no recursive curation). Not intended for user override.
-
 ### Claude Code (Alternative: CLAUDE.md)
 
-If you prefer manual control, add to `~/.claude/CLAUDE.md`:
+Equivalent to the plugin's instructions block, without installing the plugin — add to `~/.claude/CLAUDE.md`:
 
 ```markdown
 ## Rememora Memory System
@@ -334,6 +330,7 @@ app reports "Encryption key not available", run `rememora init` first.
 | `rememora evolve --project <name>` | LLM-driven memory consolidation (add `--apply` to write) |
 | `rememora evolve --undo-log` | Show what applied runs did, and the SQL that reverses them |
 | `rememora consolidate --project <name>` | Propose dedup via subagent, behind a dual gate (advisory — never writes) |
+| `rememora dream [--project <name>]` | Manual catch-up: curate + evolve (apply) in one pass |
 | `rememora agent-run --repo X --issue N` | Dispatch issue to Claude CLI |
 | `rememora agent-loop --repo X` | Watch board + auto-dispatch |
 | `rememora setup` | Configure agents to use rememora |
@@ -379,11 +376,11 @@ Output formats for `search`:
 |---|---|---|
 | `full` (default) | Multi-line per hit with name + URI | Human in terminal |
 | `compact` | One line per hit with score, ~75 tok/hit | Agent filtering |
-| `context` | One line per hit, byte-capped (2 KB) | `UserPromptSubmit` hook injection |
+| `context` | One line per hit, byte-capped (2 KB) | Injecting into a prompt cheaply |
 
 Timeline ordering: `--by ts` (default, creation time) or `--by hotness` (importance × recency × active_count). Project scope: explicit `--project` wins; otherwise inferred from the anchor URI.
 
-Project scope for `search`: an explicit `--project` is put through the same [resolution ladder](#project-resolution) writes use; with no `--project`, scope is inferred from the working directory. `--cwd <dir>` overrides *which* directory that is — the `UserPromptSubmit` hook passes the session cwd through it, so a search issued from a git worktree still filters to the main checkout's project.
+Project scope for `search`: an explicit `--project` is put through the same [resolution ladder](#project-resolution) writes use; with no `--project`, scope is inferred from the working directory. `--cwd <dir>` overrides *which* directory that is — pass the session cwd through it explicitly, so a search issued from a git worktree still filters to the main checkout's project.
 
 ```bash
 rememora search "auth flow" --cwd /path/to/myapp/.agents/worktrees/issue-42
@@ -435,7 +432,7 @@ Writes now resolve through a ladder — first match wins:
 
 Omitting `--project` still means **global scope**. Nothing is auto-namespaced.
 
-**Only a name the tooling invented can be overridden.** Rungs 3 and 4 apply solely when the requested name is an encoded path, or the basename of the working directory, its toplevel, or its main checkout — exactly the shapes the hooks and the curator synthesise. A name you chose is left alone even when no project by that name is registered yet, because "save first, `rememora project add` later" is the normal workflow. Without that gate, `--project ana` from inside the `myapp` worktree would silently write ana's memory into `myapp`, `search --project ana` would return `myapp`'s memories, and `evolve --project ana` would consolidate `myapp`'s.
+**Only a name the tooling invented can be overridden.** Rungs 3 and 4 apply solely when the requested name is an encoded path, or the basename of the working directory, its toplevel, or its main checkout — exactly the shapes the curator synthesises. A name you chose is left alone even when no project by that name is registered yet, because "save first, `rememora project add` later" is the normal workflow. Without that gate, `--project ana` from inside the `myapp` worktree would silently write ana's memory into `myapp`, `search --project ana` would return `myapp`'s memories, and `evolve --project ana` would consolidate `myapp`'s.
 
 **Resolution gives up rather than guesses.** Rung 2 walks shortened prefixes, and shortening a path until *something* exists always succeeds eventually — so accepting any real directory would reliably land on a generic ancestor and mint a project called `Projects` or your own username, colliding across every unrelated repo beneath it. A project *is* a repository; `~/Projects` and `~` are containers. When nothing qualifies, the name falls through the ladder untouched and `project reconcile` reports it instead of rewriting it.
 
@@ -508,8 +505,7 @@ Session JSONL → Watermark (incremental) → Signal Gate (Haiku) → AUDN Curat
 │ agents, atomic locking, git worktrees       │
 ├─────────────────────────────────────────────┤
 │ Layer 2: Claude Code Plugin                 │
-│ Hooks (SessionStart, SessionEnd, Stop)      │
-│ Skills (save, search, init)                 │
+│ Skills (save, search, init) — model-invoked │
 ├─────────────────────────────────────────────┤
 │ Layer 1: CLI Core                           │
 │ save, search, context, session, curate,     │
@@ -610,7 +606,7 @@ cargo clippy        # Lint
 
 - [x] Cross-agent memory + transfer chain
 - [x] Autonomous curation pipeline (signal gate + AUDN curator)
-- [x] Claude Code plugin with 4 hooks (SessionStart, UserPromptSubmit, Stop, SessionEnd)
+- [x] Claude Code plugin (model-invoked skills; no automatic hooks — see `rememora dream`)
 - [x] Marketplace install (`claude plugin install rememora@rememora`)
 - [x] Homebrew formula + auto-update notifications (`rememora update`)
 - [x] Hierarchical retrieval with score propagation
@@ -624,7 +620,6 @@ cargo clippy        # Lint
 - [x] Desktop viewer (Tauri, macOS)
 - [ ] Cross-agent transfer beyond Claude→Codex (Gemini runner is the prerequisite)
 - [ ] Vector search via candle + sqlite-vec at production scale (currently feature-gated)
-- [ ] Monitors-based curator (replace Stop-hook with Claude Code `monitors` for simpler architecture)
 
 ## Insights
 

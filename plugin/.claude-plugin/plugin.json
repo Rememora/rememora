@@ -1,7 +1,7 @@
 {
   "name": "rememora",
-  "version": "1.6.0",
-  "description": "Persistent cross-agent memory. Automatically saves decisions, bug fixes, and patterns across sessions. Semantically retrieves context when you need it.",
+  "version": "1.7.0",
+  "description": "Persistent cross-agent memory. Saves decisions, bug fixes, and patterns across sessions on the model's own judgment or on demand. Semantically retrieves context when you need it.",
   "author": {
     "name": "Rememora"
   },
