@@ -110,7 +110,7 @@ rememora session start --agent codex --project myapp \
   --parent <previous-session-id>
 ```
 
-## Autonomous Curation
+## Curation
 
 Rememora extracts memories from Claude Code sessions on demand — nothing runs automatically:
 
@@ -223,7 +223,7 @@ claude plugin install rememora@rememora
 claude plugin install rememora@rememora --scope project
 ```
 
-This gives you the instructions block plus three skills:
+This gives you the instructions block plus three components:
 
 | Component | What it does |
 |-----------|-------------|
@@ -484,7 +484,7 @@ The dry run names the route it used for each namespace — `case-insensitive pro
 - **Hybrid RRF** — reciprocal rank fusion merges BM25 + vector results: `RRF(d) = Σ 1/(k+rank)` with k=60
 - **Pluggable embedding backend** — `EmbedBackend` trait with Candle implementation (Metal GPU + CPU fallback)
 
-### Autonomous Curation Pipeline
+### Curation Pipeline
 
 ```
 Session JSONL → Watermark (incremental) → Signal Gate (Haiku) → AUDN Curator (Sonnet) → rememora save/search/supersede
@@ -605,7 +605,7 @@ cargo clippy        # Lint
 ## Roadmap
 
 - [x] Cross-agent memory + transfer chain
-- [x] Autonomous curation pipeline (signal gate + AUDN curator)
+- [x] On-demand curation pipeline (signal gate + AUDN curator; `rememora curate`/`rememora dream`, never a hook)
 - [x] Claude Code plugin (model-invoked skills; no automatic hooks — see `rememora dream`)
 - [x] Marketplace install (`claude plugin install rememora@rememora`)
 - [x] Homebrew formula + auto-update notifications (`rememora update`)
