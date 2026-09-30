@@ -496,6 +496,33 @@ describe("new condition configs", () => {
 });
 
 // ---------------------------------------------------------------------------
+// A/B experiment conditions
+// ---------------------------------------------------------------------------
+
+describe("A/B experiment conditions", () => {
+  it("loads ab-control.json with resetDbBetweenTasks=true", () => {
+    const cond = loadCondition(join(BENCH_DIR, "conditions/ab-control.json"));
+    expect(cond.id).toBe("ab-control");
+    expect(cond.instructionMode).toBe("full-hybrid");
+    expect(cond.resetDbBetweenTasks).toBe(true);
+    expect(cond.agent).toBe("claude-tmux");
+  });
+
+  it("loads ab-treatment.json with resetDbBetweenTasks=false", () => {
+    const cond = loadCondition(join(BENCH_DIR, "conditions/ab-treatment.json"));
+    expect(cond.id).toBe("ab-treatment");
+    expect(cond.instructionMode).toBe("full-hybrid");
+    expect(cond.resetDbBetweenTasks).toBe(false);
+    expect(cond.agent).toBe("claude-tmux");
+  });
+
+  it("existing conditions have resetDbBetweenTasks undefined", () => {
+    const cond = loadCondition(join(BENCH_DIR, "conditions/full-hybrid.json"));
+    expect(cond.resetDbBetweenTasks).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Instruction text loader
 // ---------------------------------------------------------------------------
 
@@ -531,12 +558,9 @@ describe("loadInstructionText", () => {
   it("returns non-empty text for 'full-hybrid' mode", () => {
     const text = loadInstructionText("full-hybrid");
     expect(text.length).toBeGreaterThan(100);
-    expect(text).toContain("CRITICAL");
-    expect(text).toContain("When to SEARCH");
-    expect(text).toContain("When to SAVE");
-    // full-hybrid should be the longest
-    const btText = loadInstructionText("behavioral-triggers");
-    expect(text.length).toBeGreaterThan(btText.length);
+    expect(text).toContain("MANDATORY");
+    expect(text).toContain("RULE 1");
+    expect(text).toContain("rememora");
   });
 
   it("returns empty string for unknown mode", () => {

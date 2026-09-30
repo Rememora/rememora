@@ -23,6 +23,8 @@ export interface ConditionSummary {
   promptedSearches: number;
   avgKbGrowthPerTask: number;
   taskCompletionRate: number;
+  /** Average task quality score from LLM judge (0-1). */
+  avgTaskQuality: number;
   /** Total DB-inferred saves (ground truth, when available). */
   dbSaves: number;
 }
@@ -132,6 +134,12 @@ export function compareConditions(
       0,
     );
 
+    // Average task quality from LLM judge
+    const avgTaskQuality =
+      totalTasks > 0
+        ? rows.reduce((sum, r) => sum + r.scores.task_quality, 0) / totalTasks
+        : 0;
+
     // Determine run count from unique timestamps
     const uniqueTimestamps = new Set(rows.map((r) => r.metadata.timestamp));
 
@@ -149,6 +157,7 @@ export function compareConditions(
         totalTasks > 0
           ? Math.round((tasksCompleted / totalTasks) * 100) / 100
           : 0,
+      avgTaskQuality: Math.round(avgTaskQuality * 100) / 100,
       dbSaves,
     });
   }
@@ -180,6 +189,7 @@ export function printComparisonReport(report: ComparisonReport): void {
     "Runs".padEnd(6),
     "Done".padEnd(8),
     "Rate".padEnd(8),
+    "Quality".padEnd(9),
     "A-Saves".padEnd(10),
     "A-Search".padEnd(10),
     "P-Saves".padEnd(10),
@@ -187,7 +197,7 @@ export function printComparisonReport(report: ComparisonReport): void {
     "KB/task".padEnd(8),
   ].join("");
   console.log(hdr);
-  console.log("-".repeat(100));
+  console.log("-".repeat(109));
 
   for (const c of report.conditions) {
     const row = [
@@ -195,6 +205,7 @@ export function printComparisonReport(report: ComparisonReport): void {
       String(c.runCount).padEnd(6),
       `${c.tasksCompleted}/${c.totalTasks}`.padEnd(8),
       `${(c.taskCompletionRate * 100).toFixed(0)}%`.padEnd(8),
+      c.avgTaskQuality.toFixed(2).padEnd(9),
       String(c.autonomousSaves).padEnd(10),
       String(c.autonomousSearches).padEnd(10),
       String(c.promptedSaves).padEnd(10),
@@ -204,15 +215,14 @@ export function printComparisonReport(report: ComparisonReport): void {
     console.log(row);
   }
 
-  console.log("=".repeat(100));
+  console.log("=".repeat(109));
   console.log(
-    "  A-Saves = autonomous saves | A-Search = autonomous searches",
+    "  Quality = avg LLM judge score (0-1) | A-Saves = autonomous saves | A-Search = autonomous searches",
   );
   console.log(
-    "  P-Saves = prompted saves   | P-Search = prompted searches",
+    "  P-Saves = prompted saves   | P-Search = prompted searches | KB/task = avg KB entries grown per task",
   );
-  console.log("  KB/task = avg KB entries grown per task");
-  console.log("=".repeat(100));
+  console.log("=".repeat(109));
 }
 
 // ---------------------------------------------------------------------------

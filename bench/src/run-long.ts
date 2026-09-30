@@ -22,16 +22,17 @@ async function main(): Promise<void> {
       "db-path": { type: "string" },
       quiet: { type: "boolean", default: false },
       matrix: { type: "boolean", default: false },
+      repeats: { type: "string", short: "r" },
     },
     strict: true,
   });
 
   if (!values.sequence) {
     console.error(
-      "Usage: pnpm --prefix bench eval:long -- --sequence <path> --condition <path> [--timeout <ms>] [--keep-db]",
+      "Usage: pnpm --prefix bench eval:long -- --sequence <path> --condition <path> [--timeout <ms>] [--keep-db] [--repeats N]",
     );
     console.error(
-      "       pnpm --prefix bench eval:matrix -- --sequence <path> --conditions <dir> [--timeout <ms>]",
+      "       pnpm --prefix bench eval:matrix -- --sequence <path> --conditions <dir> [--timeout <ms>] [--repeats N]",
     );
     process.exit(1);
   }
@@ -44,6 +45,8 @@ async function main(): Promise<void> {
 
   const sequence = loadTaskSequence(sequencePath);
   const timeoutMs = values.timeout ? parseInt(values.timeout, 10) : 120_000;
+
+  const repeats = values.repeats ? parseInt(values.repeats, 10) : 1;
 
   if (values.matrix || values.conditions) {
     // Matrix mode — run across all conditions in a directory
@@ -65,11 +68,16 @@ async function main(): Promise<void> {
       loadCondition(join(conditionsPath, f)),
     );
 
-    await runMatrix(sequence, conditions, {
-      timeoutMs,
-      keepDb: values["keep-db"],
-      quiet: values.quiet,
-    });
+    for (let r = 0; r < repeats; r++) {
+      if (repeats > 1) {
+        console.log(`\n  ═══ Matrix repeat ${r + 1}/${repeats} ═══`);
+      }
+      await runMatrix(sequence, conditions, {
+        timeoutMs,
+        keepDb: values["keep-db"],
+        quiet: values.quiet,
+      });
+    }
   } else if (values.condition) {
     // Single condition mode
     const conditionPath = values.condition.startsWith("/")
@@ -78,12 +86,17 @@ async function main(): Promise<void> {
 
     const condition = loadCondition(conditionPath);
 
-    await runLongRun(sequence, condition, {
-      timeoutMs,
-      keepDb: values["keep-db"],
-      dbPath: values["db-path"],
-      quiet: values.quiet,
-    });
+    for (let r = 0; r < repeats; r++) {
+      if (repeats > 1) {
+        console.log(`\n  ═══ Repeat ${r + 1}/${repeats} ═══`);
+      }
+      await runLongRun(sequence, condition, {
+        timeoutMs,
+        keepDb: values["keep-db"],
+        dbPath: values["db-path"],
+        quiet: values.quiet,
+      });
+    }
   } else {
     console.error(
       "Must specify either --condition <path> or --conditions <dir> (or --matrix)",

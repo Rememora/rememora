@@ -17,6 +17,7 @@ import type {
   LongRunScores,
 } from "./task-sequence.js";
 import { extractRemoraCalls } from "./behavioral-logger.js";
+import { judgeTask, isJudgeAvailable } from "./llm-judge.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const RESULTS_DIR = join(__dirname, "..", "results");
@@ -276,6 +277,9 @@ export async function runLongRun(
   log(`  Condition: ${condition.id} (mode: ${condition.instructionMode})`);
   log(`  CLI: ${runner.name}`);
   log(`  DB: ${dbPath} (persistent across tasks)`);
+  if (condition.resetDbBetweenTasks) {
+    log(`  DB reset: enabled (control — DB wiped before each task)`);
+  }
   log(`  Project: ${projectDir}`);
   log("─".repeat(60));
 
@@ -311,6 +315,15 @@ export async function runLongRun(
 
   for (let i = 0; i < sequence.tasks.length; i++) {
     const task = sequence.tasks[i];
+
+    // Reset DB between tasks for control condition (knowledge transfer A/B)
+    if (condition.resetDbBetweenTasks && i > 0) {
+      log(`  [reset] Wiping DB before task ${i + 1} (control condition)`);
+      for (const suffix of ["", "-wal", "-shm"]) {
+        try { unlinkSync(`${dbPath}${suffix}`); } catch { /* already gone */ }
+      }
+    }
+
     const kbSizeAtStart = getKbSize(dbPath);
     const taskStartTime = new Date().toISOString();
 
@@ -363,10 +376,33 @@ export async function runLongRun(
       // Use DB-inferred saves as primary metric, fall back to parsed commands
       const effectiveSaves = dbSaves > 0 ? dbSaves : behavior.saves.length;
 
+      // LLM judge scoring (optional — requires ANTHROPIC_API_KEY)
+      let taskQuality = 0;
+      let judgeReasoning: string | undefined;
+      if (isJudgeAvailable() && runResult.rawOutput.length > 0) {
+        const judgeResult = await judgeTask({
+          taskDescription: task.description,
+          groundTruth: task.groundTruth,
+          agentOutput: runResult.rawOutput,
+          taskIndex: i,
+          kbSizeAtStart,
+          kbSizeAtEnd,
+          dbNewContexts: newContexts.map((c) => ({
+            category: c.category,
+            name: c.name,
+            abstract: c.abstract,
+          })),
+          isControlCondition: !!condition.resetDbBetweenTasks,
+        });
+        taskQuality = judgeResult.score;
+        judgeReasoning = judgeResult.reasoning;
+        log(`  Judge: ${taskQuality.toFixed(2)} — ${judgeReasoning}`);
+      }
+
       // Build scores
       const scores: LongRunScores = {
         task_completion: runResult.exitCode === 0 ? 1 : 0,
-        task_quality: 0, // Placeholder — requires LLM judge or human review
+        task_quality: taskQuality,
         autonomous_saves: dbSaves > 0 ? dbSaves : behavior.autonomousSaveCount,
         autonomous_searches: behavior.autonomousSearchCount,
         tokens_consumed: 0, // Placeholder — extract from CLI output if available
@@ -400,6 +436,7 @@ export async function runLongRun(
             name: c.name,
             abstract: c.abstract,
           })),
+          judge_reasoning: judgeReasoning,
         },
         expected: {
           ground_truth: task.groundTruth,

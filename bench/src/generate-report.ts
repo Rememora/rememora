@@ -87,6 +87,8 @@ interface TaskDetail {
   dbCategories: Record<string, number>;
   /** New contexts found in DB after task. */
   dbNewContexts: Array<{ category: string | null; name: string; abstract: string }>;
+  /** LLM judge quality score (0-1). */
+  quality: number;
 }
 
 function getLatestRunDetails(
@@ -115,6 +117,7 @@ function getLatestRunDetails(
       dbSaves: row.scores.db_saves ?? 0,
       dbCategories: row.scores.db_categories ?? {},
       dbNewContexts: row.output.db_new_contexts ?? [],
+      quality: row.scores.task_quality,
     }));
 }
 
@@ -144,6 +147,8 @@ function conditionLabel(id: string): string {
     "full-hybrid": "Full Hybrid",
     "full-hybrid-tmux": "Full Hybrid (tmux)",
     "none-tmux": "None (tmux)",
+    "ab-control": "A/B Control (no memory)",
+    "ab-treatment": "A/B Treatment (memory)",
   };
   return labels[id] ?? id;
 }
@@ -157,6 +162,8 @@ function conditionColor(id: string): string {
     "full-hybrid": "#a78bfa",
     "full-hybrid-tmux": "#c084fc",
     "none-tmux": "#cbd5e1",
+    "ab-control": "#f87171",
+    "ab-treatment": "#34d399",
   };
   return colors[id] ?? "#94a3b8";
 }
@@ -170,6 +177,7 @@ function generateHtml(
   const maxSaves = Math.max(...report.conditions.map((c) => c.autonomousSaves), 1);
   const maxSearches = Math.max(...report.conditions.map((c) => c.autonomousSearches), 1);
   const maxKb = Math.max(...report.conditions.map((c) => c.avgKbGrowthPerTask), 0.1);
+  const maxQuality = Math.max(...report.conditions.map((c) => c.avgTaskQuality), 0.1);
 
   // Summary table rows
   const summaryRows = report.conditions
@@ -180,6 +188,7 @@ function generateHtml(
         <td class="num">${c.runCount}</td>
         <td class="num">${c.tasksCompleted}/${c.totalTasks}</td>
         <td class="num">${(c.taskCompletionRate * 100).toFixed(0)}%</td>
+        <td>${bar(c.avgTaskQuality, maxQuality, "#818cf8")}</td>
         <td>${bar(c.dbSaves, maxDbSaves, "#f59e0b")}</td>
         <td>${bar(c.autonomousSaves, maxSaves, "#34d399")}</td>
         <td>${bar(c.autonomousSearches, maxSearches, "#60a5fa")}</td>
@@ -248,10 +257,15 @@ function generateHtml(
             ? `<details><summary>${d.totalSearches} search(es)</summary><pre class="cmd-list">${d.searches.map(escapeHtml).join("\n")}</pre></details>`
             : `<span class="muted">0 searches</span>`;
 
+          const qualityHtml = d.quality > 0
+            ? `<span style="color:${d.quality >= 0.6 ? "var(--green)" : d.quality >= 0.3 ? "var(--yellow)" : "var(--red)"}">${d.quality.toFixed(2)}</span>`
+            : `<span class="muted">—</span>`;
+
           return `<tr>
             <td class="${statusClass}">${statusIcon}</td>
             <td>${escapeHtml(d.taskId)}</td>
             <td class="desc">${escapeHtml(d.taskDescription)}</td>
+            <td class="num">${qualityHtml}</td>
             <td>${dbSavesHtml}</td>
             <td class="num">${d.autonomousSearches}</td>
             <td class="num">${d.kbStart}&rarr;${d.kbEnd}</td>
@@ -268,7 +282,7 @@ function generateHtml(
         <table class="detail-table">
           <thead>
             <tr>
-              <th></th><th>Task</th><th>Description</th><th>DB Saves</th><th>A-Search</th><th>KB</th><th>Latency</th><th>Parsed Saves</th><th>Search Commands</th>
+              <th></th><th>Task</th><th>Description</th><th>Quality</th><th>DB Saves</th><th>A-Search</th><th>KB</th><th>Latency</th><th>Parsed Saves</th><th>Search Commands</th>
             </tr>
           </thead>
           <tbody>${taskRows}</tbody>
@@ -397,7 +411,7 @@ function generateHtml(
 <table>
   <thead>
     <tr>
-      <th>Condition</th><th>Runs</th><th>Completed</th><th>Rate</th><th>DB Saves</th><th>Parsed Saves</th><th>Autonomous Searches</th><th>P-Saves</th><th>P-Search</th><th>KB/Task</th>
+      <th>Condition</th><th>Runs</th><th>Completed</th><th>Rate</th><th>Quality</th><th>DB Saves</th><th>Parsed Saves</th><th>Autonomous Searches</th><th>P-Saves</th><th>P-Search</th><th>KB/Task</th>
     </tr>
   </thead>
   <tbody>

@@ -1,0 +1,8 @@
+{
+  "id": "ab-treatment",
+  "instructionMode": "full-hybrid",
+  "categoriesEnabled": ["preference", "entity", "decision", "event", "case", "pattern"],
+  "preIndexed": false,
+  "resetDbBetweenTasks": false,
+  "agent": "claude-tmux"
+}
