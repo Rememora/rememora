@@ -315,7 +315,18 @@ enum Commands {
         /// Apply changes (without this flag, only shows what would be done)
         #[arg(long)]
         apply: bool,
+
+        /// Write the instructions block into this repo's AGENTS.md instead of global agent files
+        #[arg(long, value_name = "PATH")]
+        project_dir: Option<std::path::PathBuf>,
+
+        /// With --project-dir, also write agent-specific project files (CLAUDE.md, GEMINI.md, .cursor/rules, .github/copilot-instructions.md)
+        #[arg(long, requires = "project_dir")]
+        agent_files: bool,
     },
+
+    /// Run a stdio Model Context Protocol server exposing memory tools
+    Mcp,
 
     /// Run Claude CLI on a specific GitHub issue
     AgentRun {
@@ -781,7 +792,10 @@ fn main() -> Result<()> {
 
     // Commands that bypass the normal db::open() flow
     match &cli.command {
-        Commands::Setup { apply } => return commands::setup::run(*apply),
+        Commands::Setup { apply, project_dir, agent_files } => {
+            return commands::setup::run(*apply, project_dir.as_deref(), *agent_files)
+        }
+        Commands::Mcp => return commands::mcp::run(cli.no_encryption),
         Commands::Encrypt => return commands::encrypt::run_encrypt(&db_path),
         Commands::Decrypt => return commands::encrypt::run_decrypt(&db_path),
         Commands::Desktop => return commands::desktop::run(),
@@ -1001,7 +1015,7 @@ fn main() -> Result<()> {
             cli.json,
         ),
 
-        Commands::Setup { .. } => unreachable!("handled above"),
+        Commands::Setup { .. } | Commands::Mcp => unreachable!("handled above"),
 
         Commands::AgentRun {
             repo,
