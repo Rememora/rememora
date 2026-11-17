@@ -389,6 +389,23 @@ pnpm tauri build    # unsigned .app + .dmg
 Requires Rust (stable), Node 22+, pnpm 9+, and Xcode Command Line Tools. If the
 app reports "Encryption key not available", run `rememora init` first.
 
+## Backup and Restore
+
+All memory lives in one SQLite (SQLCipher when encrypted) file. Take snapshots locally:
+
+```bash
+rememora backup                     # snapshot into <data dir>/backups/ (UTC timestamped, never overwrites)
+rememora backup --to ~/safe --keep 7  # keep only the newest 7 snapshots made by this command
+rememora backup list                # time, size, counts, verified or not
+rememora backup verify <snapshot>   # checksum, key, PRAGMA integrity_check, row counts
+rememora restore <snapshot> --dry-run
+rememora restore <snapshot> --yes   # current database is moved aside to *.pre-restore-<UTC>, never deleted
+rememora export --all --out dump.json   # complete, versioned JSON of the whole database
+rememora import dump.json [--dry-run]   # loads it, skipping rows that already exist
+```
+
+Snapshots use the SQLite online backup API, so they are consistent while other processes write. An encrypted database gives an encrypted snapshot with the same key. The key is never written to the backup directory: keep it (keychain, key file or `REMEMORA_KEY`), because an encrypted snapshot cannot be restored without it. Each snapshot has a `.manifest.json` beside it with its sha256, schema version and row counts. `restore` refuses while another process has the database open. `rememora status` shows the newest backup and its age.
+
 ## Commands
 
 | Command | Description |

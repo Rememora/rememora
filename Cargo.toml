@@ -7,7 +7,7 @@ license = "MIT"
 repository = "https://github.com/rememora/rememora"
 
 [dependencies]
-rusqlite = { version = "0.34", features = ["bundled-sqlcipher"] }
+rusqlite = { version = "0.34", features = ["bundled-sqlcipher", "backup"] }
 keyring = "3"
 rpassword = "7"
 clap = { version = "4", features = ["derive"] }
@@ -22,6 +22,7 @@ slug = "0.1"
 ureq = { version = "2", features = ["json"] }
 ratatui = "0.29"
 crossterm = "0.28"
+sha2 = "0.10"
 
 # Embedding backends (optional, feature-gated)
 candle-core = { version = "0.8", optional = true }
