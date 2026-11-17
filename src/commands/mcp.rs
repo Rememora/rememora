@@ -7,8 +7,15 @@
 //! free. Arguments are always built as argv vectors, never shell strings.
 //!
 //! stdout carries protocol messages only. Anything diagnostic goes to stderr.
+//!
+//! Tool results are written for the model that reads them: `memory_context`,
+//! `memory_search` and `memory_get` return the CLI's markdown or compact text,
+//! a fraction of the tokens of pretty-printed JSON. Only the tools whose ids
+//! the caller must parse (`memory_save`, `memory_supersede`, `session_start`,
+//! `session_end`) return JSON.
 
 use anyhow::Result;
+use std::cell::RefCell;
 use serde_json::{json, Value};
 use std::io::{BufRead, Write};
 use std::process::Command;
@@ -33,7 +40,7 @@ const CATEGORIES: &[&str] = &["preference", "entity", "decision", "event", "case
 pub fn run(no_encryption: bool) -> Result<()> {
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
-    let server = Server { no_encryption };
+    let server = Server::new(no_encryption);
     for line in stdin.lock().lines() {
         let line = line?;
         if line.trim().is_empty() {
@@ -50,7 +57,13 @@ pub fn run(no_encryption: bool) -> Result<()> {
 
 pub struct Server {
     pub no_encryption: bool,
+    /// `clientInfo.name` from `initialize`, the default `--agent` for saves.
+    client_name: RefCell<Option<String>>,
 }
+
+/// Source agent recorded for `memory_save` when neither the call nor the
+/// client's `initialize` names one.
+pub const DEFAULT_AGENT: &str = "mcp";
 
 fn error(id: Value, code: i64, message: impl Into<String>) -> Value {
     json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message.into() } })
@@ -61,6 +74,15 @@ fn ok(id: Value, result: Value) -> Value {
 }
 
 impl Server {
+    pub fn new(no_encryption: bool) -> Self {
+        Server { no_encryption, client_name: RefCell::new(None) }
+    }
+
+    /// The client's name from `initialize`, if it sent one.
+    pub fn client_name(&self) -> Option<String> {
+        self.client_name.borrow().clone()
+    }
+
     /// Handle one line of input. Returns `None` for notifications.
     pub fn handle_line(&self, line: &str) -> Option<Value> {
         let msg: Value = match serde_json::from_str(line) {
@@ -86,7 +108,16 @@ impl Server {
         };
 
         Some(match method {
-            "initialize" => ok(id, initialize_result(&params)),
+            "initialize" => {
+                let name = params
+                    .pointer("/clientInfo/name")
+                    .and_then(|n| n.as_str())
+                    .map(str::trim)
+                    .filter(|n| !n.is_empty())
+                    .map(String::from);
+                *self.client_name.borrow_mut() = name;
+                ok(id, initialize_result(&params))
+            }
             "ping" => ok(id, json!({})),
             "tools/list" => ok(id, json!({ "tools": tool_definitions() })),
             "tools/call" => self.call_tool(id, &params),
@@ -100,7 +131,8 @@ impl Server {
         };
         let empty = json!({});
         let args = params.get("arguments").unwrap_or(&empty);
-        let argv = match build_argv(name, args) {
+        let agent = self.client_name();
+        let argv = match build_argv_for(name, args, agent.as_deref().unwrap_or(DEFAULT_AGENT)) {
             Ok(Some(a)) => a,
             Ok(None) => return error(id, INVALID_PARAMS, format!("Unknown tool: {name}")),
             Err(msg) => return ok(id, tool_result(msg, true)),
@@ -157,20 +189,20 @@ pub fn tool_definitions() -> Value {
     json!([
         {
             "name": "memory_context",
-            "description": "Load the memories for a project: decisions, patterns, preferences and the last session's working state. Call once at the start of work.",
+            "description": "Load the memories for a project as markdown: the last handoff, active sessions, memories relevant to your task, recent and top memories. Each memory line ends with its id for memory_get. Call once at the start of work, with query set to your task.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "project": { "type": "string", "description": "Project name. Omit to detect it from the server's working directory." },
-                    "query": { "type": "string", "description": "Optional task description used to rank memories by relevance." },
-                    "max_tokens": { "type": "integer", "minimum": 1, "description": "Optional budget for the returned context." }
+                    "query": { "type": "string", "description": "What you are about to do. Adds a section of the memories most relevant to it." },
+                    "max_tokens": { "type": "integer", "minimum": 0, "description": "Token budget for the output (default 2500, 0 for unlimited)." }
                 },
                 "additionalProperties": false
             }
         },
         {
             "name": "memory_search",
-            "description": "Full-text search over saved memories. Use before non-trivial work, when stuck, or when the user refers to past work. Returns matches with their URIs.",
+            "description": "Full-text search over saved memories. Use before non-trivial work, when stuck, or when the user refers to past work. A plain question works. Returns one line per match with its category, abstract, URI and id; pass the id to memory_get for the full text.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -193,7 +225,8 @@ pub fn tool_definitions() -> Value {
                     "category": { "type": "string", "enum": CATEGORIES },
                     "project": project,
                     "importance": { "type": "number", "minimum": 0, "maximum": 1, "description": "0.5 default, 0.8 for decisions and corrections, 0.9+ only if forgetting it would cause damage." },
-                    "tags": { "type": "array", "items": { "type": "string" } }
+                    "tags": { "type": "array", "items": { "type": "string" } },
+                    "agent": { "type": "string", "description": "Source agent recorded on the memory. Defaults to the MCP client's name." }
                 },
                 "required": ["text", "category"],
                 "additionalProperties": false
@@ -201,24 +234,27 @@ pub fn tool_definitions() -> Value {
         },
         {
             "name": "memory_get",
-            "description": "Fetch one memory in full by its rememora:// URI, as returned by memory_search or memory_save.",
+            "description": "Fetch one memory in full, as markdown, by the id or rememora:// URI that memory_context, memory_search or memory_save returned. Pass id or uri.",
             "inputSchema": {
                 "type": "object",
-                "properties": { "uri": { "type": "string", "pattern": "^rememora://", "description": "The memory's rememora:// URI." } },
-                "required": ["uri"],
+                "properties": {
+                    "id": { "type": "string", "description": "The memory's 26-character id." },
+                    "uri": { "type": "string", "pattern": "^rememora://", "description": "The memory's rememora:// URI." }
+                },
                 "additionalProperties": false
             }
         },
         {
             "name": "memory_supersede",
-            "description": "Mark an old memory as replaced by a newer one. Save the new fact first with memory_save, then call this with both IDs, instead of leaving two versions.",
+            "description": "Replace an outdated memory instead of leaving two versions. Pass text to save the new fact and link it in one step (it inherits category, project, tags and importance), or by to link a memory you already saved.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "old": { "type": "string", "description": "ID of the outdated memory." },
-                    "by": { "type": "string", "description": "ID of the memory that replaces it." }
+                    "old": { "type": "string", "description": "ID or URI of the outdated memory." },
+                    "text": { "type": "string", "description": "The new fact that replaces it. Use this or by." },
+                    "by": { "type": "string", "description": "ID or URI of an existing memory that replaces it. Use this or text." }
                 },
-                "required": ["old", "by"],
+                "required": ["old"],
                 "additionalProperties": false
             }
         },
@@ -228,22 +264,22 @@ pub fn tool_definitions() -> Value {
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "agent": { "type": "string", "description": "Your agent name, for example claude-code, codex, gemini, cursor." },
+                    "agent": { "type": "string", "description": "Your agent name, for example claude-code, codex, gemini, cursor. Defaults to the MCP client's name." },
                     "project": project,
                     "intent": { "type": "string", "description": "What you are trying to accomplish." }
                 },
-                "required": ["agent"],
                 "additionalProperties": false
             }
         },
         {
             "name": "session_end",
-            "description": "End a session with a summary and the working state (blockers, next steps). Pass session_id, or omit it to end the active session of the project.",
+            "description": "End a session with a summary and the working state (blockers, next steps). Pass session_id, or omit it to end your own active session on the project.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "session_id": { "type": "string", "description": "Session ID from session_start. Omit to end the active session." },
                     "project": { "type": "string", "description": "Project whose active session to end, when session_id is omitted." },
+                    "agent": { "type": "string", "description": "Agent whose active session to end, when session_id is omitted. Defaults to the MCP client's name." },
                     "summary": { "type": "string", "description": "What was accomplished." },
                     "working_state": { "type": "string", "description": "Blockers and next steps for whoever continues." }
                 },
@@ -275,11 +311,21 @@ fn num_arg(args: &Value, key: &str) -> Option<String> {
     })
 }
 
-/// Map a tool call onto a rememora argv. `Ok(None)` means unknown tool,
-/// `Err` an invalid argument (reported as a tool error the model can fix).
+/// `build_argv_for` with the default agent, for callers with no client name.
+#[cfg(test)]
 pub fn build_argv(name: &str, args: &Value) -> std::result::Result<Option<Vec<String>>, String> {
+    build_argv_for(name, args, DEFAULT_AGENT)
+}
+
+/// Map a tool call onto a rememora argv. `agent` is the source agent used when
+/// the call does not name one. `Ok(None)` means unknown tool, `Err` an invalid
+/// argument (reported as a tool error the model can fix).
+pub fn build_argv_for(name: &str, args: &Value, agent: &str) -> std::result::Result<Option<Vec<String>>, String> {
     let s = |k: &str| str_arg(args, k).map(String::from);
+    let agent = s("agent").unwrap_or_else(|| agent.to_string());
     let mut argv: Vec<String> = Vec::new();
+    // Read tools return text for the model; tools whose ids get parsed return JSON.
+    let mut json = true;
     match name {
         "memory_context" => {
             argv.push("context".into());
@@ -287,11 +333,9 @@ pub fn build_argv(name: &str, args: &Value) -> std::result::Result<Option<Vec<St
                 Some(p) => push_opt(&mut argv, "--project", Some(p)),
                 None => argv.push("--auto".into()),
             }
-            // `--query` and `--max-tokens` arrive with a parallel change to
-            // `context`; only pass them when the caller asked, so the tool keeps
-            // working on builds that predate them.
             push_opt(&mut argv, "--query", s("query"));
             push_opt(&mut argv, "--max-tokens", num_arg(args, "max_tokens"));
+            json = false;
         }
         "memory_search" => {
             argv.push("search".into());
@@ -299,6 +343,8 @@ pub fn build_argv(name: &str, args: &Value) -> std::result::Result<Option<Vec<St
             push_opt(&mut argv, "--project", s("project"));
             push_opt(&mut argv, "--category", s("category"));
             push_opt(&mut argv, "--limit", num_arg(args, "limit"));
+            push_opt(&mut argv, "--format", Some("compact".into()));
+            json = false;
         }
         "memory_save" => {
             argv.push("save".into());
@@ -313,21 +359,30 @@ pub fn build_argv(name: &str, args: &Value) -> std::result::Result<Option<Vec<St
             if let Some(tags) = args.get("tags").filter(|t| t.is_array()) {
                 push_opt(&mut argv, "--tags", Some(tags.to_string()));
             }
-            argv.push("--agent".into());
-            argv.push("mcp".into());
+            push_opt(&mut argv, "--agent", Some(agent));
         }
         "memory_get" => {
             argv.push("get".into());
-            argv.push(required(args, "uri")?.into());
+            let reference = s("id").or_else(|| s("uri")).ok_or("Missing required argument: id or uri")?;
+            argv.push(reference);
+            json = false;
         }
         "memory_supersede" => {
             argv.push("supersede".into());
             argv.push(required(args, "old")?.into());
-            push_opt(&mut argv, "--by", Some(required(args, "by")?.into()));
+            match (s("text"), s("by")) {
+                (Some(_), Some(_)) => return Err("Pass text or by, not both".into()),
+                (Some(text), None) => {
+                    push_opt(&mut argv, "--text", Some(text));
+                    push_opt(&mut argv, "--agent", Some(agent));
+                }
+                (None, Some(by)) => push_opt(&mut argv, "--by", Some(by)),
+                (None, None) => return Err("Missing required argument: text or by".into()),
+            }
         }
         "session_start" => {
             argv.extend(["session".into(), "start".into()]);
-            push_opt(&mut argv, "--agent", Some(required(args, "agent")?.into()));
+            push_opt(&mut argv, "--agent", Some(agent));
             push_opt(&mut argv, "--project", s("project"));
             push_opt(&mut argv, "--intent", s("intent"));
         }
@@ -338,6 +393,7 @@ pub fn build_argv(name: &str, args: &Value) -> std::result::Result<Option<Vec<St
                 None => {
                     argv.push("end-active".into());
                     push_opt(&mut argv, "--project", s("project"));
+                    push_opt(&mut argv, "--agent", Some(agent));
                 }
             }
             push_opt(&mut argv, "--summary", Some(required(args, "summary")?.into()));
@@ -345,7 +401,9 @@ pub fn build_argv(name: &str, args: &Value) -> std::result::Result<Option<Vec<St
         }
         _ => return Ok(None),
     }
-    argv.push("--json".into());
+    if json {
+        argv.push("--json".into());
+    }
     Ok(Some(argv))
 }
 
@@ -363,7 +421,7 @@ mod tests {
 
     #[test]
     fn notifications_get_no_reply_and_unknown_methods_error() {
-        let s = Server { no_encryption: true };
+        let s = Server::new(true);
         assert!(s.handle_line(r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#).is_none());
         let r = s.handle_line(r#"{"jsonrpc":"2.0","id":7,"method":"nope"}"#).unwrap();
         assert_eq!(r["error"]["code"], METHOD_NOT_FOUND);
@@ -375,10 +433,50 @@ mod tests {
     #[test]
     fn argv_omits_unsupplied_optional_flags() {
         let a = build_argv("memory_context", &json!({ "project": "p" })).unwrap().unwrap();
-        assert_eq!(a, ["context", "--project", "p", "--json"]);
+        assert_eq!(a, ["context", "--project", "p"]);
         let a = build_argv("session_end", &json!({ "summary": "s" })).unwrap().unwrap();
-        assert_eq!(a, ["session", "end-active", "--summary", "s", "--json"]);
+        assert_eq!(a, ["session", "end-active", "--agent", "mcp", "--summary", "s", "--json"]);
         assert!(build_argv("memory_save", &json!({ "text": "x", "category": "bogus" })).is_err());
         assert!(build_argv("nope", &json!({})).unwrap().is_none());
+    }
+
+    #[test]
+    fn read_tools_return_text_and_write_tools_json() {
+        let a = build_argv("memory_context", &json!({ "query": "fix login", "max_tokens": 800 })).unwrap().unwrap();
+        assert_eq!(a, ["context", "--auto", "--query", "fix login", "--max-tokens", "800"]);
+        let a = build_argv("memory_search", &json!({ "query": "q" })).unwrap().unwrap();
+        assert_eq!(a, ["search", "q", "--format", "compact"]);
+        let a = build_argv("memory_get", &json!({ "id": "01ABC" })).unwrap().unwrap();
+        assert_eq!(a, ["get", "01ABC"]);
+        let a = build_argv("memory_get", &json!({ "uri": "rememora://x" })).unwrap().unwrap();
+        assert_eq!(a, ["get", "rememora://x"]);
+        assert!(build_argv("memory_get", &json!({})).is_err());
+        let a = build_argv("memory_save", &json!({ "text": "t", "category": "case" })).unwrap().unwrap();
+        assert_eq!(a.last().unwrap(), "--json");
+    }
+
+    #[test]
+    fn supersede_takes_text_or_by() {
+        let a = build_argv_for("memory_supersede", &json!({ "old": "o", "text": "new" }), "gemini-cli").unwrap().unwrap();
+        assert_eq!(a, ["supersede", "o", "--text", "new", "--agent", "gemini-cli", "--json"]);
+        let a = build_argv("memory_supersede", &json!({ "old": "o", "by": "n" })).unwrap().unwrap();
+        assert_eq!(a, ["supersede", "o", "--by", "n", "--json"]);
+        assert!(build_argv("memory_supersede", &json!({ "old": "o" })).is_err());
+        assert!(build_argv("memory_supersede", &json!({ "old": "o", "by": "n", "text": "t" })).is_err());
+    }
+
+    #[test]
+    fn save_agent_is_explicit_else_client_name_else_mcp() {
+        let base = json!({ "text": "t", "category": "case" });
+        let agent_of = |a: &[String]| a[a.iter().position(|x| x == "--agent").unwrap() + 1].clone();
+        assert_eq!(agent_of(&build_argv("memory_save", &base).unwrap().unwrap()), "mcp");
+        assert_eq!(agent_of(&build_argv_for("memory_save", &base, "gemini-cli").unwrap().unwrap()), "gemini-cli");
+        let explicit = json!({ "text": "t", "category": "case", "agent": "cursor" });
+        assert_eq!(agent_of(&build_argv_for("memory_save", &explicit, "gemini-cli").unwrap().unwrap()), "cursor");
+
+        let s = Server::new(true);
+        assert_eq!(s.client_name(), None);
+        s.handle_line(r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name":"gemini-cli"}}}"#);
+        assert_eq!(s.client_name().as_deref(), Some("gemini-cli"));
     }
 }
