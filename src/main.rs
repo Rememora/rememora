@@ -560,6 +560,51 @@ enum Commands {
         /// Output format: json, md
         #[arg(long, default_value = "json")]
         format: String,
+
+        /// Export the whole database in the versioned format `import` reads
+        #[arg(long, conflicts_with_all = ["project", "format"])]
+        all: bool,
+
+        /// Write to this file instead of stdout (with --all)
+        #[arg(long, requires = "all")]
+        out: Option<std::path::PathBuf>,
+    },
+
+    /// Load a `rememora export --all` file, skipping rows that already exist
+    Import {
+        file: std::path::PathBuf,
+
+        /// Report what would be imported without changing anything
+        #[arg(long)]
+        dry_run: bool,
+    },
+
+    /// Take a consistent snapshot of the database (or verify/list snapshots)
+    #[command(args_conflicts_with_subcommands = true)]
+    Backup {
+        #[command(subcommand)]
+        action: Option<BackupAction>,
+
+        /// Directory for the snapshot (default: <data dir>/backups)
+        #[arg(long)]
+        to: Option<std::path::PathBuf>,
+
+        /// Keep only the newest N snapshots made by this command (default: keep all)
+        #[arg(long)]
+        keep: Option<usize>,
+    },
+
+    /// Replace the live database with a verified snapshot (the current one is kept aside)
+    Restore {
+        snapshot: std::path::PathBuf,
+
+        /// Report what would happen without changing anything
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Do not ask for confirmation
+        #[arg(long)]
+        yes: bool,
     },
 
     /// Aggregate agent-invocation telemetry (tokens, cost, duration).
@@ -663,6 +708,18 @@ enum TelemetryAction {
         /// (single OTLP HTTP/JSON document).
         #[arg(long, default_value = "jsonl")]
         format: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum BackupAction {
+    /// Check a snapshot: checksum, key, integrity, row counts
+    Verify { snapshot: std::path::PathBuf },
+    /// List snapshots
+    List {
+        /// Directory to list (default: <data dir>/backups)
+        #[arg(long)]
+        dir: Option<std::path::PathBuf>,
     },
 }
 
@@ -816,6 +873,15 @@ fn main() -> Result<()> {
         Commands::Decrypt => return commands::encrypt::run_decrypt(&db_path),
         Commands::Desktop => return commands::desktop::run(),
         Commands::Update { check } => return commands::update::run(*check, cli.json),
+        Commands::Backup { action: Some(BackupAction::Verify { snapshot }), .. } => {
+            return commands::backup::run_verify(snapshot, cli.json)
+        }
+        Commands::Backup { action: Some(BackupAction::List { dir }), .. } => {
+            return commands::backup::run_list(&db_path, dir.as_deref(), cli.json)
+        }
+        Commands::Restore { snapshot, dry_run, yes } => {
+            return commands::backup::run_restore(&db_path, snapshot, *dry_run, *yes, cli.json)
+        }
         _ => {}
     }
 
@@ -1172,9 +1238,19 @@ fn main() -> Result<()> {
 
         Commands::Status => commands::status::run(&conn, cli.json),
 
-        Commands::Export { project, format } => {
+        Commands::Export { all: true, out, .. } => commands::backup::run_export_all(&conn, out.as_deref()),
+
+        Commands::Export { project, format, .. } => {
             commands::export::run(&conn, project.as_deref(), &format)
         }
+
+        Commands::Import { file, dry_run } => commands::backup::run_import(&conn, &file, dry_run, cli.json),
+
+        Commands::Backup { action: None, to, keep } => {
+            commands::backup::run_backup(&conn, &db_path, to.as_deref(), keep, cli.json)
+        }
+
+        Commands::Backup { action: Some(_), .. } | Commands::Restore { .. } => unreachable!("handled above"),
 
         Commands::Usage {
             since,

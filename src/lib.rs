@@ -1,6 +1,8 @@
+pub mod backup;
 pub mod crypto;
 pub mod curator;
 pub mod db;
+pub mod dump;
 pub mod embed;
 pub mod evolve;
 pub mod format;
