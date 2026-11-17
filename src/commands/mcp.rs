@@ -142,7 +142,7 @@ impl Server {
 
     fn exec(&self, mut argv: Vec<String>) -> Value {
         if self.no_encryption {
-            argv.push("--no-encryption".into());
+            argv.insert(0, "--no-encryption".into());
         }
         let exe = match std::env::current_exe() {
             Ok(p) => p,
@@ -299,9 +299,10 @@ fn required<'a>(args: &'a Value, key: &str) -> std::result::Result<&'a str, Stri
 }
 
 fn push_opt(argv: &mut Vec<String>, flag: &str, value: Option<String>) {
+    // `--flag=value`, never `--flag value`: a value that begins with `-`
+    // (tool arguments are free text from a model) must not be read as a flag.
     if let Some(v) = value {
-        argv.push(flag.into());
-        argv.push(v);
+        argv.push(format!("{flag}={v}"));
     }
 }
 
@@ -324,6 +325,9 @@ pub fn build_argv_for(name: &str, args: &Value, agent: &str) -> std::result::Res
     let s = |k: &str| str_arg(args, k).map(String::from);
     let agent = s("agent").unwrap_or_else(|| agent.to_string());
     let mut argv: Vec<String> = Vec::new();
+    // Free-text positionals go after a `--` separator at the very end, so a
+    // memory or query such as "--force is dangerous" stays text.
+    let mut positionals: Vec<String> = Vec::new();
     // Read tools return text for the model; tools whose ids get parsed return JSON.
     let mut json = true;
     match name {
@@ -339,7 +343,7 @@ pub fn build_argv_for(name: &str, args: &Value, agent: &str) -> std::result::Res
         }
         "memory_search" => {
             argv.push("search".into());
-            argv.push(required(args, "query")?.into());
+            positionals.push(required(args, "query")?.into());
             push_opt(&mut argv, "--project", s("project"));
             push_opt(&mut argv, "--category", s("category"));
             push_opt(&mut argv, "--limit", num_arg(args, "limit"));
@@ -348,7 +352,7 @@ pub fn build_argv_for(name: &str, args: &Value, agent: &str) -> std::result::Res
         }
         "memory_save" => {
             argv.push("save".into());
-            argv.push(required(args, "text")?.into());
+            positionals.push(required(args, "text")?.into());
             let category = required(args, "category")?;
             if !CATEGORIES.contains(&category) {
                 return Err(format!("Invalid category {category}: use one of {}", CATEGORIES.join(", ")));
@@ -364,12 +368,12 @@ pub fn build_argv_for(name: &str, args: &Value, agent: &str) -> std::result::Res
         "memory_get" => {
             argv.push("get".into());
             let reference = s("id").or_else(|| s("uri")).ok_or("Missing required argument: id or uri")?;
-            argv.push(reference);
+            positionals.push(reference);
             json = false;
         }
         "memory_supersede" => {
             argv.push("supersede".into());
-            argv.push(required(args, "old")?.into());
+            positionals.push(required(args, "old")?.into());
             match (s("text"), s("by")) {
                 (Some(_), Some(_)) => return Err("Pass text or by, not both".into()),
                 (Some(text), None) => {
@@ -389,7 +393,10 @@ pub fn build_argv_for(name: &str, args: &Value, agent: &str) -> std::result::Res
         "session_end" => {
             argv.push("session".into());
             match s("session_id") {
-                Some(id) => argv.extend(["end".into(), id]),
+                Some(id) => {
+                    argv.push("end".into());
+                    positionals.push(id);
+                }
                 None => {
                     argv.push("end-active".into());
                     push_opt(&mut argv, "--project", s("project"));
@@ -403,6 +410,10 @@ pub fn build_argv_for(name: &str, args: &Value, agent: &str) -> std::result::Res
     }
     if json {
         argv.push("--json".into());
+    }
+    if !positionals.is_empty() {
+        argv.push("--".into());
+        argv.extend(positionals);
     }
     Ok(Some(argv))
 }
@@ -433,9 +444,9 @@ mod tests {
     #[test]
     fn argv_omits_unsupplied_optional_flags() {
         let a = build_argv("memory_context", &json!({ "project": "p" })).unwrap().unwrap();
-        assert_eq!(a, ["context", "--project", "p"]);
+        assert_eq!(a, ["context", "--project=p"]);
         let a = build_argv("session_end", &json!({ "summary": "s" })).unwrap().unwrap();
-        assert_eq!(a, ["session", "end-active", "--agent", "mcp", "--summary", "s", "--json"]);
+        assert_eq!(a, ["session", "end-active", "--agent=mcp", "--summary=s", "--json"]);
         assert!(build_argv("memory_save", &json!({ "text": "x", "category": "bogus" })).is_err());
         assert!(build_argv("nope", &json!({})).unwrap().is_none());
     }
@@ -443,24 +454,36 @@ mod tests {
     #[test]
     fn read_tools_return_text_and_write_tools_json() {
         let a = build_argv("memory_context", &json!({ "query": "fix login", "max_tokens": 800 })).unwrap().unwrap();
-        assert_eq!(a, ["context", "--auto", "--query", "fix login", "--max-tokens", "800"]);
+        assert_eq!(a, ["context", "--auto", "--query=fix login", "--max-tokens=800"]);
         let a = build_argv("memory_search", &json!({ "query": "q" })).unwrap().unwrap();
-        assert_eq!(a, ["search", "q", "--format", "compact"]);
+        assert_eq!(a, ["search", "--format=compact", "--", "q"]);
         let a = build_argv("memory_get", &json!({ "id": "01ABC" })).unwrap().unwrap();
-        assert_eq!(a, ["get", "01ABC"]);
+        assert_eq!(a, ["get", "--", "01ABC"]);
         let a = build_argv("memory_get", &json!({ "uri": "rememora://x" })).unwrap().unwrap();
-        assert_eq!(a, ["get", "rememora://x"]);
+        assert_eq!(a, ["get", "--", "rememora://x"]);
         assert!(build_argv("memory_get", &json!({})).is_err());
         let a = build_argv("memory_save", &json!({ "text": "t", "category": "case" })).unwrap().unwrap();
-        assert_eq!(a.last().unwrap(), "--json");
+        assert_eq!(&a[a.len() - 3..], ["--json", "--", "t"]);
+    }
+
+    /// Tool arguments are free text from a model. A value that looks like a
+    /// flag must reach the CLI as data, never as an option.
+    #[test]
+    fn flag_shaped_values_stay_data() {
+        let a = build_argv("memory_save", &json!({ "text": "--project=victim", "category": "case", "project": "--force" })).unwrap().unwrap();
+        let sep = a.iter().position(|x| x == "--").unwrap();
+        assert_eq!(&a[sep + 1..], ["--project=victim"]);
+        assert!(a[..sep].contains(&"--project=--force".to_string()));
+        let a = build_argv("memory_search", &json!({ "query": "--help" })).unwrap().unwrap();
+        assert_eq!(&a[a.len() - 2..], ["--", "--help"]);
     }
 
     #[test]
     fn supersede_takes_text_or_by() {
         let a = build_argv_for("memory_supersede", &json!({ "old": "o", "text": "new" }), "gemini-cli").unwrap().unwrap();
-        assert_eq!(a, ["supersede", "o", "--text", "new", "--agent", "gemini-cli", "--json"]);
+        assert_eq!(a, ["supersede", "--text=new", "--agent=gemini-cli", "--json", "--", "o"]);
         let a = build_argv("memory_supersede", &json!({ "old": "o", "by": "n" })).unwrap().unwrap();
-        assert_eq!(a, ["supersede", "o", "--by", "n", "--json"]);
+        assert_eq!(a, ["supersede", "--by=n", "--json", "--", "o"]);
         assert!(build_argv("memory_supersede", &json!({ "old": "o" })).is_err());
         assert!(build_argv("memory_supersede", &json!({ "old": "o", "by": "n", "text": "t" })).is_err());
     }
@@ -468,7 +491,7 @@ mod tests {
     #[test]
     fn save_agent_is_explicit_else_client_name_else_mcp() {
         let base = json!({ "text": "t", "category": "case" });
-        let agent_of = |a: &[String]| a[a.iter().position(|x| x == "--agent").unwrap() + 1].clone();
+        let agent_of = |a: &[String]| a.iter().find_map(|x| x.strip_prefix("--agent=")).unwrap().to_string();
         assert_eq!(agent_of(&build_argv("memory_save", &base).unwrap().unwrap()), "mcp");
         assert_eq!(agent_of(&build_argv_for("memory_save", &base, "gemini-cli").unwrap().unwrap()), "gemini-cli");
         let explicit = json!({ "text": "t", "category": "case", "agent": "cursor" });
