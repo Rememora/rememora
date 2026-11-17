@@ -12,6 +12,7 @@ pub mod evolve;
 pub mod export;
 pub mod extract;
 pub mod get;
+pub mod mcp;
 pub mod project;
 pub mod relate;
 pub mod save;

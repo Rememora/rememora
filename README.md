@@ -240,49 +240,49 @@ claude plugin marketplace update rememora    # refresh the marketplace cache
 claude plugin update rememora@rememora       # update the plugin (note the @marketplace suffix)
 ```
 
-### Claude Code (Alternative: CLAUDE.md)
-
-Equivalent to the plugin's instructions block, without installing the plugin — add to `~/.claude/CLAUDE.md`:
-
-```markdown
-## Rememora Memory System
-On session start:
-1. `rememora context --auto` — load prior context
-2. `rememora session start --agent claude-code --project <name> --intent "..."`
-
-During work, save important discoveries:
-- `rememora save "..." --category decision --project <name>`
-
-Before ending: `rememora session end <id> --summary "..." --working-state "..."`
-```
-
-### Codex
-
-Add to `~/.codex/config.toml`:
-
-```toml
-system_prompt = """
-On session start: run `rememora context --auto` and `rememora session start --agent codex ...`
-Save important discoveries with `rememora save ...`
-Before ending: `rememora session end <id> --summary "..." --working-state "..."`
-"""
-```
-
-### Gemini CLI
-
-Add to `~/.gemini/GEMINI.md` using the same pattern as the Claude Code CLAUDE.md approach.
-
-### Auto-Setup (All Agents)
+### Any agent: `rememora setup`
 
 ```bash
-# Detect installed agents and show what would be configured
-rememora setup
-
-# Apply the configuration
-rememora setup --apply
+rememora setup                          # dry run: show what would be written
+rememora setup --apply                  # write global instruction files for detected agents
+rememora setup --project-dir . --apply  # write a marked block into ./AGENTS.md only
+rememora setup --project-dir . --apply --agent-files   # also CLAUDE.md, GEMINI.md, Cursor and Copilot project files
 ```
 
-Auto-detects Claude Code, Codex, and Gemini CLI, then patches their config files with rememora instructions.
+Every agent gets the same instructions block, with its own `--agent` name filled in. The block
+sits between `<!-- rememora:begin -->` and `<!-- rememora:end -->` markers, so re-running setup
+updates it in place and leaves the rest of the file alone (an older unmarked `## Rememora`
+section is replaced too). Each written file is backed up to `<file>.bak` first.
+
+| Agent | Detected by | Global file | Project file |
+|---|---|---|---|
+| Claude Code | `claude` | `~/.claude/CLAUDE.md` | `CLAUDE.md` |
+| Codex | `codex` | `$CODEX_HOME/AGENTS.md` (default `~/.codex`) | `AGENTS.md` |
+| Gemini CLI | `gemini` | `~/.gemini/GEMINI.md` | `GEMINI.md` |
+| Cursor | `cursor`, `cursor-agent` | none on disk (User Rules live in settings) | `AGENTS.md`, `.cursor/rules/rememora.mdc` |
+| opencode | `opencode` | `~/.config/opencode/AGENTS.md` | `AGENTS.md` |
+| GitHub Copilot CLI | `copilot` | `$COPILOT_HOME/copilot-instructions.md` (default `~/.copilot`) | `AGENTS.md`, `.github/copilot-instructions.md` |
+| Anything else that reads AGENTS.md | | | `AGENTS.md` via `--project-dir` |
+
+### MCP server: `rememora mcp`
+
+For agents without shell access, or any MCP client, `rememora mcp` is a stdio Model Context
+Protocol server over the same database. Tools: `memory_context`, `memory_search`, `memory_save`,
+`memory_get`, `memory_supersede`, `session_start`, `session_end`. Each tool runs the matching
+`rememora` CLI command, so behaviour is identical. `setup` prints the registration for each
+detected agent; it does not edit MCP config files. For example:
+
+```bash
+claude mcp add --scope user rememora -- rememora mcp
+codex mcp add rememora -- rememora mcp
+```
+
+```json
+{ "mcpServers": { "rememora": { "command": "rememora", "args": ["mcp"] } } }
+```
+
+The JSON shape above is what Gemini CLI (`~/.gemini/settings.json`), Cursor (`~/.cursor/mcp.json`)
+and Claude Desktop use.
 
 ## Desktop App
 
