@@ -127,8 +127,9 @@ pub fn search_results_to_markdown(results: &[SearchResult]) -> String {
     md
 }
 
-/// Target line length for compact search output (~75 tokens).
-const COMPACT_LINE_LEN: usize = 140;
+/// Characters of abstract kept per compact search line. Long enough that a
+/// one-sentence memory survives whole, short enough to stay one line.
+const COMPACT_ABSTRACT_LEN: usize = 120;
 /// Overall byte cap for context-mode search output (prompt injection safety).
 const CONTEXT_BYTE_CAP: usize = 1200;
 /// Per-line abstract length for context-mode.
@@ -168,12 +169,9 @@ pub fn search_results_to_compact(results: &[SearchResult]) -> String {
         let ctx = &result.context;
         let cat = ctx.category.as_deref().unwrap_or(&ctx.context_type);
         let abstract_text = pick_abstract(ctx);
-        // Budget for the abstract = target line length minus the fixed overhead
-        // (category tag, separator, URI, rank). Clamp to a floor so short URIs
-        // don't yield absurdly long abstracts.
-        let overhead = cat.len() + ctx.uri.len() + 20;
-        let abs_budget = COMPACT_LINE_LEN.saturating_sub(overhead).max(40);
-        let abs_short = truncate_ellipsis(abstract_text, abs_budget);
+        // A fixed abstract budget: deriving it from the URI length cut every
+        // project memory down to 40 characters, too little to judge a hit by.
+        let abs_short = truncate_ellipsis(abstract_text, COMPACT_ABSTRACT_LEN);
         out.push_str(&format!(
             "[{}] {} — {} (rank={:.2})\n",
             cat, abs_short, ctx.uri, result.rank
@@ -261,20 +259,30 @@ pub fn session_to_markdown(session: &SessionRecord) -> String {
     md
 }
 
-pub fn search_results_to_json(results: &[SearchResult]) -> String {
+/// JSON search hits with enough fields to act on without a `get` per hit.
+/// `content` (L2, possibly long) is included only when `full` is set.
+pub fn search_results_to_json(results: &[SearchResult], full: bool) -> String {
     let items: Vec<serde_json::Value> = results
         .iter()
         .map(|r| {
-            serde_json::json!({
+            let mut v = serde_json::json!({
                 "id": r.context.id,
                 "uri": r.context.uri,
+                "project": crate::uri::extract_project(&r.context.uri),
                 "name": r.context.name,
                 "type": r.context.context_type,
                 "category": r.context.category,
                 "abstract": r.context.abstract_text,
+                "overview": r.context.overview,
                 "importance": r.context.importance,
+                "created_at": r.context.created_at,
+                "updated_at": r.context.updated_at,
                 "rank": r.rank,
-            })
+            });
+            if full {
+                v["content"] = serde_json::Value::String(r.context.content.clone());
+            }
+            v
         })
         .collect();
     serde_json::to_string_pretty(&items).unwrap_or_default()

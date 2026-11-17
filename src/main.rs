@@ -164,6 +164,10 @@ enum Commands {
         /// checkout. Defaults to the process working directory.
         #[arg(long)]
         cwd: Option<String>,
+
+        /// With --json, include each hit's full content
+        #[arg(long)]
+        full: bool,
     },
 
     /// Chronological slice of contexts around an anchor URI.
@@ -789,6 +793,7 @@ fn main() -> Result<()> {
             propagate_depth,
             format,
             cwd,
+            full,
         } => {
             let fmt = commands::search::SearchFormat::parse(&format)?;
             commands::search::run(
@@ -803,6 +808,7 @@ fn main() -> Result<()> {
                     propagate_depth,
                     format: fmt,
                     cwd,
+                    full,
                 },
                 cli.json,
             )

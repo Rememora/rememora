@@ -416,3 +416,226 @@ fn search_bumps_active_count_for_returned_results() {
         ctx.active_count
     );
 }
+
+// ---------------------------------------------------------------------------
+// Ranking: plain-word queries
+// ---------------------------------------------------------------------------
+
+fn top_name(conn: &rusqlite::Connection, query: &str) -> String {
+    rememora::search::search(conn, query, None, None, 10)
+        .unwrap()
+        .first()
+        .map(|r| r.context.name.clone())
+        .unwrap_or_default()
+}
+
+fn names(conn: &rusqlite::Connection, query: &str) -> Vec<String> {
+    rememora::search::search(conn, query, None, None, 10)
+        .unwrap()
+        .into_iter()
+        .map(|r| r.context.name)
+        .collect()
+}
+
+#[test]
+fn stopwords_do_not_outrank_the_topic_word() {
+    // Given: one memory about postgres, and one that is full of "we" and "did"
+    let conn = db_with_memories(&[
+        memory("Database choice")
+            .abstract_text("Chose Postgres for the ledger")
+            .content("Postgres gives us transactional DDL."),
+        memory("Team habits")
+            .abstract_text("We did standups, we did retros, we did demos")
+            .content("We did a lot of meetings and we did not like them."),
+    ]);
+
+    // When: asking a natural-language question
+    // Then: the postgres memory wins, not the one that says "we did" a lot
+    assert_eq!(top_name(&conn, "why did we pick postgres"), "Database choice");
+}
+
+#[test]
+fn query_of_only_stopwords_still_searches_them() {
+    // Given: a memory containing "the"
+    let conn = db_with_memories(&[memory("Note").content("the only note")]);
+
+    // When / Then: an all-stopword query falls back to its raw terms
+    assert!(!names(&conn, "the").is_empty());
+}
+
+#[test]
+fn synonyms_bridge_abbreviations_both_ways() {
+    // Given: memories written with the short and the long spelling
+    let conn = db_with_memories(&[
+        memory("Session tokens").content("auth tokens expire after an hour"),
+        memory("Primary store").content("We run PostgreSQL 16 in production"),
+    ]);
+
+    // When / Then: the other spelling finds each one
+    assert_eq!(top_name(&conn, "authentication"), "Session tokens");
+    assert_eq!(top_name(&conn, "postgres"), "Primary store");
+    assert_eq!(top_name(&conn, "db"), "", "no memory says database or db");
+}
+
+#[test]
+fn longer_words_also_match_as_prefixes() {
+    // Given: a memory using the full word
+    let conn = db_with_memories(&[memory("Push").content("notifications are batched hourly")]);
+
+    // When / Then: a five-letter prefix finds it
+    assert_eq!(top_name(&conn, "notif"), "Push");
+}
+
+#[test]
+fn misspelled_word_with_no_hits_is_corrected() {
+    // Given: a memory spelled correctly
+    let conn = db_with_memories(&[
+        memory("Gradle fix").content("android build needs the jdk8 stdlib forced"),
+        memory("Other").content("ios build is fine"),
+    ]);
+
+    // When / Then: a transposed spelling still finds it
+    assert_eq!(top_name(&conn, "andriod build"), "Gradle fix");
+}
+
+#[test]
+fn correctly_spelled_words_are_not_rewritten() {
+    // Given: a word that exists in the index and a near neighbour
+    let conn = db_with_memories(&[
+        memory("Window").content("the window manager"),
+        memory("Widow").content("a widow line in typesetting"),
+    ]);
+
+    // When / Then: an exact hit is not widened to its neighbour
+    assert_eq!(names(&conn, "widow"), vec!["Widow".to_string()]);
+}
+
+#[test]
+fn camel_case_query_matches_split_words() {
+    // Given: a memory that spells the identifier as words
+    let conn = db_with_memories(&[memory("Retries").content("the retry policy caps at five")]);
+
+    // When / Then: the camelCase identifier finds it
+    assert_eq!(top_name(&conn, "RetryPolicy"), "Retries");
+}
+
+#[test]
+fn snake_case_and_flags_match_as_phrases() {
+    // Given: one memory with the flag, one with the words apart
+    let conn = db_with_memories(&[
+        memory("Hooks").content("never commit with --no-verify"),
+        memory("Scattered").content("no tests verify this, there is no plan"),
+    ]);
+
+    // When / Then: the flag matches the adjacent words first
+    assert_eq!(top_name(&conn, "--no-verify"), "Hooks");
+}
+
+#[test]
+fn memory_covering_every_concept_beats_one_repeating_a_single_term() {
+    // Given: one memory mentioning both concepts, one hammering one of them
+    let conn = db_with_memories(&[
+        memory("Repeats")
+            .abstract_text("redis redis redis")
+            .content("redis redis redis redis redis"),
+        memory("Covers").content("redis eviction policy for the session cache"),
+    ]);
+
+    // When / Then: coverage wins
+    assert_eq!(top_name(&conn, "redis eviction"), "Covers");
+}
+
+#[test]
+fn importance_prior_breaks_ties_but_cannot_beat_a_better_match() {
+    // Given: two equally matching memories, one far more important and used
+    let conn = db_with_memories(&[
+        memory("Low").importance(0.1).content("kafka consumer lag"),
+        memory("High")
+            .importance(1.0)
+            .access_count(500)
+            .content("kafka consumer lag"),
+        memory("Hot but partial")
+            .importance(1.0)
+            .access_count(10_000)
+            .content("kafka topic naming"),
+    ]);
+
+    // When / Then: the prior settles the tie, and the partial match stays below
+    let got = names(&conn, "kafka consumer lag");
+    assert_eq!(got[0], "High");
+    assert_eq!(got[1], "Low");
+    assert_eq!(got[2], "Hot but partial");
+}
+
+#[test]
+fn search_bump_false_leaves_counts_alone() {
+    let conn = db_with_memories(&[memory("Quiet").content("unbumped words")]);
+    let opts = rememora::search::SearchOptions { bump: false };
+    let hits = rememora::search::search_with_options(&conn, "unbumped", None, None, 10, opts).unwrap();
+    assert_eq!(hits.len(), 1);
+    let count: i64 = conn
+        .query_row("SELECT active_count FROM contexts WHERE id = ?1", [&hits[0].context.id], |r| r.get(0))
+        .unwrap();
+    assert_eq!(count, 0);
+}
+
+#[test]
+fn project_filter_treats_underscore_and_percent_literally() {
+    // Given: projects whose names differ only where a LIKE wildcard would sit
+    let conn = db_with_memories(&[
+        memory("Underscore").project("my_app").content("shared token"),
+        memory("Lookalike").project("myxapp").content("shared token"),
+        memory("Percent").project("a%b").content("shared token"),
+        memory("Lookalike two").project("axxb").content("shared token"),
+    ]);
+
+    // When / Then: each filter returns only its own project
+    let one = |p: &str| -> Vec<String> {
+        rememora::search::search(&conn, "shared token", Some(p), None, 10)
+            .unwrap()
+            .into_iter()
+            .map(|r| r.context.name)
+            .collect()
+    };
+    assert_eq!(one("my_app"), vec!["Underscore".to_string()]);
+    assert_eq!(one("a%b"), vec!["Percent".to_string()]);
+}
+
+// ---------------------------------------------------------------------------
+// Output
+// ---------------------------------------------------------------------------
+
+#[test]
+fn compact_format_keeps_about_120_chars_of_abstract() {
+    let text = format!("{}END", "word ".repeat(23)); // 118 chars
+    let conn = db_with_memories(&[memory("long").project("a_rather_long_project_name").abstract_text(&text)]);
+    let results = rememora::search::search(&conn, "word", None, None, 10).unwrap();
+    let rendered = rememora::format::search_results_to_compact(&results);
+    assert!(rendered.contains("END"), "abstract was cut: {rendered}");
+}
+
+#[test]
+fn json_hits_carry_fields_needed_without_a_get() {
+    let conn = db_with_memories(&[memory("Fielded")
+        .project("proj")
+        .category("decision")
+        .importance(0.8)
+        .overview("the overview text")
+        .content("the content body")]);
+    let results = rememora::search::search(&conn, "fielded", None, None, 10).unwrap();
+
+    let brief: serde_json::Value =
+        serde_json::from_str(&rememora::format::search_results_to_json(&results, false)).unwrap();
+    let hit = &brief[0];
+    assert_eq!(hit["project"], "proj");
+    assert_eq!(hit["category"], "decision");
+    assert_eq!(hit["overview"], "the overview text");
+    assert_eq!(hit["importance"], 0.8);
+    assert!(hit["created_at"].is_string());
+    assert!(hit["updated_at"].is_string());
+    assert!(hit.get("content").is_none(), "content only with --full");
+
+    let full: serde_json::Value =
+        serde_json::from_str(&rememora::format::search_results_to_json(&results, true)).unwrap();
+    assert_eq!(full[0]["content"], "the content body");
+}
