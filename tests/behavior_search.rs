@@ -169,6 +169,7 @@ fn compact_format_is_one_line_per_hit_with_category_uri_and_rank() {
             "line should start with category tag, got: {line}"
         );
         assert!(line.contains(&result.context.uri), "line should include URI: {line}");
+        assert!(line.contains(&format!("id {}", result.context.id)), "line should include id: {line}");
         assert!(line.contains("rank="), "line should include rank token: {line}");
     }
 }

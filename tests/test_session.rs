@@ -141,3 +141,59 @@ fn test_parent_session_chain() {
     let s2 = session::get_by_id(&conn, &id2).unwrap().unwrap();
     assert_eq!(s2.parent_session.as_deref(), Some(id1.as_str()));
 }
+
+/// `session end-active` with two agents active on one project: without
+/// `--agent` it ends nothing and lists both; with `--agent` it ends only that
+/// agent's session.
+#[test]
+fn end_active_is_scoped_by_agent_when_several_agents_are_active() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("rememora.db");
+    drop(rememora::db::open_with_options(&db, true).unwrap());
+    let run = |args: &[&str]| {
+        std::process::Command::new(env!("CARGO_BIN_EXE_rememora"))
+            .args(args)
+            .arg("--no-encryption")
+            .current_dir(dir.path())
+            .env("HOME", dir.path())
+            .env("REMEMORA_DB", &db)
+            .env("REMEMORA_NO_UPDATE_CHECK", "1")
+            .env_remove("REMEMORA_READONLY")
+            .output()
+            .unwrap()
+    };
+    let start = |agent: &str| {
+        let out = run(&["session", "start", "--agent", agent, "--project", "duo", "--intent", agent]);
+        assert!(out.status.success(), "{out:?}");
+        String::from_utf8(out.stdout).unwrap().trim().to_string()
+    };
+    let claude = start("claude-code");
+    let codex = start("codex");
+
+    let out = run(&["session", "end-active", "--project", "duo", "--summary", "s"]);
+    assert!(!out.status.success(), "ambiguous end-active must fail");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stdout.contains(&claude) && stdout.contains(&codex), "lists candidates: {stdout}");
+    assert!(stderr.contains("--agent"), "{stderr}");
+
+    let conn = rememora::db::open_with_options(&db, true).unwrap();
+    assert_eq!(session::list_active_for_project(&conn, "duo", 10).unwrap().len(), 2, "nothing ended");
+    drop(conn);
+
+    let out = run(&["session", "end-active", "--project", "duo", "--agent", "claude-code", "--summary", "s", "--json"]);
+    assert!(out.status.success(), "{out:?}");
+    assert!(String::from_utf8_lossy(&out.stdout).contains(&claude));
+
+    let conn = rememora::db::open_with_options(&db, true).unwrap();
+    let left = session::list_active_for_project(&conn, "duo", 10).unwrap();
+    assert_eq!(left.len(), 1);
+    assert_eq!(left[0].id, codex);
+    drop(conn);
+
+    // One agent left: the bare form ends it, as before.
+    let out = run(&["session", "end-active", "--project", "duo", "--auto-summary"]);
+    assert!(out.status.success(), "{out:?}");
+    let conn = rememora::db::open_with_options(&db, true).unwrap();
+    assert!(session::list_active_for_project(&conn, "duo", 10).unwrap().is_empty());
+}

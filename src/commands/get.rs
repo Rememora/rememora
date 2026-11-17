@@ -4,8 +4,9 @@ use rusqlite::Connection;
 use rememora::format;
 use rememora::models::context;
 
-pub fn run(conn: &Connection, uri: &str, json: bool) -> Result<()> {
-    let ctx = context::get_by_uri(conn, uri)?;
+/// Print one memory in full. `reference` is its id or its `rememora://` URI.
+pub fn run(conn: &Connection, reference: &str, json: bool) -> Result<()> {
+    let ctx = context::resolve_ref(conn, reference.trim())?;
     match ctx {
         Some(c) => {
             context::bump_active_count(conn, &c.id)?;
@@ -15,7 +16,7 @@ pub fn run(conn: &Connection, uri: &str, json: bool) -> Result<()> {
                 print!("{}", format::context_record_to_markdown(&c));
             }
         }
-        None => bail!("Context not found: {uri}"),
+        None => bail!("Context not found: {reference}"),
     }
     Ok(())
 }

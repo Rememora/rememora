@@ -85,16 +85,20 @@ impl Budget {
     }
 }
 
-fn context_footer(used: usize, limit: Option<usize>, omitted: usize) -> String {
+/// Said once in the footer instead of a full URI on every memory line.
+pub const CONTEXT_GET_HINT: &str = "`rememora get <id>` shows the full memory.";
+
+fn context_footer(used: usize, limit: Option<usize>, omitted: usize, has_memories: bool) -> String {
     let budget = match limit {
         Some(n) => format!("budget {n}"),
         None => "no budget".to_string(),
     };
+    let get_hint = if has_memories { format!(" {CONTEXT_GET_HINT}") } else { String::new() };
     if omitted == 0 {
-        format!("_~{used} tokens ({budget}), nothing omitted._\n")
+        format!("_~{used} tokens ({budget}), nothing omitted.{get_hint}_\n")
     } else {
         format!(
-            "_~{used} tokens ({budget}), {omitted} memories omitted. Find them with `rememora search \"<topic>\"`._\n"
+            "_~{used} tokens ({budget}), {omitted} memories omitted. Find them with `rememora search \"<topic>\"`.{get_hint}_\n"
         )
     }
 }
@@ -127,7 +131,10 @@ pub fn active_session_line(s: &SessionRecord) -> String {
     line
 }
 
-fn handoff_block(h: &SessionRecord) -> String {
+/// The `## Handoff` section: who handed off, how long ago (with a note past
+/// `STALE_HANDOFF_DAYS`), intent, summary and working state. Shared by
+/// `context` and `context --cheatsheet`.
+pub fn handoff_block(h: &SessionRecord) -> String {
     let mut md = String::from("## Handoff\n\n");
     let when = h.ended_at.as_deref().unwrap_or(&h.started_at);
     let age = human_age(when);
@@ -184,7 +191,7 @@ fn full_line(sc: &ScoredContext, global_mode: bool) -> String {
         "- {} {} `{}`\n",
         memory_tag(sc, global_mode),
         one_line(full_text(&sc.context)),
-        sc.context.uri
+        sc.context.id
     )
 }
 
@@ -195,7 +202,7 @@ fn abstract_line(sc: &ScoredContext, global_mode: bool, suffix: &str) -> String 
         memory_tag(sc, global_mode),
         truncate_ellipsis(&text, CONTEXT_ABSTRACT_LEN),
         suffix,
-        sc.context.uri
+        sc.context.id
     )
 }
 
@@ -234,7 +241,7 @@ pub fn render_context(assembly: &ContextAssembly, max_tokens: Option<usize>) -> 
     let total = assembly.memory_count();
     let mut b = Budget { out: String::new(), limit: max_tokens, reserve: 0 };
     // Keep room for the footer at its widest (largest numbers it can print).
-    let widest = context_footer(max_tokens.unwrap_or(0).max(99_999), max_tokens, total.max(1));
+    let widest = context_footer(max_tokens.unwrap_or(0).max(99_999), max_tokens, total.max(1), true);
     let footer_room = estimate_tokens(&widest) + 1;
     let footer_fits = max_tokens.is_none_or(|n| n > footer_room);
     if footer_fits && max_tokens.is_some() {
@@ -329,14 +336,14 @@ pub fn render_context(assembly: &ContextAssembly, max_tokens: Option<usize>) -> 
         // includes the footer itself.
         let mut used = estimate_tokens(&markdown);
         for _ in 0..4 {
-            let candidate = format!("{markdown}{}", context_footer(used, max_tokens, omitted));
+            let candidate = format!("{markdown}{}", context_footer(used, max_tokens, omitted, total > 0));
             let actual = estimate_tokens(&candidate);
             if actual == used {
                 break;
             }
             used = actual;
         }
-        markdown.push_str(&context_footer(used, max_tokens, omitted));
+        markdown.push_str(&context_footer(used, max_tokens, omitted, total > 0));
     }
     let tokens_used = estimate_tokens(&markdown);
     RenderedContext { markdown, tokens_used, omitted, shown, max_tokens }
@@ -467,7 +474,7 @@ fn pick_abstract(ctx: &crate::models::context::ContextRecord) -> &str {
 
 /// Compact progressive-disclosure output: one line per hit, ~75 tokens each.
 ///
-/// Shape: `[category] abstract — rememora://... (rank=-1.23)`
+/// Shape: `[category] abstract — rememora://... (id <ULID>, rank=-1.23)`
 ///
 /// Designed for agents to filter before fetching: enough signal to decide
 /// whether to drill into `timeline` or `get`, without spending the token
@@ -486,8 +493,8 @@ pub fn search_results_to_compact(results: &[SearchResult]) -> String {
         // project memory down to 40 characters, too little to judge a hit by.
         let abs_short = truncate_ellipsis(abstract_text, COMPACT_ABSTRACT_LEN);
         out.push_str(&format!(
-            "[{}] {} — {} (rank={:.2})\n",
-            cat, abs_short, ctx.uri, result.rank
+            "[{}] {} — {} (id {}, rank={:.2})\n",
+            cat, abs_short, ctx.uri, ctx.id, result.rank
         ));
     }
 

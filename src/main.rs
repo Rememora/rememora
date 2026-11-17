@@ -26,6 +26,11 @@ fn readonly_armed() -> bool {
 /// The guard is about memory *content* — which of those never change — so they
 /// stay on the list; a consolidation subagent cannot verify anything without
 /// them.
+///
+/// `mcp` is on the list too: the server itself only reads stdin and spawns
+/// this binary once per tool call. Each subprocess inherits the variable and
+/// passes back through this guard, so `memory_save`, `memory_supersede` and
+/// the session tools are still refused while the read tools keep working.
 fn is_read_only_command(command: &Commands) -> bool {
     matches!(
         command,
@@ -37,6 +42,7 @@ fn is_read_only_command(command: &Commands) -> bool {
             | Commands::Eval { .. }
             | Commands::Export { .. }
             | Commands::Usage { .. }
+            | Commands::Mcp
     )
 }
 
@@ -60,7 +66,7 @@ fn readonly_refusal(command: &Commands) -> Option<String> {
     if readonly_armed() && !is_read_only_command(command) {
         return Some(format!(
             "Refusing to run: rememora is in read-only mode ({READONLY_ENV}=1).\n\
-             Only search, timeline, context, get, status, eval, export and usage are allowed.\n\
+             Only search, timeline, context, get, status, eval, export, usage and mcp (read tools only) are allowed.\n\
              \n\
              This mode is set for consolidation subagents so they cannot retire memories \
              outside the bounded, journalled `rememora evolve --apply` path. If you reached \
@@ -217,9 +223,10 @@ enum Commands {
         query: Option<String>,
     },
 
-    /// Get a specific context by URI
+    /// Get a specific memory in full, by id or rememora:// URI
     Get {
-        /// The rememora:// URI
+        /// The memory's 26-character id or its rememora:// URI
+        #[arg(value_name = "ID_OR_URI")]
         uri: String,
     },
 
@@ -704,6 +711,11 @@ enum SessionAction {
         #[arg(long)]
         project: Option<String>,
 
+        /// Only end this agent's active session. Without it, refuses when
+        /// several agents have active sessions on the project
+        #[arg(long)]
+        agent: Option<String>,
+
         /// Summary of what was accomplished
         #[arg(long)]
         summary: Option<String>,
@@ -955,12 +967,14 @@ fn main() -> Result<()> {
             ),
             SessionAction::EndActive {
                 project,
+                agent,
                 summary,
                 working_state,
                 auto_summary,
             } => commands::session::end_active(
                 &conn,
                 project.as_deref(),
+                agent.as_deref(),
                 summary.as_deref(),
                 working_state.as_deref(),
                 auto_summary,
@@ -1249,6 +1263,10 @@ mod tests {
             "rememora://projects/t/memories/decision/x"
         ]));
         assert!(allowed(&["status"]));
+        assert!(allowed(&["get", "01JABCDEFGHJKMNPQRSTVWXYZ0"]));
+        // The MCP server may start; its write tools are refused per subprocess
+        // (covered end to end in tests/test_mcp.rs).
+        assert!(allowed(&["mcp"]));
     }
 
     /// Everything that can change a memory is refused, including the two the

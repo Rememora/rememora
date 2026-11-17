@@ -81,29 +81,19 @@ fn run_cheatsheet(conn: &Connection, project: Option<&str>) -> Result<()> {
             } else {
                 &sc.context.overview
             };
-            println!("- [{}] {} (importance: {:.1})", cat, overview, sc.context.importance);
+            println!(
+                "- [{}] {} (importance: {:.1}) `{}`",
+                cat, overview, sc.context.importance, sc.context.id
+            );
         }
         println!();
     }
 
     // Handoff from the last agent, then who is working right now.
     if let Some(proj) = project {
+        // Same block as the main context output: relative age, stale note.
         if let Some(h) = hierarchy::get_latest_session(conn, Some(proj))? {
-            if !h.working_state.is_empty() {
-                println!("## Working State\n");
-                println!("{}", h.working_state);
-                println!();
-            }
-            println!("## Last Handoff\n");
-            let when = h.ended_at.as_deref().unwrap_or(&h.started_at);
-            println!("- **Agent**: {} ({}, {when})", h.agent, h.status);
-            if !h.intent.is_empty() {
-                println!("- **Intent**: {}", h.intent);
-            }
-            if !h.summary.is_empty() {
-                println!("- **Summary**: {}", h.summary);
-            }
-            println!();
+            print!("{}", format::handoff_block(&h));
         }
         let active = session::list_active_for_project(conn, proj, hierarchy::ACTIVE_SESSION_LIMIT)?;
         if !active.is_empty() {
@@ -149,6 +139,10 @@ fn run_cheatsheet(conn: &Connection, project: Option<&str>) -> Result<()> {
             println!("- {w}");
         }
         println!();
+    }
+
+    if !l1.is_empty() {
+        println!("_{}_", format::CONTEXT_GET_HINT);
     }
 
     Ok(())

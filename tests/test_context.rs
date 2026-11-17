@@ -315,3 +315,33 @@ fn supersede_checked_flags_cross_project() {
     let out = context::supersede_checked(&conn, &a, &b, false).unwrap();
     assert_eq!(out.cross_project, Some((Some("one".into()), None)));
 }
+
+/// `_` and `%` in a project name are literal in `list_by_scope`, not LIKE
+/// wildcards: `my_app` must not pick up `myXapp`'s memories.
+#[test]
+fn list_by_scope_project_filter_is_literal() {
+    let conn = common::create_test_db();
+    for (proj, name) in [("my_app", "mine"), ("myXapp", "other"), ("my%", "pct"), ("myZZ", "zz")] {
+        let uri = format!("rememora://projects/{proj}/memories/decision/{name}");
+        context::insert(&conn, &InsertContext { uri, ..make_test_insert("", name) }).unwrap();
+    }
+    let names = |p: &str| -> Vec<String> {
+        context::list_by_scope(&conn, Some("memory"), None, Some(p), 100)
+            .unwrap()
+            .into_iter()
+            .map(|c| c.name)
+            .collect()
+    };
+    assert_eq!(names("my_app"), ["mine"]);
+    assert_eq!(names("my%"), ["pct"]);
+}
+
+/// `get` accepts an id as well as a URI.
+#[test]
+fn resolve_ref_accepts_id_and_uri() {
+    let conn = common::create_test_db();
+    let uri = "rememora://projects/test/memories/decisions/ref";
+    let id = context::insert(&conn, &make_test_insert(uri, "Ref")).unwrap();
+    assert_eq!(context::resolve_ref(&conn, &id).unwrap().unwrap().uri, uri);
+    assert_eq!(context::resolve_ref(&conn, uri).unwrap().unwrap().id, id);
+}

@@ -126,10 +126,14 @@ fn project_row_is_header_not_memory_and_nothing_repeats() {
     assert!(md.contains("Alpha billing. Stack: rust."), "{md}");
     assert!(!md.contains("[project]"), "{md}");
     assert!(!md.contains("Project: alpha. Stack"), "{md}");
-    for i in 0..30 {
-        let uri = format!("rememora://projects/alpha/memories/decision/alpha-fact-{i}`");
-        assert_eq!(md.matches(&uri).count(), 1, "{uri} should print once:\n{md}");
+    // Memory lines carry the 26-char id, not the URI; the footer says once how
+    // to expand one.
+    assert!(!md.contains("rememora://"), "{md}");
+    for id in all_ids(&asm) {
+        assert_eq!(id.len(), 26);
+        assert_eq!(md.matches(&format!("`{id}`")).count(), 1, "{id} should print once:\n{md}");
     }
+    assert_eq!(md.matches(format::CONTEXT_GET_HINT).count(), 1, "{md}");
     let ids = all_ids(&asm);
     let mut dedup = ids.clone();
     dedup.sort();
@@ -237,7 +241,7 @@ fn query_adds_relevant_section_deduplicated() {
     assert!(!asm.ranked.iter().any(|s| s.context.id == hit));
     let md = format::context_to_markdown(&asm);
     assert!(md.contains("## Relevant to: stripe webhook\n"), "{md}");
-    assert_eq!(md.matches("stripe-webhook-retries`").count(), 1);
+    assert_eq!(md.matches(&format!("`{hit}`")).count(), 1);
     // bump disabled: loading context is not a retrieval.
     let rec = context::get_by_id(&conn, &hit).unwrap().unwrap();
     assert_eq!(rec.active_count, 0);
@@ -315,6 +319,34 @@ fn resume_cli_shows_handoff_and_active() {
         .output()
         .unwrap();
     let text = String::from_utf8_lossy(&out.stdout);
-    assert!(text.contains("## Working State\n\nnext: backfill"), "{text}");
+    // Same handoff block as `context`: relative age, not a raw timestamp.
+    assert!(text.contains("## Handoff\n\n- From: claude-code, ended 0m ago"), "{text}");
+    assert!(text.contains("- Working state: next: backfill"), "{text}");
+    assert!(!text.contains("Note: this handoff is"), "{text}");
     assert!(text.contains("## Active Sessions"), "{text}");
+}
+
+#[test]
+fn cheatsheet_flags_a_stale_handoff() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("r.db");
+    {
+        let conn = rememora::db::open_with_options(&db, true).unwrap();
+        mem(&conn, "alpha", "decision", "kept fact", 0.6);
+        let a = session::start(&conn, "claude-code", Some("alpha"), None, "ledger", None, &Default::default()).unwrap();
+        session::end(&conn, &a, "done", Some("next: backfill"), None).unwrap();
+        age_session(&conn, &a, 30);
+    }
+    let out = assert_cmd::Command::cargo_bin("rememora")
+        .unwrap()
+        .env("REMEMORA_DB", &db)
+        .current_dir(dir.path())
+        .args(["--no-encryption", "context", "--project", "alpha", "--cheatsheet"])
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "{text}");
+    assert!(text.contains("ended 30d ago"), "{text}");
+    assert!(text.contains("- Note: this handoff is 30 days old"), "{text}");
+    assert!(text.contains(format::CONTEXT_GET_HINT), "{text}");
 }

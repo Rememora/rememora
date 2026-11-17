@@ -32,9 +32,6 @@ fn is_rememora_command(cmd: &str) -> bool {
 // `rememora context`/`search`/`save`/`session` itself. One source for every
 // agent, parameterised by agent and project name, wrapped in markers so
 // re-running setup updates it in place.
-//
-// `context --query` comes from a parallel change to `context` and is not on
-// this branch yet; it is documented here deliberately (marked optional).
 // ---------------------------------------------------------------------------
 
 pub const BLOCK_BEGIN: &str = "<!-- rememora:begin (managed by `rememora setup`, edits inside are overwritten) -->";
@@ -45,8 +42,8 @@ const SNIPPET_TEMPLATE: &str = r#"## Rememora: shared memory
 `rememora` is a memory database shared by every coding agent on this machine.
 Nothing runs automatically: you call it yourself, as you work.
 
-1. Start of work: `rememora context --project {project}` (optionally add
-   `--query "<task>"` to rank memories for the task), then
+1. Start of work: `rememora context --project {project} --query "<task>"`
+   (memory lines end with an id; `rememora get <id>` shows one in full), then
    `rememora session start --agent {agent} --project {project} --intent "<goal>"`.
 2. Before non-trivial work, when stuck, or when the user mentions past work:
    `rememora search "<topic>" --project {project}`.
@@ -60,9 +57,9 @@ Nothing runs automatically: you call it yourself, as you work.
    - pattern: a convention or quirk of the code or environment (0.6)
    - entity: where something lives, a service, a key config (0.5)
    Use 0.9 or more only when forgetting it would cause real damage.
-4. When a saved fact changes, save the new fact, then
-   `rememora supersede <old id> --by <new id>`. Never keep two versions.
-5. End of work: `rememora session end-active --project {project} --summary "<what was done>" --working-state "<blockers, next steps>"`.
+4. When a saved fact changes, replace it in one step:
+   `rememora supersede <old id> --text "<new fact>"`. Never keep two versions.
+5. End of work: `rememora session end-active --agent {agent} --project {project} --summary "<what was done>" --working-state "<blockers, next steps>"`.
 
 Do not save secrets, tokens, passwords or personal data, anything the code,
 README or git history already records, or state that only matters today."#;
@@ -947,9 +944,12 @@ mod tests {
     #[test]
     fn snippet_is_short_parameterised_and_has_no_em_dashes() {
         let s = render_snippet(Some("codex"), Some("web"));
-        assert!(s.lines().count() <= 45, "snippet is {} lines", s.lines().count());
+        assert!(s.lines().count() <= 35, "snippet is {} lines", s.lines().count());
         assert!(!s.contains('\u{2014}'), "em dash in snippet");
         assert!(s.contains("--agent codex --project web"));
+        assert!(s.contains("session end-active --agent codex --project web"));
+        assert!(s.contains("supersede <old id> --text \"<new fact>\""));
+        assert!(s.contains("context --project web --query \"<task>\""));
         assert!(!s.contains("{agent}") && !s.contains("{project}"));
         assert!(s.starts_with(BLOCK_BEGIN) && s.trim_end().ends_with(BLOCK_END));
         let generic = render_snippet(None, None);
