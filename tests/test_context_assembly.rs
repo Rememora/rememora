@@ -202,7 +202,9 @@ fn output_never_exceeds_budget_and_reports_usage() {
     let asm = hierarchy::assemble_with(&conn, Some("alpha"), &ContextOptions { query: Some("fact".into()) }).unwrap();
     for n in [5, 40, 120, 300, 600, 1000, 2500] {
         let r = format::render_context(&asm, Some(n));
-        assert!(r.tokens_used <= n, "budget {n} exceeded: {}", r.tokens_used);
+        // Budgets below the fixed floor still get a title and footer line.
+        assert!(r.tokens_used <= n.max(30), "budget {n} exceeded: {}", r.tokens_used);
+        assert!(!r.markdown.is_empty());
         assert_eq!(r.tokens_used, estimate_tokens(&r.markdown));
         if n >= 120 {
             assert!(r.markdown.contains(&format!("_~{} tokens (budget {n})", r.tokens_used)), "{}", r.markdown);
@@ -349,4 +351,33 @@ fn cheatsheet_flags_a_stale_handoff() {
     assert!(text.contains("ended 30d ago"), "{text}");
     assert!(text.contains("- Note: this handoff is 30 days old"), "{text}");
     assert!(text.contains(format::CONTEXT_GET_HINT), "{text}");
+}
+
+#[test]
+fn huge_handoff_and_memory_do_not_starve_other_sections() {
+    let conn = alpha_with_memories(5);
+    mem(&conn, "alpha", "preference", &"enormous memory ".repeat(4000), 0.9);
+    let pref = mem(&conn, "alpha", "preference", "always run clippy", 1.0);
+    let a = session::start(&conn, "claude-code", Some("alpha"), None, "big", None, &Default::default()).unwrap();
+    session::end(&conn, &a, "done", Some(&"x".repeat(60_000)), None).unwrap();
+    let asm = hierarchy::assemble_with(&conn, Some("alpha"), &ContextOptions::default()).unwrap();
+    let r = format::render_context(&asm, Some(2500));
+    assert!(r.tokens_used <= 2500, "{}", r.tokens_used);
+    assert!(r.markdown.contains("## Handoff"));
+    assert!(r.markdown.contains("[truncated, full text: `rememora session resume --project alpha`]"));
+    assert!(r.markdown.contains(&pref), "{}", r.markdown);
+    let shown = r.shown.relevant.len() + r.shown.recent.len() + r.shown.top.len() + r.shown.abstracts.len();
+    assert!(shown >= 3, "{}", r.markdown);
+    let j: serde_json::Value = serde_json::from_str(&format::context_to_json(&asm, Some(2500))).unwrap();
+    let n = ["relevant", "recent", "top", "abstracts"].iter().map(|k| j[k].as_array().unwrap().len()).sum::<usize>();
+    assert_eq!(n, shown);
+}
+
+#[test]
+fn tiny_budget_prints_title_and_footer() {
+    let conn = alpha_with_memories(4);
+    let asm = hierarchy::assemble_with(&conn, Some("alpha"), &ContextOptions::default()).unwrap();
+    let r = format::render_context(&asm, Some(1));
+    assert_eq!(r.markdown, "# Rememora Context: alpha\n_4 memories omitted (budget 1 tokens is too small)._\n");
+    assert_eq!(r.omitted, 4);
 }

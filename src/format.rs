@@ -15,6 +15,14 @@ pub const CONTEXT_TOP_FULL: usize = 10;
 /// Handoffs older than this many days carry an explicit age warning.
 pub const STALE_HANDOFF_DAYS: i64 = 14;
 const CONTEXT_ABSTRACT_LEN: usize = 120;
+/// Most of the budget (percent) the handoff's summary and working state may take.
+const HANDOFF_SHARE_PCT: usize = 40;
+/// Most of the budget (percent) one memory's full text may take.
+const MEMORY_SHARE_PCT: usize = 10;
+/// Shortest cap on one memory's full text, in characters.
+const MEMORY_MIN_CHARS: usize = 200;
+/// Memories always shown (as one-liners if need be) when any exist.
+const CONTEXT_MIN_MEMORIES: usize = 3;
 
 /// The one token estimator `context` uses: characters / 4, rounded up.
 pub fn estimate_tokens(s: &str) -> usize {
@@ -135,6 +143,38 @@ pub fn active_session_line(s: &SessionRecord) -> String {
 /// `STALE_HANDOFF_DAYS`), intent, summary and working state. Shared by
 /// `context` and `context --cheatsheet`.
 pub fn handoff_block(h: &SessionRecord) -> String {
+    handoff_block_capped(h, None)
+}
+
+/// Cut `s` to at most `max` chars on a char boundary, with a visible marker.
+fn cap_text(s: &str, max: usize, marker: &str) -> String {
+    if s.chars().count() <= max {
+        return s.to_string();
+    }
+    let keep = max.saturating_sub(marker.chars().count());
+    let mut out: String = s.chars().take(keep).collect();
+    out.push_str(marker);
+    out
+}
+
+/// `handoff_block` with the summary and working state together cut to
+/// `cap_chars` characters (`None`: no cap).
+fn handoff_block_capped(h: &SessionRecord, cap_chars: Option<usize>) -> String {
+    let (summary, working_state) = match cap_chars {
+        None => (h.summary.clone(), h.working_state.clone()),
+        Some(cap) => {
+            let marker = format!(" [truncated, full text: `rememora session resume --project {}`]", h.project.as_deref().unwrap_or("<project>"));
+            let s_len = h.summary.chars().count();
+            let w_len = h.working_state.chars().count();
+            // Summary gets up to a third; working state gets what is left.
+            let mut s_cap = s_len.min(cap / 3);
+            let w_cap = cap - s_cap;
+            if w_len < w_cap {
+                s_cap = cap - w_len;
+            }
+            (cap_text(&h.summary, s_cap, &marker), cap_text(&h.working_state, w_cap, &marker))
+        }
+    };
     let mut md = String::from("## Handoff\n\n");
     let when = h.ended_at.as_deref().unwrap_or(&h.started_at);
     let age = human_age(when);
@@ -153,11 +193,11 @@ pub fn handoff_block(h: &SessionRecord) -> String {
     if !h.intent.is_empty() {
         md.push_str(&format!("- Intent: {}\n", h.intent));
     }
-    if !h.summary.is_empty() {
-        md.push_str(&format!("- Summary: {}\n", h.summary));
+    if !summary.is_empty() {
+        md.push_str(&format!("- Summary: {summary}\n"));
     }
-    if !h.working_state.is_empty() {
-        md.push_str(&format!("- Working state: {}\n", h.working_state));
+    if !working_state.is_empty() {
+        md.push_str(&format!("- Working state: {working_state}\n"));
     }
     md.push('\n');
     md
@@ -186,11 +226,16 @@ fn full_text(ctx: &ContextRecord) -> &str {
     }
 }
 
-fn full_line(sc: &ScoredContext, global_mode: bool) -> String {
+fn full_line(sc: &ScoredContext, global_mode: bool, cap_chars: Option<usize>) -> String {
+    let text = one_line(full_text(&sc.context));
+    let text = match cap_chars {
+        Some(cap) => cap_text(&text, cap, " [truncated, see `rememora get`]"),
+        None => text,
+    };
     format!(
         "- {} {} `{}`\n",
         memory_tag(sc, global_mode),
-        one_line(full_text(&sc.context)),
+        text,
         sc.context.id
     )
 }
@@ -235,7 +280,11 @@ fn fill_section(b: &mut Budget, heading: &str, lines: &[String]) -> Vec<usize> {
 /// Priority: header, handoff, active sessions, relevant, recent, top memories
 /// in full, then one-line abstracts by score. A footer reports the tokens used
 /// and how many memories were omitted. The whole output never exceeds the
-/// budget; `None` means unlimited.
+/// budget, except that a budget too small for the footer still gets a title
+/// and footer line (`context_floor`); `None` means unlimited. No section may
+/// take the whole budget: the handoff is capped at `HANDOFF_SHARE_PCT`, each
+/// memory at `MEMORY_SHARE_PCT`, and room is held for the first
+/// `CONTEXT_MIN_MEMORIES` memories.
 pub fn render_context(assembly: &ContextAssembly, max_tokens: Option<usize>) -> RenderedContext {
     let global_mode = assembly.project_name.is_none();
     let total = assembly.memory_count();
@@ -244,9 +293,30 @@ pub fn render_context(assembly: &ContextAssembly, max_tokens: Option<usize>) -> 
     let widest = context_footer(max_tokens.unwrap_or(0).max(99_999), max_tokens, total.max(1), true);
     let footer_room = estimate_tokens(&widest) + 1;
     let footer_fits = max_tokens.is_none_or(|n| n > footer_room);
-    if footer_fits && max_tokens.is_some() {
+    if let (false, Some(n)) = (footer_fits, max_tokens) {
+        return context_floor(assembly, n, total);
+    }
+    if max_tokens.is_some() {
         b.reserve = footer_room;
     }
+    let budget_chars = max_tokens.map(|n| n * 4);
+    let memory_cap = budget_chars.map(|c| (c * MEMORY_SHARE_PCT / 100).max(MEMORY_MIN_CHARS));
+    // Hold room for the first few memories as one-liners while the header,
+    // handoff and sessions are placed, so they can never starve them.
+    let guaranteed: Vec<&ScoredContext> = assembly
+        .relevant
+        .iter()
+        .chain(&assembly.recent)
+        .chain(&assembly.ranked)
+        .take(CONTEXT_MIN_MEMORIES)
+        .collect();
+    let memory_reserve = if max_tokens.is_some() && !guaranteed.is_empty() {
+        let lines: String = guaranteed.iter().map(|s| abstract_line(s, global_mode, "")).collect();
+        estimate_tokens(&format!("## Relevant to: x\n\n{lines}\n")) + 2 * guaranteed.len()
+    } else {
+        0
+    };
+    b.reserve += memory_reserve;
 
     // Header, with the project registry row folded in once.
     let mut header = match assembly.project_name {
@@ -273,7 +343,8 @@ pub fn render_context(assembly: &ContextAssembly, max_tokens: Option<usize>) -> 
     b.push_truncated(&header);
 
     if let Some(ref h) = assembly.handoff {
-        b.push_truncated(&handoff_block(h));
+        let cap = budget_chars.map(|c| c * HANDOFF_SHARE_PCT / 100);
+        b.push_truncated(&handoff_block_capped(h, cap));
     }
     if !assembly.active_sessions.is_empty() {
         let lines: Vec<String> = assembly
@@ -284,9 +355,11 @@ pub fn render_context(assembly: &ContextAssembly, max_tokens: Option<usize>) -> 
         fill_section(&mut b, "## Active sessions\n\n", &lines);
     }
 
+    b.reserve -= memory_reserve;
+
     let mut shown = ContextShown::default();
     if let Some(ref q) = assembly.query {
-        let lines: Vec<String> = assembly.relevant.iter().map(|s| full_line(s, global_mode)).collect();
+        let lines: Vec<String> = assembly.relevant.iter().map(|s| full_line(s, global_mode, memory_cap)).collect();
         let src = if assembly.query_from_session { " (from active session)" } else { "" };
         if lines.is_empty() {
             b.try_push(&format!("## Relevant to: {q}{src}\n\nNo matching memories.\n\n"));
@@ -307,7 +380,7 @@ pub fn render_context(assembly: &ContextAssembly, max_tokens: Option<usize>) -> 
     shown.recent = fill_section(&mut b, "## Recent (last 7 days)\n\n", &lines);
 
     let split = assembly.ranked.len().min(CONTEXT_TOP_FULL);
-    let lines: Vec<String> = assembly.ranked[..split].iter().map(|s| full_line(s, global_mode)).collect();
+    let lines: Vec<String> = assembly.ranked[..split].iter().map(|s| full_line(s, global_mode, memory_cap)).collect();
     shown.top = fill_section(&mut b, "## Top memories\n\n", &lines);
     // A top memory that did not fit in full still gets a chance as an abstract.
     let mut tail: Vec<usize> = (0..split).filter(|i| !shown.top.contains(i)).collect();
@@ -331,7 +404,7 @@ pub fn render_context(assembly: &ContextAssembly, max_tokens: Option<usize>) -> 
     }
 
     let mut markdown = b.out;
-    if footer_fits {
+    {
         // Fixed point: the footer states the token count of the output that
         // includes the footer itself.
         let mut used = estimate_tokens(&markdown);
@@ -347,6 +420,23 @@ pub fn render_context(assembly: &ContextAssembly, max_tokens: Option<usize>) -> 
     }
     let tokens_used = estimate_tokens(&markdown);
     RenderedContext { markdown, tokens_used, omitted, shown, max_tokens }
+}
+
+/// Output for a budget too small for anything else: the title line and a
+/// one-line footer, so an empty result is never mistaken for a failure. This
+/// fixed floor (about 20 tokens) may exceed a tiny budget.
+fn context_floor(assembly: &ContextAssembly, n: usize, total: usize) -> RenderedContext {
+    let title = assembly.project_name.as_deref().unwrap_or("Global");
+    let markdown = format!(
+        "# Rememora Context: {title}\n_{total} memories omitted (budget {n} tokens is too small)._\n"
+    );
+    RenderedContext {
+        tokens_used: estimate_tokens(&markdown),
+        markdown,
+        omitted: total,
+        shown: ContextShown::default(),
+        max_tokens: Some(n),
+    }
 }
 
 /// Unbudgeted markdown (kept for callers that want everything).

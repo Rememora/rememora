@@ -33,6 +33,9 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Fixed
 
+- **`rememora context`** no longer lets one section eat the budget: the handoff is capped at about 40% (with a pointer to `rememora session resume`), one memory's text at about 10%, and the top few memories are always shown. A budget too small for anything still prints the title and a footer instead of nothing.
+- **`rememora setup --apply`** collapses duplicate managed blocks into one, keeps the file's CRLF or LF line endings, and leaves a file with an unterminated begin marker untouched with a warning.
+- **`REMEMORA_DB=""`** (or whitespace) is treated as unset instead of opening an empty path and skipping the first-run setup check.
 - **`session end-active` could close another agent's session.** With several agents active on a project it ended the newest session of any agent. It now ends none, lists the candidates and exits non-zero unless `--agent` is given.
 - **Project filters treated `_` and `%` as wildcards.** `list_by_scope` (export, consolidate, evolve), duplicate detection on save, similar-memory hints, timeline, consolidation gating and eval metrics used `LIKE` on the project prefix, so `my_app` also matched `myXapp`. They now compare a literal prefix, as context and search do.
 - `importance` and `category` are validated on save.

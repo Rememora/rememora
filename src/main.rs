@@ -214,7 +214,8 @@ enum Commands {
         #[arg(long)]
         cheatsheet: bool,
 
-        /// Token budget for the output (chars/4 estimate). Default 2500; 0 means unlimited
+        /// Token budget for the output (chars/4 estimate). Default 2500; 0 means unlimited.
+        /// A budget too small for anything still prints a title and footer line (about 20 tokens)
         #[arg(long)]
         max_tokens: Option<usize>,
 
@@ -824,7 +825,7 @@ fn main() -> Result<()> {
     // a missing DB means the user skipped it. An explicit REMEMORA_DB is a
     // deliberate choice (CI, sandboxes, tests), so that path is initialised in
     // place instead of sending the caller off to edit agent config files.
-    if setup_required(db_path.exists(), std::env::var_os("REMEMORA_DB").is_some()) {
+    if setup_required(db_path.exists(), rememora::db::env_db_override().is_some()) {
         anyhow::bail!(
             "Rememora is not set up yet. Run `rememora setup` to get started."
         );
@@ -1311,5 +1312,14 @@ mod tests {
         assert!(setup_required(false, false));
         assert!(!setup_required(false, true), "explicit REMEMORA_DB initialises in place");
         assert!(!setup_required(true, false));
+    }
+
+    #[test]
+    fn blank_rememora_db_counts_as_unset() {
+        use rememora::db::nonblank;
+        assert_eq!(nonblank(Some(String::new())), None);
+        assert_eq!(nonblank(Some("  \t".into())), None);
+        assert_eq!(nonblank(None), None);
+        assert_eq!(nonblank(Some("/tmp/x.db".into())).as_deref(), Some("/tmp/x.db"));
     }
 }

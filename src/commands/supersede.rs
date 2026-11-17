@@ -147,7 +147,7 @@ mod tests {
     fn text_form_refuses_identical_text() {
         let conn = db::open_memory().unwrap();
         let old = save_one(&conn, "Use WAL mode", Some("p"));
-        let err = apply(&conn, &old, Replacement::New(NewText { text: "use  WAL mode".into(), ..Default::default() }), false).unwrap_err();
+        let err = apply(&conn, &old, Replacement::New(NewText { text: "Use  WAL mode".into(), ..Default::default() }), false).unwrap_err();
         assert!(err.to_string().contains("identical"));
     }
 

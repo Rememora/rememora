@@ -73,20 +73,52 @@ pub fn render_snippet(agent: Option<&str>, project: Option<&str>) -> String {
     format!("{BLOCK_BEGIN}\n{body}\n{BLOCK_END}\n")
 }
 
+/// Prefix every managed begin marker starts with, whatever its comment text.
+const BEGIN_PREFIX: &str = "<!-- rememora:begin";
+
+/// The line ending most lines of `s` already use (`\n` for an empty file).
+fn dominant_eol(s: &str) -> &'static str {
+    let crlf = s.matches("\r\n").count();
+    let lf = s.matches('\n').count() - crlf;
+    if crlf > lf { "\r\n" } else { "\n" }
+}
+
 /// Insert or replace the managed block in `existing`, preserving everything
-/// else. Order of preference: replace between markers; replace an unmarked
-/// `## Rememora` section written by older versions (up to the next `## `
-/// heading); otherwise append.
-pub fn upsert_block(existing: &str, block: &str) -> String {
-    if let (Some(start), Some(end_rel)) = (
-        existing.find(BLOCK_BEGIN),
-        existing.find(BLOCK_BEGIN).and_then(|s| existing[s..].find(BLOCK_END)),
-    ) {
-        let mut end = start + end_rel + BLOCK_END.len();
-        if existing[end..].starts_with('\n') {
-            end += 1;
+/// else. Order of preference: replace the first marked block (and drop any
+/// further marked blocks); replace an unmarked `## Rememora` section written
+/// by older versions (up to the next `## ` heading); otherwise append. The
+/// block is written with the file's dominant line ending.
+///
+/// Returns `None` when a begin marker has no matching end marker: the file
+/// is left alone rather than guessing where the block stops.
+pub fn upsert_block(existing: &str, block: &str) -> Option<String> {
+    let eol = dominant_eol(existing);
+    let block = if eol == "\r\n" {
+        block.replace("\r\n", "\n").replace('\n', "\r\n")
+    } else {
+        block.to_string()
+    };
+    if existing.contains(BEGIN_PREFIX) {
+        // Cut every marked block out, remembering where the first one was.
+        let mut out = String::new();
+        let mut first_at = None;
+        let mut rest = existing;
+        while let Some(start) = rest.find(BEGIN_PREFIX) {
+            let end_rel = rest[start..].find(BLOCK_END)?;
+            let mut end = start + end_rel + BLOCK_END.len();
+            if rest[end..].starts_with("\r\n") {
+                end += 2;
+            } else if rest[end..].starts_with('\n') {
+                end += 1;
+            }
+            out.push_str(&rest[..start]);
+            first_at.get_or_insert(out.len());
+            rest = &rest[end..];
         }
-        return format!("{}{}{}", &existing[..start], block, &existing[end..]);
+        out.push_str(rest);
+        let at = first_at.unwrap_or(out.len());
+        out.insert_str(at, &block);
+        return Some(out);
     }
     if let Some(start) = legacy_section_start(existing) {
         let after = start + REMEMORA_MARKER.len();
@@ -95,18 +127,18 @@ pub fn upsert_block(existing: &str, block: &str) -> String {
             .map(|i| after + i + 1)
             .unwrap_or(existing.len());
         let tail = &existing[end..];
-        let sep = if tail.is_empty() { "" } else { "\n" };
-        return format!("{}{}{}{}", &existing[..start], block, sep, tail);
+        let sep = if tail.is_empty() { "" } else { eol };
+        return Some(format!("{}{}{}{}", &existing[..start], block, sep, tail));
     }
     let mut out = existing.to_string();
     if !out.is_empty() {
         if !out.ends_with('\n') {
-            out.push('\n');
+            out.push_str(eol);
         }
-        out.push('\n');
+        out.push_str(eol);
     }
-    out.push_str(block);
-    out
+    out.push_str(&block);
+    Some(out)
 }
 
 fn legacy_section_start(s: &str) -> Option<usize> {
@@ -126,7 +158,7 @@ fn home() -> PathBuf {
 /// `~/.rememora/hooks/`. Used only for one-time cleanup — nothing deploys
 /// scripts here anymore.
 pub fn default_hooks_dir() -> PathBuf {
-    if let Ok(p) = std::env::var("REMEMORA_DB") {
+    if let Some(p) = rememora::db::env_db_override() {
         let db = PathBuf::from(p);
         if let Some(parent) = db.parent() {
             return parent.join("hooks");
@@ -275,7 +307,16 @@ fn cursor_mdc(block: &str) -> String {
 fn planned_content(path: &Path, format: Format, block: &str) -> Result<(String, bool)> {
     let existing = std::fs::read_to_string(path).unwrap_or_default();
     let new = match format {
-        Format::Markdown => upsert_block(&existing, block),
+        Format::Markdown => match upsert_block(&existing, block) {
+            Some(new) => new,
+            None => {
+                eprintln!(
+                    "warning: {} has a `{BEGIN_PREFIX}` marker without `{BLOCK_END}`; left unchanged. Fix the markers by hand and rerun setup.",
+                    path.display()
+                );
+                existing.clone()
+            }
+        },
         Format::CursorMdc => cursor_mdc(block),
     };
     let changed = new != existing;
@@ -961,21 +1002,42 @@ mod tests {
         let a = render_snippet(Some("codex"), None);
         let b = render_snippet(Some("gemini"), None);
         let original = "# Repo\n\nKeep me.\n";
-        let once = upsert_block(original, &a);
+        let once = upsert_block(original, &a).unwrap();
         assert!(once.starts_with(original));
-        assert_eq!(upsert_block(&once, &a), once, "re-running must be a no-op");
+        assert_eq!(upsert_block(&once, &a).unwrap(), once, "re-running must be a no-op");
 
         let with_tail = format!("{once}\n## Later section\nalso keep\n");
-        let updated = upsert_block(&with_tail, &b);
+        let updated = upsert_block(&with_tail, &b).unwrap();
         assert_eq!(updated.matches(BLOCK_BEGIN).count(), 1);
         assert!(updated.contains("--agent gemini") && !updated.contains("--agent codex"));
         assert!(updated.contains("Keep me.") && updated.contains("## Later section\nalso keep"));
     }
 
     #[test]
+    fn upsert_collapses_duplicate_blocks_and_keeps_crlf() {
+        let old = format!("{BLOCK_BEGIN}\r\nold one\r\n{BLOCK_END}\r\n");
+        let old2 = format!("<!-- rememora:begin older -->\r\nold two\r\n{BLOCK_END}\r\n");
+        let existing = format!("# Repo\r\n\r\n{old}\r\nmid\r\n{old2}tail\r\n");
+        let out = upsert_block(&existing, &render_snippet(Some("codex"), None)).unwrap();
+        assert_eq!(out.matches(BEGIN_PREFIX).count(), 1, "{out}");
+        assert_eq!(out.matches(BLOCK_END).count(), 1);
+        assert!(!out.contains("old one") && !out.contains("old two"));
+        assert!(out.starts_with("# Repo\r\n\r\n<!-- rememora:begin"));
+        assert!(out.contains("mid\r\n") && out.ends_with("tail\r\n"));
+        assert_eq!(out.matches('\n').count(), out.matches("\r\n").count(), "mixed endings");
+        assert_eq!(upsert_block(&out, &render_snippet(Some("codex"), None)).unwrap(), out);
+    }
+
+    #[test]
+    fn upsert_leaves_unterminated_block_alone() {
+        let existing = format!("# Repo\n{BLOCK_BEGIN}\nbody\n\n## Mine\nkeep\n");
+        assert!(upsert_block(&existing, &render_snippet(Some("codex"), None)).is_none());
+    }
+
+    #[test]
     fn upsert_replaces_legacy_unmarked_section() {
         let legacy = "intro\n\n## Rememora \u{2014} Cross-Agent Persistent Memory\nold body\n### Sessions\nold\n\n## Mine\nkeep\n";
-        let out = upsert_block(legacy, &render_snippet(Some("codex"), None));
+        let out = upsert_block(legacy, &render_snippet(Some("codex"), None)).unwrap();
         assert!(!out.contains("old body") && !out.contains("Cross-Agent"));
         assert!(out.starts_with("intro\n\n"));
         assert!(out.ends_with("## Mine\nkeep\n"));
