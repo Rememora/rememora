@@ -87,6 +87,10 @@ rememora session end <session-id> \
   --working-state "Need to add biometric auth. Files: src/auth/"
 ```
 
+The database lives at `~/.rememora/rememora.db`. Until it exists, commands ask you to run
+`rememora setup` first. Setting `REMEMORA_DB` to a path skips that check and creates the database
+there, which suits scratch databases, tests and CI.
+
 ## Cross-Agent Transfer
 
 The core use case — seamless handoff between agents:
@@ -109,6 +113,75 @@ rememora session start --agent codex --project myapp \
   --intent "resolve secure storage and finish token refresh" \
   --parent <previous-session-id>
 ```
+
+## Loading Context
+
+`rememora context` is what an agent reads at the start of work. It prints markdown in this
+order, and every memory appears once:
+
+1. A header with the project's description and stack.
+2. **Handoff**: the latest ended or transferred session that left a summary or working state,
+   with its age. A handoff older than 14 days carries a note to check it is still current.
+3. **Active sessions**: who else is working on the project right now.
+4. **Relevant to: \<task\>**: the best search hits for `--query`. Without `--query`, the newest
+   active session's intent is used.
+5. **Recent (last 7 days)**, then **Top memories** in full, then **More memories** as one-line
+   abstracts.
+
+Each memory line ends with its 26-character id rather than its full URI, to keep the output
+cheap. The footer reports the tokens used and how many memories were left out, and says once
+that `rememora get <id>` shows a memory in full.
+
+```bash
+rememora context --project myapp --query "fix the token refresh race"
+rememora context --project myapp --max-tokens 1000   # default budget 2500, 0 for unlimited
+rememora context --project myapp --json              # same sections, with URIs, for scripts
+rememora context --project myapp --cheatsheet        # top 5 memories, handoff, active sessions
+```
+
+## Saving and Replacing Memories
+
+- Saving the exact same text again (ignoring case and whitespace) returns the existing memory's
+  id and exits 0 instead of creating a duplicate.
+- When a live memory in the same scope is similar but not identical, `save` still writes the new
+  one and lists the similar memories on stderr (and under `similar` in `--json`), so you can
+  supersede instead of keeping two versions.
+- Memories whose names share a slug get a short random suffix instead of failing.
+- `--importance` must be between 0 and 1 and `--category` one of the six categories. Saving to an
+  unregistered `--project` prints a warning.
+
+`supersede` takes ids or URIs and has two forms:
+
+```bash
+# One step: save the new fact and link it. Category, project, tags and
+# importance are inherited from the old memory unless you pass them.
+rememora supersede <old-id> --text "Token refresh now runs behind a mutex"
+
+# Link a memory you already saved
+rememora supersede <old-id> --by <new-id>
+```
+
+It refuses to supersede a memory with itself or to create a cycle, needs `--force` to repoint a
+memory that is already superseded, and warns when the two memories are in different projects.
+
+## Search
+
+Plain queries can be written as questions. Stopwords are dropped, a short synonym table covers
+common abbreviations (auth, db, postgres, k8s), words of five or more letters also match as
+prefixes, identifiers such as `snake_case`, `kebab-case`, dotted paths and `--flags` match as
+phrases, and a word with no hits is corrected against the index vocabulary. Results are then
+reranked by how much of the query they cover, how close the terms sit, and a small prior from
+importance and recency. Explicit FTS5 syntax (`"exact phrase"`, `AND`, `NEAR`) is passed through
+as is.
+
+```bash
+rememora search "how do we retry failed webhooks?" --project myapp
+rememora search "webhook retries" --json          # project, overview, timestamps per hit
+rememora search "webhook retries" --json --full   # plus each hit's full content
+```
+
+Searching an unregistered `--project` prints a warning on stderr, and `_` and `%` in project names
+are matched literally.
 
 ## Curation
 
@@ -269,8 +342,21 @@ section is replaced too). Each written file is backed up to `<file>.bak` first.
 For agents without shell access, or any MCP client, `rememora mcp` is a stdio Model Context
 Protocol server over the same database. Tools: `memory_context`, `memory_search`, `memory_save`,
 `memory_get`, `memory_supersede`, `session_start`, `session_end`. Each tool runs the matching
-`rememora` CLI command, so behaviour is identical. `setup` prints the registration for each
-detected agent; it does not edit MCP config files. For example:
+`rememora` CLI command, so behaviour is identical.
+
+- `memory_context` (with optional `query` and `max_tokens`) returns the same markdown as
+  `rememora context`, `memory_search` the compact one-line-per-hit format with ids, and
+  `memory_get` (by `id` or `uri`) the full memory as markdown.
+- `memory_save`, `memory_supersede`, `session_start` and `session_end` return JSON, since their
+  ids are meant to be parsed.
+- `memory_supersede` takes `text` for the one-step replacement, or `by` to link a saved memory.
+- The source agent recorded on saves and sessions is the `agent` argument when given, else the
+  client's `clientInfo.name` from `initialize`, else `mcp`.
+- Under `REMEMORA_READONLY=1` the server still starts and the read tools work; the write tools
+  are refused.
+
+`setup` prints the registration for each detected agent; it does not edit MCP config files. For
+example:
 
 ```bash
 claude mcp add --scope user rememora -- rememora mcp
@@ -312,18 +398,19 @@ app reports "Encryption key not available", run `rememora init` first.
 | `rememora timeline --anchor <uri> [--before N] [--after N]` | Chronological (or hotness-ranked) slice around an anchor |
 | `rememora context --project <name>` | Load full project context (L0 + L1) |
 | `rememora context --auto` | Auto-detect project from cwd |
+| `rememora context --query "<task>" [--max-tokens N]` | Add a section of memories relevant to the task; set the token budget |
 | `rememora context --cheatsheet` | Compact top-5 summary |
-| `rememora get <uri>` | Get specific context by URI |
+| `rememora get <id-or-uri>` | Get one memory in full, by id or URI |
 | `rememora session start` | Start a tracked session |
 | `rememora session end <id>` | End session with summary |
-| `rememora session end-active` | End active session (hook-friendly) |
+| `rememora session end-active [--agent <name>]` | End your active session; with several agents active and no `--agent`, ends none and lists them |
 | `rememora session resume --project <name>` | Show last session state |
 | `rememora session list` | List recent sessions |
 | `rememora project add <name>` | Register a project |
 | `rememora project list` | List all projects |
 | `rememora project show <name>` | Show project details |
 | `rememora project reconcile [--apply]` | Re-home memories filed under project namespaces no project claims (dry run by default) |
-| `rememora supersede <old-id> --by <new-id>` | Replace outdated memory |
+| `rememora supersede <old-id> --text "..."` | Save a replacement and retire the old memory in one step (or `--by <new-id>`) |
 | `rememora relate <uri-a> <uri-b>` | Link two contexts |
 | `rememora extract` | Extract memories from text via LLM |
 | `rememora curate --auto` | Curate memories from session transcripts |
@@ -333,7 +420,8 @@ app reports "Encryption key not available", run `rememora init` first.
 | `rememora dream [--project <name>]` | Manual catch-up: curate + evolve (apply) in one pass |
 | `rememora agent-run --repo X --issue N` | Dispatch issue to Claude CLI |
 | `rememora agent-loop --repo X` | Watch board + auto-dispatch |
-| `rememora setup` | Configure agents to use rememora |
+| `rememora setup [--project-dir <dir>] [--agent-files]` | Configure agents to use rememora |
+| `rememora mcp` | Run the stdio MCP server |
 | `rememora update [--check]` | Check GitHub for a newer release; print upgrade hint |
 | `rememora eval` | DB compliance metrics |
 | `rememora status` | Show DB stats |
@@ -349,9 +437,9 @@ Retrieving a single memory at full fidelity eats tokens fast. Rememora splits re
 ```bash
 # 1. Filter — one line per hit, ~75 tokens each
 rememora search "auth flow" --project myapp --format compact
-# [case] Bug fixed: token refresh race … — rememora://…/bug-fixed-token-refresh-race (rank=-3.82)
-# [decision] Chose JWT over session cookies … — rememora://…/chose-jwt-over-session-cookies  (rank=-3.41)
-# [pattern] Auth middleware composition … — rememora://…/auth-middleware-composition       (rank=-3.05)
+# [case] Bug fixed: token refresh race … — rememora://…/bug-fixed-token-refresh-race (id 01K…, rank=-3.82)
+# [decision] Chose JWT over session cookies … — rememora://…/chose-jwt-over-session-cookies (id 01K…, rank=-3.41)
+# [pattern] Auth middleware composition … — rememora://…/auth-middleware-composition (id 01K…, rank=-3.05)
 
 # 2. Zoom — chronological slice around an anchor to understand what surrounded the decision
 rememora timeline --anchor "rememora://projects/myapp/memories/decision/chose-jwt-over-session-cookies" \
