@@ -69,13 +69,42 @@ pub fn end(conn: &Connection, id: &str, summary: &str, working_state: Option<&st
     Ok(())
 }
 
+/// Show what the next agent should pick up: the latest handoff (ended or
+/// transferred session with a working state or summary), then any sessions
+/// still active. Falls back to the newest session of any kind when nothing has
+/// been handed off yet, so a project with only active rows still prints them.
 pub fn resume(conn: &Connection, project: &str) -> Result<()> {
-    let latest = session::get_latest_for_project(conn, project)?;
-    match latest {
-        Some(s) => print!("{}", format::session_to_markdown(&s)),
-        None => println!("No sessions found for project: {project}"),
-    }
+    let handoff = session::get_latest_handoff(conn, project)?;
+    let active = session::list_active_for_project(conn, project, 10)?;
+    print!("{}", resume_to_markdown(conn, project, handoff.as_ref(), &active)?);
     Ok(())
+}
+
+fn resume_to_markdown(
+    conn: &Connection,
+    project: &str,
+    handoff: Option<&session::SessionRecord>,
+    active: &[session::SessionRecord],
+) -> Result<String> {
+    let mut out = String::new();
+    match handoff {
+        Some(h) => out.push_str(&format::session_to_markdown(h)),
+        None => match session::get_latest_for_project(conn, project)? {
+            Some(s) if active.is_empty() => out.push_str(&format::session_to_markdown(&s)),
+            Some(_) => out.push_str(&format!("No handoff recorded yet for project: {project}\n")),
+            None => {
+                out.push_str(&format!("No sessions found for project: {project}\n"));
+                return Ok(out);
+            }
+        },
+    }
+    if !active.is_empty() {
+        out.push_str("\n## Active sessions\n\n");
+        for a in active {
+            out.push_str(&format!("{}\n", format::active_session_line(a)));
+        }
+    }
+    Ok(out)
 }
 
 pub fn end_active(
@@ -142,10 +171,11 @@ pub fn end_active(
         // Generate from session metadata
         let duration = compute_duration(&sess.started_at);
         if sess.intent.is_empty() {
-            format!("Session ended automatically. Duration: {duration}")
+            format!("{} Duration: {duration}", session::AUTO_SUMMARY_PREFIX)
         } else {
             format!(
-                "Session ended automatically. Intent: {}. Duration: {duration}",
+                "{} Intent: {}. Duration: {duration}",
+                session::AUTO_SUMMARY_PREFIX,
                 sess.intent
             )
         }

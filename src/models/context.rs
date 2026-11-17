@@ -387,6 +387,47 @@ pub fn list_by_scope(conn: &Connection, context_type: Option<&str>, category: Op
     Ok(rows)
 }
 
+/// Every live memory row `context` may rank for a scope, unsorted and uncapped.
+///
+/// - `Some(project)`: the project's memories plus global preferences.
+/// - `None`: every memory in the database (Global mode, issue #104).
+///
+/// Two deliberate differences from `list_by_scope`:
+/// - No `ORDER BY importance ... LIMIT`: pre-sorting by importance and capping
+///   before hotness scoring starved fresh low-importance memories out of the
+///   candidate set. The caller scores in Rust; rows come back in id (ULID)
+///   order so ties stay deterministic.
+/// - The project filter is an exact prefix comparison with `substr`, not
+///   `LIKE`, so `_` and `%` in a project name are literal characters
+///   (`my_app` must not match `myXapp`).
+pub fn list_memories_in_scope(conn: &Connection, project: Option<&str>) -> Result<Vec<ContextRecord>> {
+    const COLS: &str = "SELECT id, uri, parent_uri, context_type, category, name, abstract, overview, content, tags, source_agent, source_session, importance, active_count, created_at, updated_at, superseded_by, worktree, branch
+         FROM contexts WHERE superseded_by IS NULL AND context_type = 'memory'";
+    let rows = match project {
+        Some(proj) => {
+            let prefix = format!("rememora://projects/{proj}/");
+            let sql = format!(
+                "{COLS} AND (substr(uri, 1, length(?1)) = ?1
+                     OR (substr(uri, 1, length(?2)) = ?2 AND category = 'preference'))
+                 ORDER BY id"
+            );
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = stmt
+                .query_map(params![prefix, "rememora://global/"], row_to_context)?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            rows
+        }
+        None => {
+            let mut stmt = conn.prepare(&format!("{COLS} ORDER BY id"))?;
+            let rows = stmt
+                .query_map([], row_to_context)?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            rows
+        }
+    };
+    Ok(rows)
+}
+
 fn row_to_context(row: &rusqlite::Row) -> rusqlite::Result<ContextRecord> {
     Ok(ContextRecord {
         id: row.get(0)?,
