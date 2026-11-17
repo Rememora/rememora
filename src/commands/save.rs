@@ -96,7 +96,7 @@ pub fn save(conn: &Connection, args: &SaveArgs) -> Result<SaveOutcome> {
             content: content.clone(),
             tags,
             source_agent: args.agent.clone(),
-            source_session: resolve_source_session(conn, target.project.as_deref()),
+            source_session: resolve_source_session_for(conn, target.project.as_deref(), args.agent.as_deref()),
             importance: args.importance,
             worktree: target.worktree.clone(),
             branch: target.branch.clone(),
@@ -234,6 +234,28 @@ pub fn resolve_source_session(conn: &Connection, project: Option<&str>) -> Optio
         .map(|s| s.id)
 }
 
+/// `resolve_source_session`, preferring the saving agent's own session.
+///
+/// With several agents active on one project the newest session can belong to
+/// someone else, and crediting a save to it misattributes the memory. When the
+/// caller names its agent and that agent has an active session, use that one;
+/// otherwise fall back to the newest active session as before.
+pub fn resolve_source_session_for(
+    conn: &Connection,
+    project: Option<&str>,
+    agent: Option<&str>,
+) -> Option<String> {
+    if let (Some(p), Some(a)) = (project, agent) {
+        let own = session::list_active_for_project(conn, p, 50)
+            .ok()
+            .and_then(|rows| rows.into_iter().find(|s| s.agent == a));
+        if let Some(s) = own {
+            return Some(s.id);
+        }
+    }
+    resolve_source_session(conn, project)
+}
+
 fn truncate(s: &str, max: usize) -> String {
     if s.len() <= max {
         s.to_string()
@@ -267,6 +289,22 @@ mod tests {
             Some(id),
             "a memory written while a session is open must be attributed to it"
         );
+    }
+
+    /// Two agents active on one project: a save is credited to the saving
+    /// agent's own session, not whichever session started last.
+    #[test]
+    fn prefers_the_saving_agents_own_session() {
+        let conn = db::open_memory().unwrap();
+        let mine = session::start(&conn, "claude-code", Some("myapp"), None, "work", None, &session::Provenance::default()).unwrap();
+        let theirs = session::start(&conn, "codex", Some("myapp"), None, "work", None, &session::Provenance::default()).unwrap();
+
+        assert_eq!(resolve_source_session_for(&conn, Some("myapp"), Some("claude-code")), Some(mine));
+        assert_eq!(resolve_source_session_for(&conn, Some("myapp"), Some("codex")), Some(theirs.clone()));
+        // An agent with no session of its own, or no agent at all, falls back
+        // to the newest active session.
+        assert_eq!(resolve_source_session_for(&conn, Some("myapp"), Some("gemini-cli")), Some(theirs.clone()));
+        assert_eq!(resolve_source_session_for(&conn, Some("myapp"), None), Some(theirs));
     }
 
     /// Attribution is best-effort: no session is a legitimate state, and the

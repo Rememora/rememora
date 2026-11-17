@@ -88,7 +88,7 @@ pub fn unregistered_project_warning(conn: &Connection, resolved: Option<&str>) -
         return None;
     }
     Some(format!(
-        "warning: project '{name}' is not registered, so only global memories can match. \
+        "warning: project '{name}' is not registered, so results may be missing. \
          Run `rememora project list` to see registered names."
     ))
 }

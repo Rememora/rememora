@@ -592,6 +592,7 @@ pub fn search_results_to_json(results: &[SearchResult], full: bool) -> String {
                 "name": r.context.name,
                 "type": r.context.context_type,
                 "category": r.context.category,
+                "source_agent": r.context.source_agent,
                 "abstract": r.context.abstract_text,
                 "overview": r.context.overview,
                 "importance": r.context.importance,
