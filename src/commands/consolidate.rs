@@ -347,7 +347,7 @@ fn is_gate_met(conn: &Connection, project: Option<&str>) -> Result<bool> {
                  WHERE context_type = 'memory'
                    AND superseded_by IS NULL
                    AND created_at > ?1
-                   AND (?2 IS NULL OR uri LIKE 'rememora://projects/' || ?2 || '/%')",
+                   AND (?2 IS NULL OR substr(uri, 1, length('rememora://projects/' || ?2 || '/')) = 'rememora://projects/' || ?2 || '/')",
                 rusqlite::params![completed_at, project],
                 |row| row.get(0),
             )?;

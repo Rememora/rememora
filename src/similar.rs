@@ -98,7 +98,7 @@ pub fn find_similar(
         .collect::<Vec<_>>()
         .join(" OR ");
 
-    let project_prefix = project.map(|p| format!("rememora://projects/{p}/%"));
+    let project_prefix = project.map(|p| format!("rememora://projects/{p}/"));
     let mut stmt = conn.prepare(
         "SELECT c.id, c.name, c.uri, c.content
          FROM contexts_fts f JOIN contexts c ON c.rowid = f.rowid
@@ -106,7 +106,7 @@ pub fn find_similar(
            AND c.context_type = 'memory'
            AND c.superseded_by IS NULL
            AND c.id != ?2
-           AND (c.uri LIKE 'rememora://global/%' OR (?3 IS NOT NULL AND c.uri LIKE ?3))
+           AND (c.uri LIKE 'rememora://global/%' OR (?3 IS NOT NULL AND substr(c.uri, 1, length(?3)) = ?3))
          ORDER BY bm25(contexts_fts)
          LIMIT ?4",
     )?;

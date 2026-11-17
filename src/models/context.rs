@@ -215,11 +215,11 @@ pub fn find_live_duplicate(conn: &Connection, base_uri: &str, content: &str) -> 
     let mut stmt = conn.prepare(
         "SELECT id, uri, parent_uri, context_type, category, name, abstract, overview, content, tags, source_agent, source_session, importance, active_count, created_at, updated_at, superseded_by, worktree, branch
          FROM contexts
-         WHERE (uri = ?1 OR uri LIKE ?2) AND superseded_by IS NULL AND context_type = 'memory'",
+         WHERE (uri = ?1 OR substr(uri, 1, length(?2)) = ?2) AND superseded_by IS NULL AND context_type = 'memory'",
     )?;
     let wanted = normalise_content(content);
     let rows = stmt
-        .query_map(params![base_uri, format!("{base_uri}-%")], row_to_context)?
+        .query_map(params![base_uri, format!("{base_uri}-")], row_to_context)?
         .collect::<std::result::Result<Vec<_>, _>>()?;
     Ok(rows.into_iter().find(|r| normalise_content(&r.content) == wanted))
 }
@@ -369,8 +369,9 @@ pub fn list_by_scope(conn: &Connection, context_type: Option<&str>, category: Op
 
     if let Some(proj) = project {
         let prefix = format!("rememora://projects/{proj}/");
-        sql.push_str(&format!(" AND uri LIKE ?{param_idx}"));
-        param_values.push(Box::new(format!("{prefix}%")));
+        // Literal prefix match: `_` and `%` in a project name are not wildcards.
+        sql.push_str(&format!(" AND substr(uri, 1, length(?{param_idx})) = ?{param_idx}"));
+        param_values.push(Box::new(prefix));
         param_idx += 1;
     }
 

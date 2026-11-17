@@ -101,9 +101,9 @@ fn list_peers(
 
     if let Some(proj) = project {
         sql.push_str(
-            " AND (uri LIKE ?2 OR uri LIKE 'rememora://global/%')",
+            " AND (substr(uri, 1, length(?2)) = ?2 OR uri LIKE 'rememora://global/%')",
         );
-        params.push(Box::new(format!("rememora://projects/{proj}/%")));
+        params.push(Box::new(format!("rememora://projects/{proj}/")));
     } else {
         sql.push_str(" AND uri LIKE 'rememora://global/%'");
     }
