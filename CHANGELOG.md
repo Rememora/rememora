@@ -8,6 +8,10 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- `rememora backup [--to <dir>] [--keep N]` takes a consistent snapshot of the live database (encrypted with the same key when the database is encrypted) with a sha256 manifest. `rememora backup verify <snapshot>` and `rememora backup list` check and list snapshots. (#143)
+- `rememora restore <snapshot> [--dry-run] [--yes]` verifies first and moves the current database aside to `*.pre-restore-<UTC>` instead of deleting it. (#143)
+- `rememora export --all [--out <file>]` writes a complete, versioned JSON dump and `rememora import <file>` loads it idempotently. (#143)
+- `rememora status` shows the newest backup and its age. (#143)
 - **`rememora context --query "<task>"`** adds a "Relevant to" section with the best search hits for the task (search runs without bumping access counts). Without `--query`, the newest active session's intent is used.
 - **`rememora context --max-tokens N`** keeps the output within a token budget (default 2500, 0 for unlimited, estimated as characters / 4). A footer reports the tokens used and how many memories were left out (#146).
 - **`rememora context --json`** emits the same sections as the markdown output.
