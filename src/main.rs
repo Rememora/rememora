@@ -212,13 +212,46 @@ enum Commands {
     },
 
     /// Supersede an old memory with a new one
+    ///
+    /// Either link an existing memory (`--by <id>`) or save replacement text and
+    /// link it in one step (`--text "..."`), inheriting category, project,
+    /// tags and importance from the old memory unless overridden.
+    #[command(group = clap::ArgGroup::new("replacement").required(true).args(["by", "text"]))]
     Supersede {
-        /// Old memory ID
+        /// Old memory ID or rememora:// URI
         old_id: String,
 
-        /// New memory ID
+        /// New memory ID or rememora:// URI
         #[arg(long)]
-        by: String,
+        by: Option<String>,
+
+        /// Save this text as the replacement and link it
+        #[arg(long)]
+        text: Option<String>,
+
+        /// With --text: category (default: the old memory's)
+        #[arg(long, requires = "text")]
+        category: Option<String>,
+
+        /// With --text: project scope (default: the old memory's)
+        #[arg(long, requires = "text")]
+        project: Option<String>,
+
+        /// With --text: importance 0.0-1.0 (default: the old memory's)
+        #[arg(long, requires = "text")]
+        importance: Option<f64>,
+
+        /// With --text: tags as JSON array (default: the old memory's)
+        #[arg(long, requires = "text")]
+        tags: Option<String>,
+
+        /// With --text: source agent
+        #[arg(long, requires = "text")]
+        agent: Option<String>,
+
+        /// Repoint a memory that is already superseded
+        #[arg(long)]
+        force: bool,
     },
 
     /// Session management
@@ -722,6 +755,11 @@ enum ProjectAction {
     },
 }
 
+/// Whether the first-run gate should stop this invocation.
+fn setup_required(db_exists: bool, db_path_explicit: bool) -> bool {
+    !db_exists && !db_path_explicit
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
@@ -743,8 +781,12 @@ fn main() -> Result<()> {
         _ => {}
     }
 
-    // First-run gate: require setup before any other command
-    if !db_path.exists() {
+    // First-run gate: require setup before any other command. `setup` is what
+    // creates the encryption key and wires agent hooks, so on the default path
+    // a missing DB means the user skipped it. An explicit REMEMORA_DB is a
+    // deliberate choice (CI, sandboxes, tests), so that path is initialised in
+    // place instead of sending the caller off to edit agent config files.
+    if setup_required(db_path.exists(), std::env::var_os("REMEMORA_DB").is_some()) {
         anyhow::bail!(
             "Rememora is not set up yet. Run `rememora setup` to get started."
         );
@@ -775,6 +817,7 @@ fn main() -> Result<()> {
                 abstract_text,
                 overview,
                 content_text: content,
+                project_is_canonical: false,
             },
             cli.json,
         ),
@@ -835,8 +878,14 @@ fn main() -> Result<()> {
 
         Commands::Get { uri } => commands::get::run(&conn, &uri, cli.json),
 
-        Commands::Supersede { old_id, by } => {
-            commands::supersede::run(&conn, &old_id, &by, cli.json)
+        Commands::Supersede { old_id, by, text, category, project, importance, tags, agent, force } => {
+            use commands::supersede::{NewText, Replacement};
+            let replacement = match (by, text) {
+                (Some(by), _) => Replacement::Existing(by),
+                (None, Some(text)) => Replacement::New(NewText { text, category, project, importance, tags, agent }),
+                (None, None) => unreachable!("clap requires --by or --text"),
+            };
+            commands::supersede::run(&conn, &old_id, replacement, force, cli.json)
         }
 
         Commands::Session { action } => match action {
@@ -1199,5 +1248,12 @@ mod tests {
             "tests must not run with {READONLY_ENV} set"
         );
         assert!(readonly_refusal(&command_of(&["save", "x", "--category", "decision"])).is_none());
+    }
+
+    #[test]
+    fn setup_gate_only_applies_to_the_default_path() {
+        assert!(setup_required(false, false));
+        assert!(!setup_required(false, true), "explicit REMEMORA_DB initialises in place");
+        assert!(!setup_required(true, false));
     }
 }

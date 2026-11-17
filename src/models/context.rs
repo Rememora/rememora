@@ -165,6 +165,158 @@ pub fn supersede(conn: &Connection, old_id: &str, new_id: &str) -> Result<()> {
     Ok(())
 }
 
+/// The six memory categories the schema's CHECK constraint allows.
+pub const CATEGORIES: &[&str] = &["preference", "entity", "decision", "event", "case", "pattern"];
+
+/// Reject a category the schema would refuse, with a message that lists the
+/// valid ones instead of SQLite's raw `CHECK constraint failed`.
+pub fn validate_category(category: &str) -> Result<()> {
+    if !CATEGORIES.contains(&category) {
+        bail!(
+            "Invalid category '{category}'. Valid categories: {}",
+            CATEGORIES.join(", ")
+        );
+    }
+    Ok(())
+}
+
+/// Reject an importance outside 0.0..=1.0. Ranking multiplies by it, so an
+/// unchecked `--importance 7` silently outranked every other memory.
+pub fn validate_importance(importance: f64) -> Result<()> {
+    if !(0.0..=1.0).contains(&importance) {
+        bail!("Invalid importance {importance}: must be between 0.0 and 1.0");
+    }
+    Ok(())
+}
+
+/// Look a memory up by ULID or by `rememora://` URI.
+pub fn resolve_ref(conn: &Connection, reference: &str) -> Result<Option<ContextRecord>> {
+    if reference.starts_with("rememora://") {
+        get_by_uri(conn, reference)
+    } else {
+        get_by_id(conn, reference)
+    }
+}
+
+/// Whitespace-collapsed, lowercased text, for exact-duplicate comparison.
+pub fn normalise_content(text: &str) -> String {
+    text.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
+/// A live memory under `base_uri` (or a suffixed sibling of it) whose content
+/// matches `content` once normalised.
+///
+/// An exact duplicate always slugifies to the same base URI, so this only has
+/// to look at that URI and its `-<suffix>` siblings, both indexed lookups.
+pub fn find_live_duplicate(conn: &Connection, base_uri: &str, content: &str) -> Result<Option<ContextRecord>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, uri, parent_uri, context_type, category, name, abstract, overview, content, tags, source_agent, source_session, importance, active_count, created_at, updated_at, superseded_by, worktree, branch
+         FROM contexts
+         WHERE (uri = ?1 OR uri LIKE ?2) AND superseded_by IS NULL AND context_type = 'memory'",
+    )?;
+    let wanted = normalise_content(content);
+    let rows = stmt
+        .query_map(params![base_uri, format!("{base_uri}-%")], row_to_context)?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    Ok(rows.into_iter().find(|r| normalise_content(&r.content) == wanted))
+}
+
+/// `base_uri` if no row holds it, otherwise `base_uri` plus a short random
+/// suffix. Different memories that share their first 60 characters used to
+/// collide on the UNIQUE `uri` column and fail the save outright.
+pub fn unique_uri(conn: &Connection, base_uri: &str) -> Result<String> {
+    let taken = |uri: &str| -> Result<bool> {
+        Ok(conn
+            .query_row("SELECT 1 FROM contexts WHERE uri = ?1", params![uri], |_| Ok(()))
+            .optional()?
+            .is_some())
+    };
+    if !taken(base_uri)? {
+        return Ok(base_uri.to_string());
+    }
+    loop {
+        // The low bits of a ULID are random; eight base32 chars is plenty.
+        let ulid = ulid::Ulid::new().to_string().to_lowercase();
+        let candidate = format!("{base_uri}-{}", &ulid[ulid.len() - 8..]);
+        if !taken(&candidate)? {
+            return Ok(candidate);
+        }
+    }
+}
+
+/// What `supersede_checked` did, for the caller to report.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SupersedeOutcome {
+    pub old_id: String,
+    pub new_id: String,
+    /// The successor the old memory pointed at before `--force` replaced it.
+    pub replaced_successor: Option<String>,
+    /// `(old project, new project)` when they differ; `None` is global scope.
+    pub cross_project: Option<(Option<String>, Option<String>)>,
+}
+
+/// `supersede` with the guards the bare UPDATE never had.
+///
+/// Refuses a self-supersede and a cycle (either would hide memories from every
+/// live query with nothing live left to show for them), and refuses to repoint
+/// an already superseded memory unless `force`, since that silently orphans the
+/// successor it already had.
+pub fn supersede_checked(conn: &Connection, old_ref: &str, new_ref: &str, force: bool) -> Result<SupersedeOutcome> {
+    let Some(old) = resolve_ref(conn, old_ref)? else {
+        bail!("Old memory not found: {old_ref}");
+    };
+    let Some(new) = resolve_ref(conn, new_ref)? else {
+        bail!("New memory not found: {new_ref}");
+    };
+    if old.id == new.id {
+        bail!("Cannot supersede a memory by itself: {}", old.id);
+    }
+
+    // Walk the new memory's successor chain. Reaching `old` means linking
+    // old -> new would close a loop.
+    let mut cursor = new.superseded_by.clone();
+    let mut seen = std::collections::HashSet::new();
+    while let Some(id) = cursor {
+        if id == old.id {
+            bail!(
+                "Refusing to create a supersede cycle: {} is already superseded (directly or transitively) by {}",
+                new.id,
+                old.id
+            );
+        }
+        if !seen.insert(id.clone()) {
+            break;
+        }
+        cursor = get_by_id(conn, &id)?.and_then(|c| c.superseded_by);
+    }
+
+    if let Some(existing) = &old.superseded_by {
+        if existing != &new.id && !force {
+            bail!(
+                "{} is already superseded by {existing}. Pass --force to point it at {} instead",
+                old.id,
+                new.id
+            );
+        }
+    }
+
+    let old_project = crate::uri::extract_project(&old.uri);
+    let new_project = crate::uri::extract_project(&new.uri);
+    let cross_project = (old_project != new_project).then_some((old_project, new_project));
+
+    supersede(conn, &old.id, &new.id)?;
+
+    Ok(SupersedeOutcome {
+        replaced_successor: old.superseded_by.filter(|s| s != &new.id),
+        old_id: old.id,
+        new_id: new.id,
+        cross_project,
+    })
+}
+
 /// Record a retrieval: increment `active_count` and stamp `last_accessed_at`.
 ///
 /// Deliberately does **not** touch `updated_at` — that column means "when the

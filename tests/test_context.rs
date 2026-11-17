@@ -258,3 +258,60 @@ fn test_duplicate_uri_fails() {
     context::insert(&conn, &input).unwrap();
     assert!(context::insert(&conn, &input).is_err());
 }
+
+fn live(conn: &rusqlite::Connection, uri: &str) -> String {
+    context::insert(conn, &make_test_insert(uri, uri)).unwrap()
+}
+
+#[test]
+fn supersede_checked_accepts_ids_and_uris() {
+    let conn = common::create_test_db();
+    let a = live(&conn, "rememora://projects/test/memories/decision/a");
+    let b = live(&conn, "rememora://projects/test/memories/decision/b");
+    let out = context::supersede_checked(&conn, "rememora://projects/test/memories/decision/a", &b, false).unwrap();
+    assert_eq!((out.old_id.as_str(), out.new_id.as_str()), (a.as_str(), b.as_str()));
+    assert!(out.cross_project.is_none());
+}
+
+#[test]
+fn supersede_checked_rejects_self() {
+    let conn = common::create_test_db();
+    let a = live(&conn, "rememora://projects/test/memories/decision/a");
+    let err = context::supersede_checked(&conn, &a, &a, false).unwrap_err();
+    assert!(err.to_string().contains("by itself"));
+}
+
+#[test]
+fn supersede_checked_rejects_cycles() {
+    let conn = common::create_test_db();
+    let a = live(&conn, "rememora://projects/test/memories/decision/a");
+    let b = live(&conn, "rememora://projects/test/memories/decision/b");
+    let c = live(&conn, "rememora://projects/test/memories/decision/c");
+    context::supersede_checked(&conn, &a, &b, false).unwrap();
+    context::supersede_checked(&conn, &b, &c, false).unwrap();
+    let err = context::supersede_checked(&conn, &c, &a, false).unwrap_err();
+    assert!(err.to_string().contains("cycle"));
+}
+
+#[test]
+fn supersede_checked_needs_force_to_repoint() {
+    let conn = common::create_test_db();
+    let a = live(&conn, "rememora://projects/test/memories/decision/a");
+    let b = live(&conn, "rememora://projects/test/memories/decision/b");
+    let c = live(&conn, "rememora://projects/test/memories/decision/c");
+    context::supersede_checked(&conn, &a, &b, false).unwrap();
+    let err = context::supersede_checked(&conn, &a, &c, false).unwrap_err();
+    assert!(err.to_string().contains("--force"));
+    let out = context::supersede_checked(&conn, &a, &c, true).unwrap();
+    assert_eq!(out.replaced_successor, Some(b));
+    assert_eq!(context::get_by_id(&conn, &a).unwrap().unwrap().superseded_by, Some(c));
+}
+
+#[test]
+fn supersede_checked_flags_cross_project() {
+    let conn = common::create_test_db();
+    let a = live(&conn, "rememora://projects/one/memories/decision/a");
+    let b = live(&conn, "rememora://global/memories/decision/b");
+    let out = context::supersede_checked(&conn, &a, &b, false).unwrap();
+    assert_eq!(out.cross_project, Some((Some("one".into()), None)));
+}

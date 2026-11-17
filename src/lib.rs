@@ -11,6 +11,7 @@ pub mod jsonl_codex;
 pub mod models;
 pub mod propagate;
 pub mod search;
+pub mod similar;
 pub mod timeline;
 pub mod update_check;
 pub mod uri;
