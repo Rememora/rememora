@@ -418,7 +418,7 @@ fn load_kinds(path: &PathBuf) -> Vec<String> {
 fn hard_set_report() {
     let t0 = std::time::Instant::now();
     let corpus = fixture_dir().join("corpus-hard.jsonl");
-    let golden_path = fixture_dir().join("golden-hard.jsonl");
+    let golden_path = path_from_env("REMEMORA_EVAL_HARD_GOLDEN", "golden-hard.jsonl");
     let (conn, ids) = load_corpus_full(&corpus);
     let golden = load_golden(&golden_path);
     let kinds = load_kinds(&golden_path);
