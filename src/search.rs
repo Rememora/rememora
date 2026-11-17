@@ -720,7 +720,8 @@ fn fetch_candidates(
          FROM contexts_fts
          JOIN contexts c ON c.rowid = contexts_fts.rowid
          WHERE contexts_fts MATCH ?1
-         AND c.superseded_by IS NULL",
+         AND c.superseded_by IS NULL
+         AND c.context_type != 'project'",
     );
 
     let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();

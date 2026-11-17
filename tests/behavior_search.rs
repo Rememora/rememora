@@ -640,3 +640,19 @@ fn json_hits_carry_fields_needed_without_a_get() {
         serde_json::from_str(&rememora::format::search_results_to_json(&results, true)).unwrap();
     assert_eq!(full[0]["content"], "the content body");
 }
+
+
+/// The project registry row lives in `contexts` too. It is not a memory and
+/// must not come back as a search hit for the project's own name.
+#[test]
+fn project_registry_row_is_not_a_search_hit() {
+    let conn = rememora::db::open_memory().unwrap();
+    conn.execute(
+        "INSERT INTO contexts (id, uri, context_type, name, abstract, overview, content, tags, importance, active_count, created_at, updated_at)
+         VALUES ('P1', 'rememora://projects/shopapi', 'project', 'shopapi', 'Project: shopapi', '', '', '[]', 1.0, 0, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+        [],
+    )
+    .unwrap();
+    let hits = rememora::search::search(&conn, "shopapi", Some("shopapi"), None, 10).unwrap();
+    assert!(hits.is_empty(), "registry row leaked into search results");
+}
