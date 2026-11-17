@@ -203,6 +203,14 @@ enum Commands {
         /// Compact cheatsheet: top-5 memories + working state + warnings
         #[arg(long)]
         cheatsheet: bool,
+
+        /// Token budget for the output (chars/4 estimate). Default 2500; 0 means unlimited
+        #[arg(long)]
+        max_tokens: Option<usize>,
+
+        /// What you are about to do: adds a "Relevant to" section of matching memories
+        #[arg(long)]
+        query: Option<String>,
     },
 
     /// Get a specific context by URI
@@ -829,8 +837,18 @@ fn main() -> Result<()> {
             )
         }
 
-        Commands::Context { project, auto, cheatsheet } => {
-            commands::context::run(&conn, project.as_deref(), auto, cheatsheet)
+        Commands::Context { project, auto, cheatsheet, max_tokens, query } => {
+            commands::context::run(
+                &conn,
+                &commands::context::ContextArgs {
+                    project: project.as_deref(),
+                    auto,
+                    cheatsheet,
+                    max_tokens,
+                    query: query.as_deref(),
+                    json: cli.json,
+                },
+            )
         }
 
         Commands::Get { uri } => commands::get::run(&conn, &uri, cli.json),
