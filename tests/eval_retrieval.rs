@@ -359,3 +359,111 @@ fn worktree_basename_project_destroys_precision() {
         bad.r_at_3
     );
 }
+
+// ---------------------------------------------------------------------------
+// Hard set: larger, adversarial fixture pair (corpus-hard.jsonl +
+// golden-hard.jsonl). Written before ranker changes as a measuring stick.
+// Reports only, with one loose floor; raise it as ranking work lands.
+// ---------------------------------------------------------------------------
+
+/// Like `load_corpus`, but also carries the hard corpus's active_count,
+/// created/updated timestamps and superseded_by links into the DB.
+fn load_corpus_full(path: &PathBuf) -> (Connection, HashSet<String>) {
+    let conn = load_corpus(path);
+    let raw = std::fs::read_to_string(path).expect("corpus");
+    let mut ids = HashSet::new();
+    for line in raw.lines().filter(|l| !l.trim().is_empty()) {
+        let v: serde_json::Value = serde_json::from_str(line).expect("corpus row");
+        let id = v["id"].as_str().expect("id").to_string();
+        assert!(ids.insert(id.clone()), "duplicate corpus id {id}");
+        conn.execute(
+            "UPDATE contexts SET active_count = ?2, created_at = ?3, updated_at = ?4 WHERE id = ?1",
+            rusqlite::params![
+                id,
+                v["active_count"].as_i64().unwrap_or(0),
+                v["created_at"].as_str(),
+                v["updated_at"].as_str(),
+            ],
+        )
+        .expect("update corpus row");
+        if let Some(s) = v["superseded_by"].as_str() {
+            conn.execute(
+                "UPDATE contexts SET superseded_by = ?2 WHERE id = ?1",
+                rusqlite::params![id, s],
+            )
+            .expect("set superseded_by");
+        }
+    }
+    (conn, ids)
+}
+
+fn load_kinds(path: &PathBuf) -> Vec<String> {
+    std::fs::read_to_string(path)
+        .expect("golden")
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| {
+            let v: serde_json::Value = serde_json::from_str(l).expect("golden row");
+            v["metadata"]["kind"].as_str().unwrap_or("?").to_string()
+        })
+        .collect()
+}
+
+#[test]
+fn hard_set_report() {
+    let t0 = std::time::Instant::now();
+    let corpus = fixture_dir().join("corpus-hard.jsonl");
+    let golden_path = fixture_dir().join("golden-hard.jsonl");
+    let (conn, ids) = load_corpus_full(&corpus);
+    let golden = load_golden(&golden_path);
+    let kinds = load_kinds(&golden_path);
+    assert_eq!(kinds.len(), golden.len());
+
+    let mut qids = HashSet::new();
+    for g in &golden {
+        assert!(qids.insert(g.id.clone()), "duplicate query id {}", g.id);
+        assert!(!g.relevant.is_empty(), "{} has no relevant ids", g.id);
+        for r in &g.relevant {
+            assert!(ids.contains(r), "{}: relevant id {r} not in corpus", g.id);
+        }
+    }
+
+    let mut overall = Metrics::default();
+    let mut per_kind: std::collections::BTreeMap<String, Metrics> = Default::default();
+    let mut misses_at_1 = 0;
+    for (g, kind) in golden.iter().zip(&kinds) {
+        let ranked = arm_bm25_project(&conn, g);
+        overall.add(&ranked, &g.relevant);
+        per_kind.entry(kind.clone()).or_default().add(&ranked, &g.relevant);
+        // "Trivially solved" = a relevant hit at rank 1 and every relevant id in the top 5.
+        let top5 = ranked.iter().take(5).filter(|d| g.relevant.contains(d)).count();
+        if !ranked.first().is_some_and(|d| g.relevant.contains(d)) || top5 < g.relevant.len() {
+            misses_at_1 += 1;
+            if std::env::var("REMEMORA_EVAL_VERBOSE").is_ok() {
+                println!("  not solved: {} [{kind}] {:?}", g.id, g.query);
+            }
+        }
+    }
+    let m = overall.mean();
+    println!(
+        "{:28}  n={:>3}  R@1={:.3} R@3={:.3} R@5={:.3} R@10={:.3}  P@3={:.3}  MRR={:.3}  nDCG@10={:.3}",
+        "hard: bm25 (correct project)",
+        m.n as i64, m.r_at_1, m.r_at_3, m.r_at_5, m.r_at_10, m.p_at_3, m.mrr, m.ndcg_at_10
+    );
+    println!("\n{:14} {:>3}  {:>6} {:>6} {:>6} {:>8}", "kind", "n", "R@1", "R@5", "MRR", "nDCG@10");
+    for (k, km) in &per_kind {
+        let x = km.mean();
+        println!(
+            "{k:14} {:>3}  {:>6.3} {:>6.3} {:>6.3} {:>8.3}",
+            x.n as i64, x.r_at_1, x.r_at_5, x.mrr, x.ndcg_at_10
+        );
+    }
+    println!(
+        "\nqueries not trivially solved (rank-1 miss or a relevant id outside top 5): {misses_at_1}/{}  ({:.1}ms total)",
+        golden.len(),
+        t0.elapsed().as_secs_f64() * 1000.0
+    );
+
+    // Loose floor only; raise deliberately when ranking work lands.
+    assert!(m.mrr >= 0.30, "hard-set MRR regressed: {:.3} < 0.30", m.mrr);
+}
