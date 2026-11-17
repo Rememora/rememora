@@ -41,6 +41,8 @@ pub struct SearchArgs {
     /// Working directory to resolve the project from when `--project` is absent.
     /// Hooks pass the session cwd here; the CLI falls back to the process cwd.
     pub cwd: Option<String>,
+    /// Include each hit's full content in `--json` output.
+    pub full: bool,
 }
 
 /// Project to filter on: an explicit `--project` wins, otherwise resolve from
@@ -77,8 +79,27 @@ fn effective_project(conn: &Connection, args: &SearchArgs) -> Option<String> {
     project::resolve_for_cwd(conn, &cwd).ok().flatten()
 }
 
+/// Warning for an explicit `--project` that names no registered project, or
+/// `None` when the name is fine. The filter is a hard URI prefix, so such a
+/// search can only return global memories; say so instead of failing quietly.
+pub fn unregistered_project_warning(conn: &Connection, resolved: Option<&str>) -> Option<String> {
+    let name = resolved?;
+    if project::registered_name(conn, name).is_some() {
+        return None;
+    }
+    Some(format!(
+        "warning: project '{name}' is not registered, so only global memories can match. \
+         Run `rememora project list` to see registered names."
+    ))
+}
+
 pub fn run(conn: &Connection, args: &SearchArgs, json: bool) -> Result<()> {
     let project = effective_project(conn, args);
+    if args.project.is_some() {
+        if let Some(w) = unregistered_project_warning(conn, project.as_deref()) {
+            eprintln!("{w}");
+        }
+    }
 
     let results = if args.propagate {
         let config = PropagationConfig {
@@ -104,7 +125,7 @@ pub fn run(conn: &Connection, args: &SearchArgs, json: bool) -> Result<()> {
     };
 
     if json {
-        println!("{}", format::search_results_to_json(&results));
+        println!("{}", format::search_results_to_json(&results, args.full));
     } else {
         match args.format {
             SearchFormat::Full => print!("{}", format::search_results_to_markdown(&results)),
@@ -114,4 +135,21 @@ pub fn run(conn: &Connection, args: &SearchArgs, json: bool) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn warns_only_for_an_unregistered_project() {
+        let conn = rememora::db::open_memory().unwrap();
+        project::add(&conn, "known", Some("/tmp/known"), "", &[]).unwrap();
+
+        assert!(unregistered_project_warning(&conn, Some("known")).is_none());
+        assert!(unregistered_project_warning(&conn, Some("KNOWN")).is_none());
+        assert!(unregistered_project_warning(&conn, None).is_none());
+        let w = unregistered_project_warning(&conn, Some("worktree-feat-x")).unwrap();
+        assert!(w.contains("worktree-feat-x") && w.contains("not registered"), "{w}");
+    }
 }

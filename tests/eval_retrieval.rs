@@ -329,17 +329,22 @@ fn retrieval_quality_meets_floor() {
     );
     write_rows(&rows);
 
-    // Regression floors — raise these deliberately when a ranking change lands.
-    assert!(
-        baseline.r_at_3 >= 0.60,
-        "recall@3 regressed: {:.3} < 0.60",
-        baseline.r_at_3
-    );
-    assert!(
-        baseline.mrr >= 0.70,
-        "MRR regressed: {:.3} < 0.70",
-        baseline.mrr
-    );
+    // Regression floors, set just below the current numbers. Raise them
+    // deliberately when a ranking change lands. They gate only the committed
+    // synthetic fixture; an operator-supplied corpus reports without gating.
+    if std::env::var("REMEMORA_EVAL_CORPUS").is_err() {
+        assert!(
+            baseline.r_at_3 >= 0.80,
+            "recall@3 regressed: {:.3} < 0.80",
+            baseline.r_at_3
+        );
+        assert!(baseline.mrr >= 0.98, "MRR regressed: {:.3} < 0.98", baseline.mrr);
+        assert!(
+            baseline.ndcg_at_10 >= 0.90,
+            "nDCG@10 regressed: {:.3} < 0.90",
+            baseline.ndcg_at_10
+        );
+    }
 }
 
 /// The failure the founder actually experiences: from a git worktree the hook
@@ -431,6 +436,7 @@ fn hard_set_report() {
     let mut overall = Metrics::default();
     let mut per_kind: std::collections::BTreeMap<String, Metrics> = Default::default();
     let mut misses_at_1 = 0;
+    let t_search = std::time::Instant::now();
     for (g, kind) in golden.iter().zip(&kinds) {
         let ranked = arm_bm25_project(&conn, g);
         overall.add(&ranked, &g.relevant);
@@ -444,6 +450,7 @@ fn hard_set_report() {
             }
         }
     }
+    let search_ms = t_search.elapsed().as_secs_f64() * 1000.0;
     let m = overall.mean();
     println!(
         "{:28}  n={:>3}  R@1={:.3} R@3={:.3} R@5={:.3} R@10={:.3}  P@3={:.3}  MRR={:.3}  nDCG@10={:.3}",
@@ -459,11 +466,33 @@ fn hard_set_report() {
         );
     }
     println!(
-        "\nqueries not trivially solved (rank-1 miss or a relevant id outside top 5): {misses_at_1}/{}  ({:.1}ms total)",
+        "\nqueries not trivially solved (rank-1 miss or a relevant id outside top 5): {misses_at_1}/{}  ({:.1}ms total, {:.2}ms/query)",
         golden.len(),
-        t0.elapsed().as_secs_f64() * 1000.0
+        t0.elapsed().as_secs_f64() * 1000.0,
+        search_ms / golden.len() as f64
     );
 
-    // Loose floor only; raise deliberately when ranking work lands.
-    assert!(m.mrr >= 0.30, "hard-set MRR regressed: {:.3} < 0.30", m.mrr);
+    // Floors just below the current numbers; raise deliberately when ranking
+    // work lands. Per-kind floors keep a gain on one kind from hiding a loss
+    // on another.
+    let floor = |name: &str, got: f64, min: f64| {
+        assert!(got >= min, "hard-set {name} regressed: {got:.3} < {min:.2}");
+    };
+    floor("MRR", m.mrr, 0.82);
+    floor("R@1", m.r_at_1, 0.62);
+    floor("R@5", m.r_at_5, 0.84);
+    floor("nDCG@10", m.ndcg_at_10, 0.82);
+    floor("R@10", m.r_at_10, 0.90);
+    for (kind, min_mrr) in [
+        ("identifier", 0.99),
+        ("distractor", 0.95),
+        ("cross_project", 0.99),
+        ("typo", 0.99),
+        ("keyword", 0.85),
+        ("natural", 0.57),
+        ("paraphrase", 0.37),
+    ] {
+        let km = per_kind.get(kind).map(Metrics::mean).unwrap_or_default();
+        floor(&format!("{kind} MRR"), km.mrr, min_mrr);
+    }
 }
