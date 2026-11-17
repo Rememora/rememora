@@ -198,12 +198,13 @@ pub fn resolve_ref(conn: &Connection, reference: &str) -> Result<Option<ContextR
     }
 }
 
-/// Whitespace-collapsed, lowercased text, for exact-duplicate comparison.
+/// Whitespace-collapsed text, for exact-duplicate comparison.
+///
+/// Case is kept on purpose: "Use ID not id" and "use id not ID" are different
+/// facts, and a save that is dropped as a duplicate is lost for good. Texts
+/// that differ only in case still get the near-duplicate hint.
 pub fn normalise_content(text: &str) -> String {
-    text.split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .to_lowercase()
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// A live memory under `base_uri` (or a suffixed sibling of it) whose content

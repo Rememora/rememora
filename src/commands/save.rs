@@ -367,10 +367,22 @@ mod tests {
     fn exact_duplicate_returns_the_existing_id() {
         let conn = db::open_memory().unwrap();
         let first = save(&conn, &args("Use WAL mode for SQLite")).unwrap();
-        let again = save(&conn, &args("use WAL  mode for sqlite")).unwrap();
+        let again = save(&conn, &args("Use WAL  mode for  SQLite")).unwrap();
         assert!(first.created);
         assert!(!again.created);
         assert_eq!(again.id, first.id);
+    }
+
+    /// Case can carry the meaning. Two texts that differ only in case are
+    /// both kept, and the second is flagged as similar instead of dropped.
+    #[test]
+    fn case_only_difference_is_not_a_duplicate() {
+        let conn = db::open_memory().unwrap();
+        let first = save(&conn, &args("Use ID not id in the public API field names")).unwrap();
+        let second = save(&conn, &args("use id not ID in the public API field names")).unwrap();
+        assert!(second.created);
+        assert_ne!(second.id, first.id);
+        assert!(second.similar.iter().any(|m| m.id == first.id));
     }
 
     /// A duplicate in another category is a different memory, not a retry.
