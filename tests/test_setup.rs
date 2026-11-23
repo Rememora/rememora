@@ -263,3 +263,69 @@ fn setup_apply_strips_stale_rememora_hooks_from_existing_settings_json() {
         hooks_dir.display(),
     );
 }
+
+fn setup_cmd(home_path: &std::path::Path, bin_dir: &std::path::Path) -> Command {
+    let mut cmd = Command::cargo_bin("rememora").expect("binary built");
+    cmd.env("REMEMORA_TEST_NO_KEYCHAIN", "1")
+        .env("REMEMORA_NO_UPDATE_CHECK", "1")
+        .env("HOME", home_path)
+        .env("REMEMORA_DB", home_path.join(".rememora").join("rememora.db"))
+        .env("PATH", format!("{}:/usr/bin:/bin", bin_dir.display()))
+        .env_remove("CODEX_HOME")
+        .env_remove("COPILOT_HOME")
+        .env_remove("CI")
+        .arg("setup");
+    cmd
+}
+
+/// Project mode writes a marked block into AGENTS.md, is idempotent, keeps
+/// the rest of the file, and never touches global agent files.
+#[test]
+fn setup_project_dir_upserts_agents_md_block_idempotently() {
+    let home = TempDir::new().expect("tempdir");
+    let bin_dir = stub_claude_binary(home.path());
+    let repo = home.path().join("myrepo");
+    std::fs::create_dir_all(&repo).unwrap();
+    let agents_md = repo.join("AGENTS.md");
+    std::fs::write(&agents_md, "# My repo\n\nBuild with make.\n").unwrap();
+
+    // Dry run (no --apply, no TTY) writes nothing.
+    let out = setup_cmd(home.path(), &bin_dir).arg("--project-dir").arg(&repo).output().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(std::fs::read_to_string(&agents_md).unwrap(), "# My repo\n\nBuild with make.\n");
+
+    for _ in 0..2 {
+        let out = setup_cmd(home.path(), &bin_dir)
+            .args(["--apply", "--agent-files", "--project-dir"])
+            .arg(&repo)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    }
+    let body = std::fs::read_to_string(&agents_md).unwrap();
+    assert!(body.starts_with("# My repo\n\nBuild with make.\n"));
+    assert_eq!(body.matches("<!-- rememora:begin").count(), 1, "block duplicated:\n{body}");
+    assert!(body.contains("--project myrepo"));
+    // Claude Code is detected and does not read AGENTS.md, so --agent-files writes CLAUDE.md.
+    let claude_md = std::fs::read_to_string(repo.join("CLAUDE.md")).unwrap();
+    assert!(claude_md.contains("--agent claude-code --project myrepo"));
+    // Global files untouched.
+    assert!(!home.path().join(".claude").join("CLAUDE.md").exists());
+    assert!(!home.path().join(".rememora").join("rememora.db").exists());
+}
+
+/// Global mode upgrades a pre-marker `## Rememora` section in place.
+#[test]
+fn setup_apply_replaces_legacy_snippet_in_place() {
+    let home = TempDir::new().expect("tempdir");
+    let bin_dir = stub_claude_binary(home.path());
+    let claude_md = home.path().join(".claude").join("CLAUDE.md");
+    std::fs::create_dir_all(claude_md.parent().unwrap()).unwrap();
+    std::fs::write(&claude_md, "mine\n\n## Rememora \u{2014} Cross-Agent Persistent Memory\nold\n").unwrap();
+    let out = setup_cmd(home.path(), &bin_dir).arg("--apply").output().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let body = std::fs::read_to_string(&claude_md).unwrap();
+    assert!(body.starts_with("mine\n\n<!-- rememora:begin"));
+    assert!(!body.contains("Cross-Agent"));
+    assert!(body.contains("--agent claude-code"));
+}

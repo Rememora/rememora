@@ -14,7 +14,7 @@ const SQLITE_MAGIC: &[u8; 16] = b"SQLite format 3\0";
 /// callers that relocate the DB) get a key file alongside the DB rather
 /// than in the user's real `~/.rememora/`.
 pub fn default_key_file_path() -> PathBuf {
-    if let Ok(p) = std::env::var("REMEMORA_DB") {
+    if let Some(p) = crate::db::env_db_override() {
         let db = PathBuf::from(p);
         if let Some(parent) = db.parent() {
             return parent.join("key");

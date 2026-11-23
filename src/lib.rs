@@ -1,6 +1,8 @@
+pub mod backup;
 pub mod crypto;
 pub mod curator;
 pub mod db;
+pub mod dump;
 pub mod embed;
 pub mod evolve;
 pub mod format;
@@ -11,6 +13,7 @@ pub mod jsonl_codex;
 pub mod models;
 pub mod propagate;
 pub mod search;
+pub mod similar;
 pub mod timeline;
 pub mod update_check;
 pub mod uri;

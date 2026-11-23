@@ -85,7 +85,7 @@ pub fn get_latest_for_project(conn: &Connection, project: &str) -> Result<Option
     let mut stmt = conn.prepare(
         "SELECT id, agent, project, cwd, started_at, ended_at, summary, intent, working_state, message_count, token_estimate, parent_session, status, worktree, branch
          FROM sessions WHERE project = ?1
-         ORDER BY started_at DESC LIMIT 1",
+         ORDER BY started_at DESC, id DESC LIMIT 1",
     )?;
 
     let result = stmt
@@ -95,11 +95,60 @@ pub fn get_latest_for_project(conn: &Connection, project: &str) -> Result<Option
     Ok(result)
 }
 
+/// Prefix of the summary `session end-active --auto-summary` writes when the
+/// caller gave none. Such a summary records that a hook closed the row, not
+/// anything a successor can act on, so it never counts as a handoff on its own.
+pub const AUTO_SUMMARY_PREFIX: &str = "Session ended automatically.";
+
+/// The most recent handoff for a project: the latest ended or transferred
+/// session that left something for the next agent (a working state, or a
+/// summary that a person or agent wrote).
+///
+/// `get_latest_for_project` returns the newest row whatever its state, so as
+/// soon as agent B runs `session start` it shadows agent A's handoff with B's
+/// own empty active row. This is the lookup `context` and `session resume`
+/// want instead. Ordered by when the session ended, newest first, with the id
+/// (a ULID) breaking ties deterministically.
+pub fn get_latest_handoff(conn: &Connection, project: &str) -> Result<Option<SessionRecord>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, agent, project, cwd, started_at, ended_at, summary, intent, working_state, message_count, token_estimate, parent_session, status, worktree, branch
+         FROM sessions
+         WHERE project = ?1
+           AND status IN ('ended', 'transferred')
+           AND (working_state != ''
+                OR (summary != '' AND substr(summary, 1, length(?2)) != ?2))
+         ORDER BY COALESCE(ended_at, started_at) DESC, id DESC
+         LIMIT 1",
+    )?;
+
+    let result = stmt
+        .query_row(params![project, AUTO_SUMMARY_PREFIX], row_to_session)
+        .optional()?;
+
+    Ok(result)
+}
+
+/// Every active session for a project, newest first, so `context` can show
+/// who else is working on it right now.
+pub fn list_active_for_project(conn: &Connection, project: &str, limit: usize) -> Result<Vec<SessionRecord>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, agent, project, cwd, started_at, ended_at, summary, intent, working_state, message_count, token_estimate, parent_session, status, worktree, branch
+         FROM sessions WHERE project = ?1 AND status = 'active'
+         ORDER BY started_at DESC, id DESC LIMIT ?2",
+    )?;
+
+    let rows = stmt
+        .query_map(params![project, limit as i64], row_to_session)?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+
+    Ok(rows)
+}
+
 pub fn get_active_for_project(conn: &Connection, project: &str) -> Result<Option<SessionRecord>> {
     let mut stmt = conn.prepare(
         "SELECT id, agent, project, cwd, started_at, ended_at, summary, intent, working_state, message_count, token_estimate, parent_session, status, worktree, branch
          FROM sessions WHERE project = ?1 AND status = 'active'
-         ORDER BY started_at DESC LIMIT 1",
+         ORDER BY started_at DESC, id DESC LIMIT 1",
     )?;
 
     let result = stmt

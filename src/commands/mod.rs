@@ -1,5 +1,6 @@
 pub mod agent_loop;
 pub mod agent_run;
+pub mod backup;
 pub mod consolidate;
 pub mod context;
 pub mod curate;
@@ -12,6 +13,7 @@ pub mod evolve;
 pub mod export;
 pub mod extract;
 pub mod get;
+pub mod mcp;
 pub mod project;
 pub mod relate;
 pub mod save;

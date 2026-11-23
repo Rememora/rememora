@@ -33,7 +33,7 @@ claude plugin install rememora@rememora --scope project
 
 ## How it works
 
-1. `claude plugin install` (or `rememora setup --apply`) injects a `## Rememora` instructions block into the agent's instructions file (`CLAUDE.md`/`AGENTS.md`/`GEMINI.md`), telling it when to search, save, and start/end sessions.
+1. `claude plugin install` (or `rememora setup --apply`) writes a marked `## Rememora` instructions block into each detected agent's instructions file (Claude Code, Codex, Gemini CLI, opencode, Copilot CLI; Cursor via a project's `AGENTS.md`), telling it when to search, save, and start/end sessions.
 2. During work, Claude **autonomously saves** when it detects:
    - Architectural or design decisions
    - Non-trivial bug fixes

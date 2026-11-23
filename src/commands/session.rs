@@ -69,18 +69,48 @@ pub fn end(conn: &Connection, id: &str, summary: &str, working_state: Option<&st
     Ok(())
 }
 
+/// Show what the next agent should pick up: the latest handoff (ended or
+/// transferred session with a working state or summary), then any sessions
+/// still active. Falls back to the newest session of any kind when nothing has
+/// been handed off yet, so a project with only active rows still prints them.
 pub fn resume(conn: &Connection, project: &str) -> Result<()> {
-    let latest = session::get_latest_for_project(conn, project)?;
-    match latest {
-        Some(s) => print!("{}", format::session_to_markdown(&s)),
-        None => println!("No sessions found for project: {project}"),
-    }
+    let handoff = session::get_latest_handoff(conn, project)?;
+    let active = session::list_active_for_project(conn, project, 10)?;
+    print!("{}", resume_to_markdown(conn, project, handoff.as_ref(), &active)?);
     Ok(())
+}
+
+fn resume_to_markdown(
+    conn: &Connection,
+    project: &str,
+    handoff: Option<&session::SessionRecord>,
+    active: &[session::SessionRecord],
+) -> Result<String> {
+    let mut out = String::new();
+    match handoff {
+        Some(h) => out.push_str(&format::session_to_markdown(h)),
+        None => match session::get_latest_for_project(conn, project)? {
+            Some(s) if active.is_empty() => out.push_str(&format::session_to_markdown(&s)),
+            Some(_) => out.push_str(&format!("No handoff recorded yet for project: {project}\n")),
+            None => {
+                out.push_str(&format!("No sessions found for project: {project}\n"));
+                return Ok(out);
+            }
+        },
+    }
+    if !active.is_empty() {
+        out.push_str("\n## Active sessions\n\n");
+        for a in active {
+            out.push_str(&format!("{}\n", format::active_session_line(a)));
+        }
+    }
+    Ok(out)
 }
 
 pub fn end_active(
     conn: &Connection,
     project: Option<&str>,
+    agent: Option<&str>,
     summary: Option<&str>,
     working_state: Option<&str>,
     auto_summary: bool,
@@ -118,10 +148,37 @@ pub fn end_active(
         }
     };
 
-    // Find the most recent active session for this project
-    let active = session::get_active_for_project(conn, &project_name)?;
+    let active = session::list_active_for_project(conn, &project_name, usize::MAX >> 1)?;
+    let sess = match pick_active(active, agent) {
+        Ok(s) => s,
+        Err(candidates) => {
+            // Several agents are working on this project. Closing the newest
+            // row would end whichever agent started last, which is usually
+            // not the caller, so close nothing and say how to choose.
+            if json {
+                let items: Vec<serde_json::Value> = candidates
+                    .iter()
+                    .map(|c| serde_json::json!({"id": c.id, "agent": c.agent, "intent": c.intent, "started_at": c.started_at}))
+                    .collect();
+                println!(
+                    "{}",
+                    serde_json::json!({"status": "ambiguous", "project": project_name, "candidates": items})
+                );
+            } else {
+                println!("Active sessions on {project_name}:");
+                for c in &candidates {
+                    println!("{}", format::active_session_line(c));
+                }
+            }
+            anyhow::bail!(
+                "{} agents have active sessions on {project_name}; none was ended. \
+                 Pass --agent <name>, or end one with `rememora session end <id>`.",
+                candidates.iter().map(|c| c.agent.as_str()).collect::<std::collections::BTreeSet<_>>().len()
+            );
+        }
+    };
 
-    let sess = match active {
+    let sess = match sess {
         Some(s) => s,
         None => {
             // No active session — no-op for hook safety
@@ -142,10 +199,11 @@ pub fn end_active(
         // Generate from session metadata
         let duration = compute_duration(&sess.started_at);
         if sess.intent.is_empty() {
-            format!("Session ended automatically. Duration: {duration}")
+            format!("{} Duration: {duration}", session::AUTO_SUMMARY_PREFIX)
         } else {
             format!(
-                "Session ended automatically. Intent: {}. Duration: {duration}",
+                "{} Intent: {}. Duration: {duration}",
+                session::AUTO_SUMMARY_PREFIX,
                 sess.intent
             )
         }
@@ -165,6 +223,27 @@ pub fn end_active(
     }
 
     Ok(())
+}
+
+/// Choose the session `end-active` should close from the project's active
+/// sessions (newest first). With `agent`, the newest of that agent's. Without
+/// it, the newest overall only when every active session belongs to one agent;
+/// otherwise `Err` with every candidate.
+fn pick_active(
+    active: Vec<session::SessionRecord>,
+    agent: Option<&str>,
+) -> std::result::Result<Option<session::SessionRecord>, Vec<session::SessionRecord>> {
+    let mut mine: Vec<session::SessionRecord> = match agent {
+        Some(a) => active.into_iter().filter(|s| s.agent == a).collect(),
+        None => active,
+    };
+    if mine.is_empty() {
+        return Ok(None);
+    }
+    if agent.is_none() && mine.iter().any(|s| s.agent != mine[0].agent) {
+        return Err(mine);
+    }
+    Ok(Some(mine.swap_remove(0)))
 }
 
 /// Compute a human-readable duration string from a start timestamp to now.

@@ -7,14 +7,14 @@ fn test_concurrent_writes() {
     let db_path = tmp.path().join("test.db");
 
     // Initialize the DB
-    let conn = rememora::db::open(&db_path).unwrap();
+    let conn = rememora::db::open_with_options(&db_path, true).unwrap();
     drop(conn);
 
     let db_path1 = db_path.clone();
     let db_path2 = db_path.clone();
 
     let t1 = thread::spawn(move || {
-        let conn = rememora::db::open(&db_path1).unwrap();
+        let conn = rememora::db::open_with_options(&db_path1, true).unwrap();
         for i in 0..10 {
             rememora::models::context::insert(
                 &conn,
@@ -40,7 +40,7 @@ fn test_concurrent_writes() {
     });
 
     let t2 = thread::spawn(move || {
-        let conn = rememora::db::open(&db_path2).unwrap();
+        let conn = rememora::db::open_with_options(&db_path2, true).unwrap();
         for i in 0..10 {
             rememora::models::context::insert(
                 &conn,
@@ -69,7 +69,7 @@ fn test_concurrent_writes() {
     t2.join().unwrap();
 
     // Verify all 20 records exist
-    let conn = rememora::db::open(&db_path).unwrap();
+    let conn = rememora::db::open_with_options(&db_path, true).unwrap();
     let count: i64 = conn
         .query_row("SELECT COUNT(*) FROM contexts", [], |r| r.get(0))
         .unwrap();

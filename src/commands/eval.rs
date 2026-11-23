@@ -288,9 +288,9 @@ fn query_memory_save_rate(
     let memory_scope = if let Some(proj) = project {
         params.push((
             ":uri_prefix",
-            Box::new(format!("rememora://projects/{proj}/%")),
+            Box::new(format!("rememora://projects/{proj}/")),
         ));
-        "AND (c.uri LIKE :uri_prefix
+        "AND (substr(c.uri, 1, length(:uri_prefix)) = :uri_prefix
               OR EXISTS (SELECT 1 FROM sessions sp
                          WHERE sp.id = c.source_session AND sp.project = :project))"
     } else {
@@ -416,9 +416,9 @@ fn query_context_load_rate(
 /// session, and "a caller" means `search`, `get`, or `timeline`, not `search`
 /// alone. See [`RetrievalReach`] for exactly what it does and does not claim.
 fn query_retrieval_reach(conn: &Connection, project: Option<&str>) -> Result<RetrievalReach> {
-    let uri_param = project.map(|p| format!("rememora://projects/{p}/%"));
+    let uri_param = project.map(|p| format!("rememora://projects/{p}/"));
     let uri_clause = if uri_param.is_some() {
-        " AND uri LIKE ?1"
+        " AND substr(uri, 1, length(?1)) = ?1"
     } else {
         ""
     };

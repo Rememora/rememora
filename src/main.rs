@@ -26,6 +26,11 @@ fn readonly_armed() -> bool {
 /// The guard is about memory *content* — which of those never change — so they
 /// stay on the list; a consolidation subagent cannot verify anything without
 /// them.
+///
+/// `mcp` is on the list too: the server itself only reads stdin and spawns
+/// this binary once per tool call. Each subprocess inherits the variable and
+/// passes back through this guard, so `memory_save`, `memory_supersede` and
+/// the session tools are still refused while the read tools keep working.
 fn is_read_only_command(command: &Commands) -> bool {
     matches!(
         command,
@@ -37,6 +42,7 @@ fn is_read_only_command(command: &Commands) -> bool {
             | Commands::Eval { .. }
             | Commands::Export { .. }
             | Commands::Usage { .. }
+            | Commands::Mcp
     )
 }
 
@@ -60,7 +66,7 @@ fn readonly_refusal(command: &Commands) -> Option<String> {
     if readonly_armed() && !is_read_only_command(command) {
         return Some(format!(
             "Refusing to run: rememora is in read-only mode ({READONLY_ENV}=1).\n\
-             Only search, timeline, context, get, status, eval, export and usage are allowed.\n\
+             Only search, timeline, context, get, status, eval, export, usage and mcp (read tools only) are allowed.\n\
              \n\
              This mode is set for consolidation subagents so they cannot retire memories \
              outside the bounded, journalled `rememora evolve --apply` path. If you reached \
@@ -164,6 +170,10 @@ enum Commands {
         /// checkout. Defaults to the process working directory.
         #[arg(long)]
         cwd: Option<String>,
+
+        /// With --json, include each hit's full content
+        #[arg(long)]
+        full: bool,
     },
 
     /// Chronological slice of contexts around an anchor URI.
@@ -203,22 +213,65 @@ enum Commands {
         /// Compact cheatsheet: top-5 memories + working state + warnings
         #[arg(long)]
         cheatsheet: bool,
+
+        /// Token budget for the output (chars/4 estimate). Default 2500; 0 means unlimited.
+        /// A budget too small for anything still prints a title and footer line (about 20 tokens)
+        #[arg(long)]
+        max_tokens: Option<usize>,
+
+        /// What you are about to do: adds a "Relevant to" section of matching memories
+        #[arg(long)]
+        query: Option<String>,
     },
 
-    /// Get a specific context by URI
+    /// Get a specific memory in full, by id or rememora:// URI
     Get {
-        /// The rememora:// URI
+        /// The memory's 26-character id or its rememora:// URI
+        #[arg(value_name = "ID_OR_URI")]
         uri: String,
     },
 
     /// Supersede an old memory with a new one
+    ///
+    /// Either link an existing memory (`--by <id>`) or save replacement text and
+    /// link it in one step (`--text "..."`), inheriting category, project,
+    /// tags and importance from the old memory unless overridden.
+    #[command(group = clap::ArgGroup::new("replacement").required(true).args(["by", "text"]))]
     Supersede {
-        /// Old memory ID
+        /// Old memory ID or rememora:// URI
         old_id: String,
 
-        /// New memory ID
+        /// New memory ID or rememora:// URI
         #[arg(long)]
-        by: String,
+        by: Option<String>,
+
+        /// Save this text as the replacement and link it
+        #[arg(long)]
+        text: Option<String>,
+
+        /// With --text: category (default: the old memory's)
+        #[arg(long, requires = "text")]
+        category: Option<String>,
+
+        /// With --text: project scope (default: the old memory's)
+        #[arg(long, requires = "text")]
+        project: Option<String>,
+
+        /// With --text: importance 0.0-1.0 (default: the old memory's)
+        #[arg(long, requires = "text")]
+        importance: Option<f64>,
+
+        /// With --text: tags as JSON array (default: the old memory's)
+        #[arg(long, requires = "text")]
+        tags: Option<String>,
+
+        /// With --text: source agent
+        #[arg(long, requires = "text")]
+        agent: Option<String>,
+
+        /// Repoint a memory that is already superseded
+        #[arg(long)]
+        force: bool,
     },
 
     /// Session management
@@ -274,7 +327,18 @@ enum Commands {
         /// Apply changes (without this flag, only shows what would be done)
         #[arg(long)]
         apply: bool,
+
+        /// Write the instructions block into this repo's AGENTS.md instead of global agent files
+        #[arg(long, value_name = "PATH")]
+        project_dir: Option<std::path::PathBuf>,
+
+        /// With --project-dir, also write agent-specific project files (CLAUDE.md, GEMINI.md, .cursor/rules, .github/copilot-instructions.md)
+        #[arg(long, requires = "project_dir")]
+        agent_files: bool,
     },
+
+    /// Run a stdio Model Context Protocol server exposing memory tools
+    Mcp,
 
     /// Run Claude CLI on a specific GitHub issue
     AgentRun {
@@ -497,6 +561,51 @@ enum Commands {
         /// Output format: json, md
         #[arg(long, default_value = "json")]
         format: String,
+
+        /// Export the whole database in the versioned format `import` reads
+        #[arg(long, conflicts_with_all = ["project", "format"])]
+        all: bool,
+
+        /// Write to this file instead of stdout (with --all)
+        #[arg(long, requires = "all")]
+        out: Option<std::path::PathBuf>,
+    },
+
+    /// Load a `rememora export --all` file, skipping rows that already exist
+    Import {
+        file: std::path::PathBuf,
+
+        /// Report what would be imported without changing anything
+        #[arg(long)]
+        dry_run: bool,
+    },
+
+    /// Take a consistent snapshot of the database (or verify/list snapshots)
+    #[command(args_conflicts_with_subcommands = true)]
+    Backup {
+        #[command(subcommand)]
+        action: Option<BackupAction>,
+
+        /// Directory for the snapshot (default: <data dir>/backups)
+        #[arg(long)]
+        to: Option<std::path::PathBuf>,
+
+        /// Keep only the newest N snapshots made by this command (default: keep all)
+        #[arg(long)]
+        keep: Option<usize>,
+    },
+
+    /// Replace the live database with a verified snapshot (the current one is kept aside)
+    Restore {
+        snapshot: std::path::PathBuf,
+
+        /// Report what would happen without changing anything
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Do not ask for confirmation
+        #[arg(long)]
+        yes: bool,
     },
 
     /// Aggregate agent-invocation telemetry (tokens, cost, duration).
@@ -604,6 +713,18 @@ enum TelemetryAction {
 }
 
 #[derive(Subcommand)]
+enum BackupAction {
+    /// Check a snapshot: checksum, key, integrity, row counts
+    Verify { snapshot: std::path::PathBuf },
+    /// List snapshots
+    List {
+        /// Directory to list (default: <data dir>/backups)
+        #[arg(long)]
+        dir: Option<std::path::PathBuf>,
+    },
+}
+
+#[derive(Subcommand)]
 enum SessionAction {
     /// Start a new session
     Start {
@@ -647,6 +768,11 @@ enum SessionAction {
         /// Project name (auto-detected from CWD if omitted)
         #[arg(long)]
         project: Option<String>,
+
+        /// Only end this agent's active session. Without it, refuses when
+        /// several agents have active sessions on the project
+        #[arg(long)]
+        agent: Option<String>,
 
         /// Summary of what was accomplished
         #[arg(long)]
@@ -722,6 +848,11 @@ enum ProjectAction {
     },
 }
 
+/// Whether the first-run gate should stop this invocation.
+fn setup_required(db_exists: bool, db_path_explicit: bool) -> bool {
+    !db_exists && !db_path_explicit
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
@@ -735,16 +866,32 @@ fn main() -> Result<()> {
 
     // Commands that bypass the normal db::open() flow
     match &cli.command {
-        Commands::Setup { apply } => return commands::setup::run(*apply),
+        Commands::Setup { apply, project_dir, agent_files } => {
+            return commands::setup::run(*apply, project_dir.as_deref(), *agent_files)
+        }
+        Commands::Mcp => return commands::mcp::run(cli.no_encryption),
         Commands::Encrypt => return commands::encrypt::run_encrypt(&db_path),
         Commands::Decrypt => return commands::encrypt::run_decrypt(&db_path),
         Commands::Desktop => return commands::desktop::run(),
         Commands::Update { check } => return commands::update::run(*check, cli.json),
+        Commands::Backup { action: Some(BackupAction::Verify { snapshot }), .. } => {
+            return commands::backup::run_verify(snapshot, cli.json)
+        }
+        Commands::Backup { action: Some(BackupAction::List { dir }), .. } => {
+            return commands::backup::run_list(&db_path, dir.as_deref(), cli.json)
+        }
+        Commands::Restore { snapshot, dry_run, yes } => {
+            return commands::backup::run_restore(&db_path, snapshot, *dry_run, *yes, cli.json)
+        }
         _ => {}
     }
 
-    // First-run gate: require setup before any other command
-    if !db_path.exists() {
+    // First-run gate: require setup before any other command. `setup` is what
+    // creates the encryption key and wires agent hooks, so on the default path
+    // a missing DB means the user skipped it. An explicit REMEMORA_DB is a
+    // deliberate choice (CI, sandboxes, tests), so that path is initialised in
+    // place instead of sending the caller off to edit agent config files.
+    if setup_required(db_path.exists(), rememora::db::env_db_override().is_some()) {
         anyhow::bail!(
             "Rememora is not set up yet. Run `rememora setup` to get started."
         );
@@ -775,6 +922,7 @@ fn main() -> Result<()> {
                 abstract_text,
                 overview,
                 content_text: content,
+                project_is_canonical: false,
             },
             cli.json,
         ),
@@ -789,6 +937,7 @@ fn main() -> Result<()> {
             propagate_depth,
             format,
             cwd,
+            full,
         } => {
             let fmt = commands::search::SearchFormat::parse(&format)?;
             commands::search::run(
@@ -803,6 +952,7 @@ fn main() -> Result<()> {
                     propagate_depth,
                     format: fmt,
                     cwd,
+                    full,
                 },
                 cli.json,
             )
@@ -829,14 +979,30 @@ fn main() -> Result<()> {
             )
         }
 
-        Commands::Context { project, auto, cheatsheet } => {
-            commands::context::run(&conn, project.as_deref(), auto, cheatsheet)
+        Commands::Context { project, auto, cheatsheet, max_tokens, query } => {
+            commands::context::run(
+                &conn,
+                &commands::context::ContextArgs {
+                    project: project.as_deref(),
+                    auto,
+                    cheatsheet,
+                    max_tokens,
+                    query: query.as_deref(),
+                    json: cli.json,
+                },
+            )
         }
 
         Commands::Get { uri } => commands::get::run(&conn, &uri, cli.json),
 
-        Commands::Supersede { old_id, by } => {
-            commands::supersede::run(&conn, &old_id, &by, cli.json)
+        Commands::Supersede { old_id, by, text, category, project, importance, tags, agent, force } => {
+            use commands::supersede::{NewText, Replacement};
+            let replacement = match (by, text) {
+                (Some(by), _) => Replacement::Existing(by),
+                (None, Some(text)) => Replacement::New(NewText { text, category, project, importance, tags, agent }),
+                (None, None) => unreachable!("clap requires --by or --text"),
+            };
+            commands::supersede::run(&conn, &old_id, replacement, force, cli.json)
         }
 
         Commands::Session { action } => match action {
@@ -868,12 +1034,14 @@ fn main() -> Result<()> {
             ),
             SessionAction::EndActive {
                 project,
+                agent,
                 summary,
                 working_state,
                 auto_summary,
             } => commands::session::end_active(
                 &conn,
                 project.as_deref(),
+                agent.as_deref(),
                 summary.as_deref(),
                 working_state.as_deref(),
                 auto_summary,
@@ -934,7 +1102,7 @@ fn main() -> Result<()> {
             cli.json,
         ),
 
-        Commands::Setup { .. } => unreachable!("handled above"),
+        Commands::Setup { .. } | Commands::Mcp => unreachable!("handled above"),
 
         Commands::AgentRun {
             repo,
@@ -1071,9 +1239,19 @@ fn main() -> Result<()> {
 
         Commands::Status => commands::status::run(&conn, cli.json),
 
-        Commands::Export { project, format } => {
+        Commands::Export { all: true, out, .. } => commands::backup::run_export_all(&conn, out.as_deref()),
+
+        Commands::Export { project, format, .. } => {
             commands::export::run(&conn, project.as_deref(), &format)
         }
+
+        Commands::Import { file, dry_run } => commands::backup::run_import(&conn, &file, dry_run, cli.json),
+
+        Commands::Backup { action: None, to, keep } => {
+            commands::backup::run_backup(&conn, &db_path, to.as_deref(), keep, cli.json)
+        }
+
+        Commands::Backup { action: Some(_), .. } | Commands::Restore { .. } => unreachable!("handled above"),
 
         Commands::Usage {
             since,
@@ -1162,6 +1340,10 @@ mod tests {
             "rememora://projects/t/memories/decision/x"
         ]));
         assert!(allowed(&["status"]));
+        assert!(allowed(&["get", "01JABCDEFGHJKMNPQRSTVWXYZ0"]));
+        // The MCP server may start; its write tools are refused per subprocess
+        // (covered end to end in tests/test_mcp.rs).
+        assert!(allowed(&["mcp"]));
     }
 
     /// Everything that can change a memory is refused, including the two the
@@ -1199,5 +1381,21 @@ mod tests {
             "tests must not run with {READONLY_ENV} set"
         );
         assert!(readonly_refusal(&command_of(&["save", "x", "--category", "decision"])).is_none());
+    }
+
+    #[test]
+    fn setup_gate_only_applies_to_the_default_path() {
+        assert!(setup_required(false, false));
+        assert!(!setup_required(false, true), "explicit REMEMORA_DB initialises in place");
+        assert!(!setup_required(true, false));
+    }
+
+    #[test]
+    fn blank_rememora_db_counts_as_unset() {
+        use rememora::db::nonblank;
+        assert_eq!(nonblank(Some(String::new())), None);
+        assert_eq!(nonblank(Some("  \t".into())), None);
+        assert_eq!(nonblank(None), None);
+        assert_eq!(nonblank(Some("/tmp/x.db".into())).as_deref(), Some("/tmp/x.db"));
     }
 }

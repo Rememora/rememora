@@ -6,7 +6,7 @@ use tempfile::TempDir;
 /// Helper: create a file-backed unencrypted DB with test data
 fn create_file_db(dir: &Path) -> std::path::PathBuf {
     let db_path = dir.join("test.db");
-    let conn = rememora::db::open(&db_path).expect("Failed to create file DB");
+    let conn = rememora::db::open_with_options(&db_path, true).expect("Failed to create file DB");
     common::seed_test_data(&conn);
     drop(conn);
     db_path

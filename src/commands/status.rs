@@ -35,6 +35,8 @@ pub fn run_with_path(conn: &Connection, db_path: &Path, json: bool) -> Result<()
         .optional()?
         .flatten();
 
+    let backup = super::backup::status_info(db_path);
+
     if json {
         let cat_map: serde_json::Map<String, serde_json::Value> = categories
             .iter()
@@ -52,6 +54,7 @@ pub fn run_with_path(conn: &Connection, db_path: &Path, json: bool) -> Result<()
                 "active_sessions": active_sessions,
                 "relations": total_relations,
                 "categories": cat_map,
+                "backup": backup,
                 "curator": {
                     "tracked_files": watermark_count,
                     "total_actions": curator_actions,
@@ -82,6 +85,14 @@ pub fn run_with_path(conn: &Connection, db_path: &Path, json: bool) -> Result<()
         println!("    Consolidation runs:  {consolidation_runs}");
         if let Some(last) = &last_consolidation {
             println!("    Last consolidation:  {last}");
+        }
+        println!("\n  Backups:");
+        match backup["newest"].as_str() {
+            Some(newest) => {
+                let age = backup["age_seconds"].as_i64().map(super::backup::human_age).unwrap_or_else(|| "unknown".into());
+                println!("    Newest:  {newest} ({age} ago)");
+            }
+            None => println!("    No backups yet, run `rememora backup`"),
         }
     }
 

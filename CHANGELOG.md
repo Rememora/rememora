@@ -4,6 +4,48 @@ All notable changes to Rememora will be documented in this file.
 
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `rememora backup [--to <dir>] [--keep N]` takes a consistent snapshot of the live database (encrypted with the same key when the database is encrypted) with a sha256 manifest. `rememora backup verify <snapshot>` and `rememora backup list` check and list snapshots. (#143)
+- `rememora restore <snapshot> [--dry-run] [--yes]` verifies first and moves the current database aside to `*.pre-restore-<UTC>` instead of deleting it. (#143)
+- `rememora export --all [--out <file>]` writes a complete, versioned JSON dump and `rememora import <file>` loads it idempotently. (#143)
+- `rememora status` shows the newest backup and its age. (#143)
+- **`rememora context --query "<task>"`** adds a "Relevant to" section with the best search hits for the task (search runs without bumping access counts). Without `--query`, the newest active session's intent is used.
+- **`rememora context --max-tokens N`** keeps the output within a token budget (default 2500, 0 for unlimited, estimated as characters / 4). A footer reports the tokens used and how many memories were left out (#146).
+- **`rememora context --json`** emits the same sections as the markdown output.
+- **`rememora supersede <old> --text "..."`** saves the replacement and links it in one step, inheriting category, project, tags and importance from the old memory unless overridden.
+- **`rememora session end-active --agent <name>`** ends only that agent's active session.
+- **`rememora setup --project-dir <dir>`** writes the instructions block into a repository's `AGENTS.md` without touching global files, and **`--agent-files`** adds the agent-specific project files. Supported agents: Claude Code, Codex, Gemini CLI, Cursor, opencode and GitHub Copilot CLI. `setup` prints MCP registration commands for each detected agent.
+- **`rememora mcp`**: a stdio Model Context Protocol server with `memory_context`, `memory_search`, `memory_save`, `memory_get`, `memory_supersede`, `session_start` and `session_end`. Each tool runs the CLI as a subprocess. Read tools return the CLI's markdown or compact text, write tools return JSON. Saves are attributed to the client's `clientInfo.name` unless the call passes `agent`.
+- **`rememora search --json --full`** includes each hit's content; `--json` hits now carry project, overview and timestamps.
+- Search warns on stderr when `--project` names an unregistered project; `save` does the same.
+
+### Changed
+
+- **`context` is handoff-aware and deduplicated.** It shows the latest ended or transferred session with a summary or working state (with a note when it is more than 14 days old) and every active session, instead of the newest session row. Every memory prints once: relevant, recent (last 7 days), top in full, then one-line abstracts. The project registry row is shown in the header rather than ranked as a memory. `session resume` and `context --cheatsheet` use the same handoff block.
+- **`context` memory lines end with the 26-character id instead of the full URI**, which cuts tokens in every session. The footer says once that `rememora get <id>` shows a memory in full. `--json` keeps URIs.
+- **`rememora get` accepts an id** as well as a `rememora://` URI.
+- **Search ranks plain queries by concepts, coverage and proximity**: stopwords are dropped, common abbreviations expand to synonyms, long words match as prefixes, identifiers match as phrases, misspelled words are corrected against the index, and the BM25 pool is reranked by query coverage, term proximity and a small importance and hotness prior. Explicit FTS5 syntax passes through unchanged.
+- `search --format compact` keeps 120 characters of abstract and adds each hit's id.
+- **`setup` renders one shared instructions snippet** for every agent, between begin and end markers so re-runs update it in place. It now recommends `context --query`, one-step `supersede --text` and `session end-active --agent`.
+- **Saving an exact duplicate returns the existing memory's id** (exit 0) instead of failing; similar live memories are listed on stderr and in `--json`; colliding slugs get a short suffix.
+- **`supersede` accepts ids or URIs**, refuses self-links and cycles, needs `--force` to repoint an already superseded memory, and warns when the two memories are in different projects.
+- **An explicit `REMEMORA_DB` skips the first-run setup check** and creates the database at that path.
+- `REMEMORA_READONLY=1` allows `rememora mcp` to start; its write tools are still refused.
+
+### Fixed
+
+- **`rememora context`** no longer lets one section eat the budget: the handoff is capped at about 40% (with a pointer to `rememora session resume`), one memory's text at about 10%, and the top few memories are always shown. A budget too small for anything still prints the title and a footer instead of nothing.
+- **`rememora setup --apply`** collapses duplicate managed blocks into one, keeps the file's CRLF or LF line endings, and leaves a file with an unterminated begin marker untouched with a warning.
+- **`REMEMORA_DB=""`** (or whitespace) is treated as unset instead of opening an empty path and skipping the first-run setup check.
+- **`session end-active` could close another agent's session.** With several agents active on a project it ended the newest session of any agent. It now ends none, lists the candidates and exits non-zero unless `--agent` is given.
+- **Project filters treated `_` and `%` as wildcards.** `list_by_scope` (export, consolidate, evolve), duplicate detection on save, similar-memory hints, timeline, consolidation gating and eval metrics used `LIKE` on the project prefix, so `my_app` also matched `myXapp`. They now compare a literal prefix, as context and search do.
+- `importance` and `category` are validated on save.
+- `tests/test_encrypt.rs` and `tests/test_concurrent.rs` no longer pick up an encryption key from the developer's machine, which failed 6 of 10 encryption tests on any machine that had used rememora (#136).
+- `cargo clippy --all-targets -- -D warnings` passes: shared test helpers allow dead code that a given test binary does not use.
+
 ## [1.7.0] — 2026-09-15
 
 ### Removed

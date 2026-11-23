@@ -385,8 +385,18 @@ pub fn open_readonly_no_prompt(path: &Path) -> Result<Connection, OpenReadonlyEr
     Ok(conn)
 }
 
+/// Treat an empty or whitespace-only value as unset.
+pub fn nonblank(v: Option<String>) -> Option<String> {
+    v.filter(|s| !s.trim().is_empty())
+}
+
+/// The `REMEMORA_DB` override, if set to something other than blank.
+pub fn env_db_override() -> Option<String> {
+    nonblank(std::env::var("REMEMORA_DB").ok())
+}
+
 pub fn default_db_path() -> std::path::PathBuf {
-    if let Ok(p) = std::env::var("REMEMORA_DB") {
+    if let Some(p) = env_db_override() {
         return std::path::PathBuf::from(p);
     }
     let mut path = dirs::home_dir().expect("Could not determine home directory");

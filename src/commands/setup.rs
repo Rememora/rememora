@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 const REMEMORA_MARKER: &str = "## Rememora";
 
@@ -27,138 +27,125 @@ fn is_rememora_command(cmd: &str) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// Instruction snippets — behavioral triggers + urgency framing.
-// These are the only automatic-capture guidance rememora ships now: no hook
-// fires on the agent's behalf, so these snippets are what tells it to call
-// `rememora search`/`save`/`session` itself.
+// Instruction snippet: the only capture guidance rememora ships. No hook
+// fires on the agent's behalf, so this block is what tells it to call
+// `rememora context`/`search`/`save`/`session` itself. One source for every
+// agent, parameterised by agent and project name, wrapped in markers so
+// re-running setup updates it in place.
 // ---------------------------------------------------------------------------
 
-const CLAUDE_CODE_SNIPPET: &str = r#"
-## Rememora — Cross-Agent Persistent Memory
+pub const BLOCK_BEGIN: &str = "<!-- rememora:begin (managed by `rememora setup`, edits inside are overwritten) -->";
+pub const BLOCK_END: &str = "<!-- rememora:end -->";
 
-You have access to `rememora`, a persistent memory system shared across agents and sessions.
-Your context will be lost when this session ends. Anything not saved to rememora is gone forever.
-You are not the only agent on this project — save what others will need, search before you assume.
-Nothing here runs automatically — no hook captures memory on your behalf. Every search, save, and
-session call below is something you invoke yourself, as you work.
+const SNIPPET_TEMPLATE: &str = r#"## Rememora: shared memory
 
-### When to SEARCH (before acting)
-- Before implementing anything non-trivial → `rememora search "relevant topic" --project <name>`
-- When encountering unfamiliar code or architecture → search for entity knowledge
-- When the user references past work or decisions → search for that context
-- When stuck or blocked → search for related cases and patterns
+`rememora` is a memory database shared by every coding agent on this machine.
+Nothing runs automatically: you call it yourself, as you work.
 
-### When to SAVE (as you work)
-Save immediately when any of these happen — do not batch or defer:
-- **Decision made**: team chose an approach, trade-off, or technology → `rememora save "..." --category decision --importance 0.8 --project <name>`
-- **Bug solved**: non-trivial fix, workaround, or gotcha discovered → `rememora save "..." --category case --project <name>`
-- **Pattern found**: convention, idiom, or reusable approach in the codebase → `rememora save "..." --category pattern --project <name>`
-- **User corrected you** or stated a preference → `rememora save "..." --category preference`
-- **Entity discovered**: service, API, config, key integration point → `rememora save "..." --category entity --project <name>`
+1. Start of work: `rememora context --project {project} --query "<task>"`
+   (memory lines end with an id; `rememora get <id>` shows one in full), then
+   `rememora session start --agent {agent} --project {project} --intent "<goal>"`.
+2. Before non-trivial work, when stuck, or when the user mentions past work:
+   `rememora search "<topic>" --project {project}`.
+3. Save as it happens, one fact per memory, written so another agent can act
+   on it without this conversation:
+   `rememora save "<fact>" --category <category> --importance <0-1> --project {project} --agent {agent}`
+   - decision: a choice and its reason (0.8)
+   - case: a bug's root cause and its fix (0.7)
+   - preference: a correction or preference from the user (0.8; omit
+     `--project` when it applies everywhere)
+   - pattern: a convention or quirk of the code or environment (0.6)
+   - entity: where something lives, a service, a key config (0.5)
+   Use 0.9 or more only when forgetting it would cause real damage.
+4. When a saved fact changes, replace it in one step:
+   `rememora supersede <old id> --text "<new fact>"`. Never keep two versions.
+5. End of work: `rememora session end-active --agent {agent} --project {project} --summary "<what was done>" --working-state "<blockers, next steps>"`.
 
-### What NOT to save
-- Code that can be read from files (use file paths instead)
-- Git history (use `git log`)
-- Anything already in the project README or docs
-- Temporary debugging state
+Do not save secrets, tokens, passwords or personal data, anything the code,
+README or git history already records, or state that only matters today."#;
 
-### Catching up
-If session transcripts have piled up without being curated, or memories need dedup/consolidation,
-run `rememora dream [--project <name>]` — it curates pending sessions then consolidates in one pass.
+/// Render the instructions block for `agent` (the `--agent` value, e.g.
+/// `codex`) and `project`. `None` leaves a placeholder for the agent to fill.
+pub fn render_snippet(agent: Option<&str>, project: Option<&str>) -> String {
+    let body = SNIPPET_TEMPLATE
+        .replace("{agent}", agent.unwrap_or("<your agent name>"))
+        .replace("{project}", project.unwrap_or("<project>"));
+    format!("{BLOCK_BEGIN}\n{body}\n{BLOCK_END}\n")
+}
 
-### Sessions
-- Start: `rememora session start --agent claude-code --project <name> --intent "..."`
-- End: `rememora session end <id> --summary "..." --working-state "..."`
-- Transfer: `rememora session end <id> --status transferred --summary "..." --working-state "..."`
-"#;
+/// Prefix every managed begin marker starts with, whatever its comment text.
+const BEGIN_PREFIX: &str = "<!-- rememora:begin";
 
-const CODEX_SNIPPET: &str = r#"
-## Rememora — Cross-Agent Persistent Memory
+/// The line ending most lines of `s` already use (`\n` for an empty file).
+fn dominant_eol(s: &str) -> &'static str {
+    let crlf = s.matches("\r\n").count();
+    let lf = s.matches('\n').count() - crlf;
+    if crlf > lf { "\r\n" } else { "\n" }
+}
 
-You have access to `rememora`, a persistent memory system shared across agents and sessions.
-Your context will be lost when this session ends. Anything not saved to rememora is gone forever.
-You are not the only agent on this project — save what others will need, search before you assume.
-Nothing here runs automatically — no hook captures memory on your behalf. Every search, save, and
-session call below is something you invoke yourself, as you work.
+/// Insert or replace the managed block in `existing`, preserving everything
+/// else. Order of preference: replace the first marked block (and drop any
+/// further marked blocks); replace an unmarked `## Rememora` section written
+/// by older versions (up to the next `## ` heading); otherwise append. The
+/// block is written with the file's dominant line ending.
+///
+/// Returns `None` when a begin marker has no matching end marker: the file
+/// is left alone rather than guessing where the block stops.
+pub fn upsert_block(existing: &str, block: &str) -> Option<String> {
+    let eol = dominant_eol(existing);
+    let block = if eol == "\r\n" {
+        block.replace("\r\n", "\n").replace('\n', "\r\n")
+    } else {
+        block.to_string()
+    };
+    if existing.contains(BEGIN_PREFIX) {
+        // Cut every marked block out, remembering where the first one was.
+        let mut out = String::new();
+        let mut first_at = None;
+        let mut rest = existing;
+        while let Some(start) = rest.find(BEGIN_PREFIX) {
+            let end_rel = rest[start..].find(BLOCK_END)?;
+            let mut end = start + end_rel + BLOCK_END.len();
+            if rest[end..].starts_with("\r\n") {
+                end += 2;
+            } else if rest[end..].starts_with('\n') {
+                end += 1;
+            }
+            out.push_str(&rest[..start]);
+            first_at.get_or_insert(out.len());
+            rest = &rest[end..];
+        }
+        out.push_str(rest);
+        let at = first_at.unwrap_or(out.len());
+        out.insert_str(at, &block);
+        return Some(out);
+    }
+    if let Some(start) = legacy_section_start(existing) {
+        let after = start + REMEMORA_MARKER.len();
+        let end = existing[after..]
+            .find("\n## ")
+            .map(|i| after + i + 1)
+            .unwrap_or(existing.len());
+        let tail = &existing[end..];
+        let sep = if tail.is_empty() { "" } else { eol };
+        return Some(format!("{}{}{}{}", &existing[..start], block, sep, tail));
+    }
+    let mut out = existing.to_string();
+    if !out.is_empty() {
+        if !out.ends_with('\n') {
+            out.push_str(eol);
+        }
+        out.push_str(eol);
+    }
+    out.push_str(&block);
+    Some(out)
+}
 
-### When to SEARCH (before acting)
-- Before implementing anything non-trivial → `rememora search "relevant topic" --project <name>`
-- When encountering unfamiliar code or architecture → search for entity knowledge
-- When the user references past work or decisions → search for that context
-- When stuck or blocked → search for related cases and patterns
-
-### When to SAVE (as you work)
-Save immediately when any of these happen — do not batch or defer:
-- **Decision made**: team chose an approach, trade-off, or technology → `rememora save "..." --category decision --importance 0.8 --project <name>`
-- **Bug solved**: non-trivial fix, workaround, or gotcha discovered → `rememora save "..." --category case --project <name>`
-- **Pattern found**: convention, idiom, or reusable approach → `rememora save "..." --category pattern --project <name>`
-- **User corrected you** or stated a preference → `rememora save "..." --category preference`
-- **Entity discovered**: service, API, config, key integration point → `rememora save "..." --category entity --project <name>`
-
-### What NOT to save
-- Code that can be read from files (use file paths instead)
-- Git history (use `git log`)
-- Anything already in the project README or docs
-- Temporary debugging state
-
-### Catching up
-If session transcripts have piled up without being curated, or memories need dedup/consolidation,
-run `rememora dream [--project <name>]` — it curates pending sessions then consolidates in one pass.
-
-### Sessions
-- Start: `rememora session start --agent codex --project <name> --intent "..."`
-- End: `rememora session end <id> --summary "..." --working-state "..."`
-- Transfer: `rememora session end <id> --status transferred --summary "..." --working-state "..."`
-"#;
-
-const GEMINI_SNIPPET: &str = r#"
-## Rememora — Cross-Agent Persistent Memory
-
-You have access to `rememora`, a persistent memory system shared across agents and sessions.
-Your context will be lost when this session ends. Anything not saved to rememora is gone forever.
-You are not the only agent on this project — save what others will need, search before you assume.
-Nothing here runs automatically — no hook captures memory on your behalf. Every search, save, and
-session call below is something you invoke yourself, as you work.
-
-### When to SEARCH (before acting)
-- Before implementing anything non-trivial → `rememora search "relevant topic" --project <name>`
-- When encountering unfamiliar code or architecture → search for entity knowledge
-- When the user references past work or decisions → search for that context
-- When stuck or blocked → search for related cases and patterns
-
-### When to SAVE (as you work)
-Save immediately when any of these happen — do not batch or defer:
-- **Decision made**: team chose an approach, trade-off, or technology → `rememora save "..." --category decision --importance 0.8 --project <name>`
-- **Bug solved**: non-trivial fix, workaround, or gotcha discovered → `rememora save "..." --category case --project <name>`
-- **Pattern found**: convention, idiom, or reusable approach → `rememora save "..." --category pattern --project <name>`
-- **User corrected you** or stated a preference → `rememora save "..." --category preference`
-- **Entity discovered**: service, API, config, key integration point → `rememora save "..." --category entity --project <name>`
-
-### What NOT to save
-- Code that can be read from files (use file paths instead)
-- Git history (use `git log`)
-- Anything already in the project README or docs
-- Temporary debugging state
-
-### Catching up
-If session transcripts have piled up without being curated, or memories need dedup/consolidation,
-run `rememora dream [--project <name>]` — it curates pending sessions then consolidates in one pass.
-
-### Sessions
-- Start: `rememora session start --agent gemini --project <name> --intent "..."`
-- End: `rememora session end <id> --summary "..." --working-state "..."`
-- Transfer: `rememora session end <id> --status transferred --summary "..." --working-state "..."`
-"#;
-
-struct AgentConfig {
-    name: &'static str,
-    /// Path to the instruction/markdown file
-    config_path: PathBuf,
-    snippet: &'static str,
-    /// Path to the settings/hooks JSON file, if the agent has one. Used only
-    /// to detect and strip stale rememora-managed hook entries left by an
-    /// older `setup --apply` — we no longer write anything here.
-    hooks_path: Option<PathBuf>,
+fn legacy_section_start(s: &str) -> Option<usize> {
+    if s.starts_with(REMEMORA_MARKER) {
+        return Some(0);
+    }
+    s.find(&format!("\n{REMEMORA_MARKER}")).map(|i| i + 1)
 }
 
 fn home() -> PathBuf {
@@ -171,7 +158,7 @@ fn home() -> PathBuf {
 /// `~/.rememora/hooks/`. Used only for one-time cleanup — nothing deploys
 /// scripts here anymore.
 pub fn default_hooks_dir() -> PathBuf {
-    if let Ok(p) = std::env::var("REMEMORA_DB") {
+    if let Some(p) = rememora::db::env_db_override() {
         let db = PathBuf::from(p);
         if let Some(parent) = db.parent() {
             return parent.join("hooks");
@@ -180,43 +167,172 @@ pub fn default_hooks_dir() -> PathBuf {
     home().join(".rememora").join("hooks")
 }
 
-fn detect_agents() -> Vec<AgentConfig> {
-    let mut agents = Vec::new();
+/// How an instruction file is shaped.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Format {
+    /// Plain markdown, block upserted between markers.
+    Markdown,
+    /// Cursor `.mdc` rule: YAML front matter then markdown. Owned by rememora
+    /// (a dedicated file), so it is rewritten whole.
+    CursorMdc,
+}
 
-    // Claude Code — binary: claude, instructions: ~/.claude/CLAUDE.md, hooks: ~/.claude/settings.json
-    if binary_exists("claude") {
-        agents.push(AgentConfig {
+/// One row of the agent table.
+pub struct AgentSpec {
+    pub name: &'static str,
+    /// `--agent` value written into the snippet.
+    pub slug: &'static str,
+    /// Any of these on PATH means the agent is installed.
+    pub binaries: &'static [&'static str],
+    /// Global instruction file, if the agent has one on disk.
+    pub global: Option<fn() -> PathBuf>,
+    /// Agent-specific project file (relative to the repo root), beyond AGENTS.md.
+    pub project_file: Option<(&'static str, Format)>,
+    /// Whether the agent reads a project-root AGENTS.md.
+    pub reads_agents_md: bool,
+    /// Legacy settings.json that may hold rememora hooks from older setups.
+    pub hooks: Option<fn() -> PathBuf>,
+    /// How to register `rememora mcp` with this agent.
+    pub mcp: &'static str,
+}
+
+fn env_dir_or(var: &str, fallback: &[&str]) -> PathBuf {
+    match std::env::var_os(var) {
+        Some(v) if !v.is_empty() => PathBuf::from(v),
+        _ => fallback.iter().fold(home(), |p, s| p.join(s)),
+    }
+}
+
+/// The agent table. Sources checked 2026-11-17.
+pub fn agent_table() -> Vec<AgentSpec> {
+    vec![
+        // Claude Code: ~/.claude/CLAUDE.md global, CLAUDE.md in the project.
+        // Does not read AGENTS.md. https://docs.anthropic.com/en/docs/claude-code/memory
+        // (not re-fetched in this change; unchanged from the previous setup).
+        AgentSpec {
             name: "Claude Code",
-            config_path: home().join(".claude").join("CLAUDE.md"),
-            snippet: CLAUDE_CODE_SNIPPET,
-
-            hooks_path: Some(home().join(".claude").join("settings.json")),
-        });
-    }
-
-    // Codex — binary: codex, instructions: ~/.codex/AGENTS.md
-    if binary_exists("codex") {
-        agents.push(AgentConfig {
+            slug: "claude-code",
+            binaries: &["claude"],
+            global: Some(|| home().join(".claude").join("CLAUDE.md")),
+            project_file: Some(("CLAUDE.md", Format::Markdown)),
+            reads_agents_md: false,
+            hooks: Some(|| home().join(".claude").join("settings.json")),
+            mcp: "claude mcp add --scope user rememora -- rememora mcp",
+        },
+        // Codex CLI: $CODEX_HOME/AGENTS.md (default ~/.codex), project AGENTS.md
+        // from the git root down. https://learn.chatgpt.com/docs/agent-configuration/agents-md
+        // MCP: ~/.codex/config.toml [mcp_servers.<name>] command/args.
+        // https://developers.openai.com/codex/mcp
+        AgentSpec {
             name: "Codex",
-            config_path: home().join(".codex").join("AGENTS.md"),
-            snippet: CODEX_SNIPPET,
-
-            hooks_path: None,
-        });
-    }
-
-    // Gemini CLI — binary: gemini, instructions: ~/.gemini/GEMINI.md, hooks: ~/.gemini/settings.json
-    if binary_exists("gemini") {
-        agents.push(AgentConfig {
+            slug: "codex",
+            binaries: &["codex"],
+            global: Some(|| env_dir_or("CODEX_HOME", &[".codex"]).join("AGENTS.md")),
+            project_file: None,
+            reads_agents_md: true,
+            hooks: None,
+            mcp: "codex mcp add rememora -- rememora mcp\n  or in ~/.codex/config.toml:\n  [mcp_servers.rememora]\n  command = \"rememora\"\n  args = [\"mcp\"]",
+        },
+        // Gemini CLI: ~/.gemini/GEMINI.md global, GEMINI.md in workspace dirs
+        // and parents. https://geminicli.com/docs/cli/gemini-md/
+        // Does not read AGENTS.md by default (configurable via context.fileName).
+        // MCP: `mcpServers` in ~/.gemini/settings.json (format unverified in this change).
+        AgentSpec {
             name: "Gemini CLI",
-            config_path: home().join(".gemini").join("GEMINI.md"),
-            snippet: GEMINI_SNIPPET,
+            slug: "gemini",
+            binaries: &["gemini"],
+            global: Some(|| home().join(".gemini").join("GEMINI.md")),
+            project_file: Some(("GEMINI.md", Format::Markdown)),
+            reads_agents_md: false,
+            hooks: Some(|| home().join(".gemini").join("settings.json")),
+            mcp: "~/.gemini/settings.json: {\"mcpServers\": {\"rememora\": {\"command\": \"rememora\", \"args\": [\"mcp\"]}}}",
+        },
+        // Cursor: no global rules file on disk (User Rules live in the settings
+        // UI), project rules are `.cursor/rules/*.mdc` with front matter
+        // (description, globs, alwaysApply), and AGENTS.md is read.
+        // https://cursor.com/docs/context/rules
+        // MCP: ~/.cursor/mcp.json `mcpServers` (format unverified in this change).
+        AgentSpec {
+            name: "Cursor",
+            slug: "cursor",
+            binaries: &["cursor", "cursor-agent"],
+            global: None,
+            project_file: Some((".cursor/rules/rememora.mdc", Format::CursorMdc)),
+            reads_agents_md: true,
+            hooks: None,
+            mcp: "~/.cursor/mcp.json: {\"mcpServers\": {\"rememora\": {\"command\": \"rememora\", \"args\": [\"mcp\"]}}}",
+        },
+        // opencode: ~/.config/opencode/AGENTS.md global (falls back to
+        // ~/.claude/CLAUDE.md), project AGENTS.md. https://opencode.ai/docs/rules/
+        // MCP: `mcp` key in opencode.json with type local (format unverified in this change).
+        AgentSpec {
+            name: "opencode",
+            slug: "opencode",
+            binaries: &["opencode"],
+            global: Some(|| home().join(".config").join("opencode").join("AGENTS.md")),
+            project_file: None,
+            reads_agents_md: true,
+            hooks: None,
+            mcp: "opencode.json: {\"mcp\": {\"rememora\": {\"type\": \"local\", \"command\": [\"rememora\", \"mcp\"]}}}",
+        },
+        // GitHub Copilot CLI: $COPILOT_HOME/copilot-instructions.md (default
+        // ~/.copilot), project .github/copilot-instructions.md and AGENTS.md.
+        // https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-custom-instructions
+        // MCP: ~/.copilot/mcp-config.json `mcpServers`, or `/mcp add` (unverified in this change).
+        AgentSpec {
+            name: "Copilot CLI",
+            slug: "copilot",
+            binaries: &["copilot"],
+            global: Some(|| env_dir_or("COPILOT_HOME", &[".copilot"]).join("copilot-instructions.md")),
+            project_file: Some((".github/copilot-instructions.md", Format::Markdown)),
+            reads_agents_md: true,
+            hooks: None,
+            mcp: "~/.copilot/mcp-config.json: {\"mcpServers\": {\"rememora\": {\"type\": \"local\", \"command\": \"rememora\", \"args\": [\"mcp\"], \"tools\": [\"*\"]}}}",
+        },
+    ]
+}
 
-            hooks_path: Some(home().join(".gemini").join("settings.json")),
-        });
+fn detected(spec: &AgentSpec) -> bool {
+    spec.binaries.iter().any(|b| binary_exists(b))
+}
+
+/// File content for a rememora-owned Cursor rule.
+fn cursor_mdc(block: &str) -> String {
+    format!(
+        "---\ndescription: Rememora shared memory, how to load, search and save memories\nalwaysApply: true\n---\n{block}"
+    )
+}
+
+/// New content for `path` with the block applied, and whether it changed.
+fn planned_content(path: &Path, format: Format, block: &str) -> Result<(String, bool)> {
+    let existing = std::fs::read_to_string(path).unwrap_or_default();
+    let new = match format {
+        Format::Markdown => match upsert_block(&existing, block) {
+            Some(new) => new,
+            None => {
+                eprintln!(
+                    "warning: {} has a `{BEGIN_PREFIX}` marker without `{BLOCK_END}`; left unchanged. Fix the markers by hand and rerun setup.",
+                    path.display()
+                );
+                existing.clone()
+            }
+        },
+        Format::CursorMdc => cursor_mdc(block),
+    };
+    let changed = new != existing;
+    Ok((new, changed))
+}
+
+fn write_with_backup(path: &Path, content: &str) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
     }
-
-    agents
+    if path.exists() {
+        let mut backup = path.as_os_str().to_owned();
+        backup.push(".bak");
+        std::fs::copy(path, PathBuf::from(backup))?;
+    }
+    std::fs::write(path, content).with_context(|| format!("Failed to write {}", path.display()))
 }
 
 fn binary_exists(name: &str) -> bool {
@@ -227,14 +343,6 @@ fn binary_exists(name: &str) -> bool {
         .status()
         .map(|s| s.success())
         .unwrap_or(false)
-}
-
-fn already_configured(path: &PathBuf) -> bool {
-    if let Ok(content) = std::fs::read_to_string(path) {
-        content.contains(REMEMORA_MARKER)
-    } else {
-        false
-    }
 }
 
 /// True if `path` contains any rememora-managed hook entry (legacy flat
@@ -329,86 +437,152 @@ fn entry_is_rememora_managed(item: &serde_json::Value) -> bool {
     false
 }
 
-pub fn run(apply: bool) -> Result<()> {
+/// One instruction file setup would create or update.
+struct Plan {
+    label: String,
+    path: PathBuf,
+    content: String,
+    changed: bool,
+    hooks_cleanup: Option<PathBuf>,
+}
+
+impl Plan {
+    fn pending(&self) -> bool {
+        self.changed || self.hooks_cleanup.is_some()
+    }
+}
+
+fn describe(plan: &Plan) -> String {
+    let path = tilde_path(&plan.path);
+    if !plan.pending() {
+        return format!("{:<13} {path}: up to date", plan.label);
+    }
+    let mut parts = Vec::new();
+    if plan.changed {
+        parts.push(if plan.path.exists() { "instructions (update block)" } else { "instructions (create)" });
+    }
+    if plan.hooks_cleanup.is_some() {
+        parts.push("hooks (remove stale rememora entries)");
+    }
+    format!("{:<13} {path}: will write {}", plan.label, parts.join(", "))
+}
+
+fn print_mcp(specs: &[&AgentSpec]) -> Result<()> {
+    if specs.is_empty() {
+        return Ok(());
+    }
+    let mut msg = String::from(
+        "MCP (optional, for agents or clients without shell access). Register `rememora mcp`:",
+    );
+    for s in specs {
+        msg.push_str(&format!("\n{}:\n  {}", s.name, s.mcp));
+    }
+    msg.push_str("\nClaude Desktop: claude_desktop_config.json, same `mcpServers` shape as Cursor.");
+    msg.push_str("\nsetup prints these only; it does not edit MCP config files.");
+    cliclack::log::info(msg)?;
+    Ok(())
+}
+
+fn interactive() -> bool {
+    use std::io::IsTerminal;
+    std::io::stdin().is_terminal()
+}
+
+/// Decide whether to write: `--apply` always, a TTY asks, anything else is a dry run.
+fn confirm_apply(apply: bool, count: usize) -> Result<bool> {
+    if apply {
+        return Ok(true);
+    }
+    if !interactive() {
+        cliclack::outro("Dry run: nothing written. Re-run with --apply to write these changes.")?;
+        return Ok(false);
+    }
+    let ok = cliclack::confirm(format!("Write {count} file{}?", if count == 1 { "" } else { "s" }))
+        .interact()?;
+    if !ok {
+        cliclack::outro("Setup cancelled.")?;
+    }
+    Ok(ok)
+}
+
+fn write_plans(plans: &[Plan]) -> Result<()> {
+    for plan in plans.iter().filter(|p| p.pending()) {
+        if plan.changed {
+            write_with_backup(&plan.path, &plan.content)?;
+            cliclack::log::success(format!("{}: wrote {}", plan.label, tilde_path(&plan.path)))?;
+        }
+        if let Some(hooks_path) = &plan.hooks_cleanup {
+            let backup = hooks_path.with_extension("json.bak");
+            std::fs::copy(hooks_path, &backup)?;
+            strip_rememora_hooks(hooks_path)?;
+            cliclack::log::success(format!(
+                "{}: removed automatic rememora hooks ({})",
+                plan.label,
+                tilde_path(hooks_path),
+            ))?;
+        }
+    }
+    Ok(())
+}
+
+pub fn run(apply: bool, project_dir: Option<&Path>, agent_files: bool) -> Result<()> {
     cliclack::intro("rememora setup")?;
+    let table = agent_table();
+    let found: Vec<&AgentSpec> = table.iter().filter(|s| detected(s)).collect();
+    match project_dir {
+        Some(dir) => run_project(apply, dir, agent_files, &found),
+        None => run_global(apply, &found),
+    }
+}
 
-    // --- Step 1: Encryption ---
-    setup_encryption()?;
+fn run_global(apply: bool, found: &[&AgentSpec]) -> Result<()> {
+    // Encryption writes a key and the DB, so a non-interactive dry run skips it.
+    if apply || interactive() {
+        setup_encryption()?;
+    } else {
+        cliclack::log::info("Encryption: skipped in dry run")?;
+    }
 
-    // --- Step 2: Agent configuration ---
-    let spinner = cliclack::spinner();
-    spinner.start("Scanning for AI agents...");
-
-    let agents = detect_agents();
-
-    if agents.is_empty() {
-        spinner.stop("No agents found");
-        cliclack::log::warning(
-            "No supported agents detected.\n\
-             Rememora works with: Claude Code (claude), Codex (codex), Gemini CLI (gemini)",
-        )?;
+    if found.is_empty() {
+        let names: Vec<_> = agent_table().iter().map(|s| s.name).collect();
+        cliclack::log::warning(format!(
+            "No supported agents detected. Rememora works with: {}.\n\
+             For any other agent, run `rememora setup --project-dir <repo>` to write AGENTS.md.",
+            names.join(", "),
+        ))?;
         cliclack::outro("Nothing to configure.")?;
         return Ok(());
     }
 
-    let mut actions: Vec<(&AgentConfig, Action)> = Vec::new();
-
-    for agent in &agents {
-        let instructions_done = already_configured(&agent.config_path);
-        let needs_cleanup = agent.hooks_path.as_ref().map(hooks_need_cleanup).unwrap_or(false);
-
-        let action = if instructions_done && !needs_cleanup {
-            Action::AlreadyConfigured
-        } else {
-            Action::NeedsWork {
-                instructions: !instructions_done,
-                hooks_cleanup: needs_cleanup,
-            }
+    let mut plans = Vec::new();
+    for spec in found {
+        let Some(global) = spec.global else {
+            cliclack::log::warning(format!(
+                "{:<13} has no global instruction file on disk. Use `rememora setup --project-dir <repo>` \
+                 (writes AGENTS.md, which {} reads).",
+                spec.name, spec.name,
+            ))?;
+            continue;
         };
-        actions.push((agent, action));
+        let path = global();
+        let (content, changed) =
+            planned_content(&path, Format::Markdown, &render_snippet(Some(spec.slug), None))?;
+        let hooks_cleanup = spec.hooks.map(|h| h()).filter(hooks_need_cleanup);
+        plans.push(Plan { label: spec.name.to_string(), path, content, changed, hooks_cleanup });
     }
 
-    spinner.stop("Scanning for AI agents...");
-
-    // Display agent status lines
-    for (agent, action) in &actions {
-        let path = tilde_path(&agent.config_path);
-        match action {
-            Action::AlreadyConfigured => {
-                cliclack::log::success(format!(
-                    "{:<13} {} — already configured",
-                    agent.name, path,
-                ))?;
-            }
-            Action::NeedsWork { instructions, hooks_cleanup } => {
-                let mut parts = Vec::new();
-                if *instructions {
-                    if agent.config_path.exists() {
-                        parts.push("instructions (append)");
-                    } else {
-                        parts.push("instructions (create)");
-                    }
-                }
-                if *hooks_cleanup {
-                    parts.push("hooks (remove stale rememora entries)");
-                }
-                cliclack::log::info(format!(
-                    "{:<13} {} — will configure: {}",
-                    agent.name, path, parts.join(", "),
-                ))?;
-            }
+    for plan in &plans {
+        if plan.pending() {
+            cliclack::log::info(describe(plan))?;
+        } else {
+            cliclack::log::success(describe(plan))?;
         }
     }
-
-    let pending: Vec<_> = actions
-        .iter()
-        .filter(|(_, a)| !matches!(a, Action::AlreadyConfigured))
-        .collect();
+    print_mcp(found)?;
 
     // One-time cleanup: remove any hook scripts an older `setup --apply`
     // deployed to `~/.rememora/hooks/`. Rememora no longer fires anything
-    // automatically, so nothing reads these anymore. Idempotent — a no-op
-    // once the directory is gone.
+    // automatically, so nothing reads these anymore. Idempotent.
     let hooks_dir = default_hooks_dir();
     if apply && hooks_dir.exists() {
         std::fs::remove_dir_all(&hooks_dir)
@@ -419,82 +593,71 @@ pub fn run(apply: bool) -> Result<()> {
         ))?;
     }
 
-    if pending.is_empty() {
+    let pending = plans.iter().filter(|p| p.pending()).count();
+    if pending == 0 {
         maybe_print_update_hint();
         cliclack::outro("All agents already configured.")?;
         return Ok(());
     }
-
-    // Determine whether to proceed
-    let should_apply = if apply {
-        true
-    } else {
-        let count = pending.len();
-        let prompt = format!(
-            "Configure {} agent{}?",
-            count,
-            if count == 1 { "" } else { "s" }
-        );
-        cliclack::confirm(prompt).interact()?
-    };
-
-    if !should_apply {
-        cliclack::outro("Setup cancelled.")?;
+    if !confirm_apply(apply, pending)? {
         return Ok(());
     }
+    write_plans(&plans)?;
+    maybe_print_update_hint();
+    cliclack::outro("All agents configured.")?;
+    Ok(())
+}
 
-    // Apply changes
-    for (agent, action) in &actions {
-        let (needs_instructions, needs_hooks_cleanup) = match action {
-            Action::AlreadyConfigured => continue,
-            Action::NeedsWork { instructions, hooks_cleanup } => (*instructions, *hooks_cleanup),
-        };
+fn run_project(apply: bool, dir: &Path, agent_files: bool, found: &[&AgentSpec]) -> Result<()> {
+    if !dir.is_dir() {
+        anyhow::bail!("--project-dir {} is not a directory", dir.display());
+    }
+    let project = dir
+        .canonicalize()
+        .ok()
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()));
+    let project = project.as_deref();
 
-        // --- Instructions ---
-        if needs_instructions {
-            if let Some(parent) = agent.config_path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
+    let mut plans = Vec::new();
+    let path = dir.join("AGENTS.md");
+    let (content, changed) = planned_content(&path, Format::Markdown, &render_snippet(None, project))?;
+    plans.push(Plan { label: "AGENTS.md".into(), path, content, changed, hooks_cleanup: None });
 
-            // Backup existing file
-            if agent.config_path.exists() {
-                let backup = agent.config_path.with_extension("md.bak");
-                std::fs::copy(&agent.config_path, &backup)?;
-            }
-
-            let mut content = if agent.config_path.exists() {
-                std::fs::read_to_string(&agent.config_path)?
-            } else {
-                String::new()
-            };
-            content.push_str(agent.snippet);
-            std::fs::write(&agent.config_path, content)?;
-
-            cliclack::log::success(format!("{}: instructions configured", agent.name))?;
-        }
-
-        // --- Hooks cleanup ---
-        if needs_hooks_cleanup {
-            if let Some(hooks_path) = &agent.hooks_path {
-                // Backup existing hooks file
-                if hooks_path.exists() {
-                    let backup = hooks_path.with_extension("json.bak");
-                    std::fs::copy(hooks_path, &backup)?;
-                }
-
-                strip_rememora_hooks(hooks_path)?;
-                cliclack::log::success(format!(
-                    "{}: removed automatic rememora hooks ({})",
-                    agent.name,
-                    tilde_path(hooks_path),
-                ))?;
-            }
+    let mut offered = Vec::new();
+    for spec in found {
+        let Some((rel, format)) = spec.project_file else { continue };
+        let path = dir.join(rel);
+        let (content, changed) = planned_content(&path, format, &render_snippet(Some(spec.slug), project))?;
+        if agent_files {
+            plans.push(Plan { label: spec.name.to_string(), path, content, changed, hooks_cleanup: None });
+        } else if changed {
+            offered.push(format!("{} ({})", rel, spec.name));
         }
     }
 
-    maybe_print_update_hint();
-    cliclack::outro("All agents configured.")?;
+    for plan in &plans {
+        cliclack::log::info(describe(plan))?;
+    }
+    let readers: Vec<_> = agent_table().into_iter().filter(|s| s.reads_agents_md).map(|s| s.name).collect();
+    cliclack::log::info(format!("AGENTS.md is read by {}.", readers.join(", ")))?;
+    if !offered.is_empty() {
+        cliclack::log::info(format!(
+            "Also available, add --agent-files to write: {}",
+            offered.join(", "),
+        ))?;
+    }
+    print_mcp(found)?;
 
+    let pending = plans.iter().filter(|p| p.pending()).count();
+    if pending == 0 {
+        cliclack::outro("Project instructions already up to date.")?;
+        return Ok(());
+    }
+    if !confirm_apply(apply, pending)? {
+        return Ok(());
+    }
+    write_plans(&plans)?;
+    cliclack::outro("Project instructions written.")?;
     Ok(())
 }
 
@@ -647,14 +810,6 @@ fn ensure_db_initialized(db_path: &std::path::Path) -> Result<()> {
         tilde_path(db_path),
     ))?;
     Ok(())
-}
-
-enum Action {
-    AlreadyConfigured,
-    NeedsWork {
-        instructions: bool,
-        hooks_cleanup: bool,
-    },
 }
 
 #[cfg(test)]
@@ -825,5 +980,77 @@ mod tests {
             parsed.get("hooks").and_then(|h| h.get("Stop")).is_none(),
             "second run should still be a clean no-op",
         );
+    }
+
+    #[test]
+    fn snippet_is_short_parameterised_and_has_no_em_dashes() {
+        let s = render_snippet(Some("codex"), Some("web"));
+        assert!(s.lines().count() <= 35, "snippet is {} lines", s.lines().count());
+        assert!(!s.contains('\u{2014}'), "em dash in snippet");
+        assert!(s.contains("--agent codex --project web"));
+        assert!(s.contains("session end-active --agent codex --project web"));
+        assert!(s.contains("supersede <old id> --text \"<new fact>\""));
+        assert!(s.contains("context --project web --query \"<task>\""));
+        assert!(!s.contains("{agent}") && !s.contains("{project}"));
+        assert!(s.starts_with(BLOCK_BEGIN) && s.trim_end().ends_with(BLOCK_END));
+        let generic = render_snippet(None, None);
+        assert!(generic.contains("--agent <your agent name>"));
+    }
+
+    #[test]
+    fn upsert_appends_then_replaces_in_place_without_duplicating() {
+        let a = render_snippet(Some("codex"), None);
+        let b = render_snippet(Some("gemini"), None);
+        let original = "# Repo\n\nKeep me.\n";
+        let once = upsert_block(original, &a).unwrap();
+        assert!(once.starts_with(original));
+        assert_eq!(upsert_block(&once, &a).unwrap(), once, "re-running must be a no-op");
+
+        let with_tail = format!("{once}\n## Later section\nalso keep\n");
+        let updated = upsert_block(&with_tail, &b).unwrap();
+        assert_eq!(updated.matches(BLOCK_BEGIN).count(), 1);
+        assert!(updated.contains("--agent gemini") && !updated.contains("--agent codex"));
+        assert!(updated.contains("Keep me.") && updated.contains("## Later section\nalso keep"));
+    }
+
+    #[test]
+    fn upsert_collapses_duplicate_blocks_and_keeps_crlf() {
+        let old = format!("{BLOCK_BEGIN}\r\nold one\r\n{BLOCK_END}\r\n");
+        let old2 = format!("<!-- rememora:begin older -->\r\nold two\r\n{BLOCK_END}\r\n");
+        let existing = format!("# Repo\r\n\r\n{old}\r\nmid\r\n{old2}tail\r\n");
+        let out = upsert_block(&existing, &render_snippet(Some("codex"), None)).unwrap();
+        assert_eq!(out.matches(BEGIN_PREFIX).count(), 1, "{out}");
+        assert_eq!(out.matches(BLOCK_END).count(), 1);
+        assert!(!out.contains("old one") && !out.contains("old two"));
+        assert!(out.starts_with("# Repo\r\n\r\n<!-- rememora:begin"));
+        assert!(out.contains("mid\r\n") && out.ends_with("tail\r\n"));
+        assert_eq!(out.matches('\n').count(), out.matches("\r\n").count(), "mixed endings");
+        assert_eq!(upsert_block(&out, &render_snippet(Some("codex"), None)).unwrap(), out);
+    }
+
+    #[test]
+    fn upsert_leaves_unterminated_block_alone() {
+        let existing = format!("# Repo\n{BLOCK_BEGIN}\nbody\n\n## Mine\nkeep\n");
+        assert!(upsert_block(&existing, &render_snippet(Some("codex"), None)).is_none());
+    }
+
+    #[test]
+    fn upsert_replaces_legacy_unmarked_section() {
+        let legacy = "intro\n\n## Rememora \u{2014} Cross-Agent Persistent Memory\nold body\n### Sessions\nold\n\n## Mine\nkeep\n";
+        let out = upsert_block(legacy, &render_snippet(Some("codex"), None)).unwrap();
+        assert!(!out.contains("old body") && !out.contains("Cross-Agent"));
+        assert!(out.starts_with("intro\n\n"));
+        assert!(out.ends_with("## Mine\nkeep\n"));
+        assert_eq!(out.matches("## Rememora").count(), 1);
+    }
+
+    #[test]
+    fn agent_table_rows_are_complete() {
+        for spec in agent_table() {
+            assert!(spec.global.is_some() || spec.reads_agents_md, "{} unreachable", spec.name);
+            assert!(!spec.mcp.contains('\u{2014}'));
+        }
+        let mdc = cursor_mdc(&render_snippet(Some("cursor"), None));
+        assert!(mdc.starts_with("---\ndescription: ") && mdc.contains("alwaysApply: true\n---\n"));
     }
 }

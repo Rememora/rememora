@@ -4,9 +4,22 @@ use rusqlite::Connection;
 use rememora::format;
 use rememora::hierarchy;
 use rememora::models::project;
+use rememora::models::session;
 use rememora::models::watermark;
 
-pub fn run(conn: &Connection, project_name: Option<&str>, auto: bool, cheatsheet: bool) -> Result<()> {
+pub struct ContextArgs<'a> {
+    pub project: Option<&'a str>,
+    pub auto: bool,
+    pub cheatsheet: bool,
+    /// `None`: `format::DEFAULT_CONTEXT_MAX_TOKENS`. `Some(0)`: unlimited.
+    pub max_tokens: Option<usize>,
+    pub query: Option<&'a str>,
+    pub json: bool,
+}
+
+pub fn run(conn: &Connection, args: &ContextArgs<'_>) -> Result<()> {
+    let project_name = args.project;
+    let auto = args.auto;
     let cwd = std::env::current_dir()
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_default();
@@ -23,12 +36,24 @@ pub fn run(conn: &Connection, project_name: Option<&str>, auto: bool, cheatsheet
         project::resolve_write_target(conn, project_name, &cwd).project
     };
 
-    if cheatsheet {
+    if args.cheatsheet {
         return run_cheatsheet(conn, proj.as_deref());
     }
 
-    let assembly = hierarchy::assemble(conn, proj.as_deref())?;
-    print!("{}", format::context_to_markdown(&assembly));
+    let budget = match args.max_tokens {
+        None => Some(format::DEFAULT_CONTEXT_MAX_TOKENS),
+        Some(0) => None,
+        Some(n) => Some(n),
+    };
+    let opts = hierarchy::ContextOptions {
+        query: args.query.map(String::from),
+    };
+    let assembly = hierarchy::assemble_with(conn, proj.as_deref(), &opts)?;
+    if args.json {
+        println!("{}", format::context_to_json(&assembly, budget));
+    } else {
+        print!("{}", format::render_context(&assembly, budget).markdown);
+    }
 
     Ok(())
 }
@@ -56,26 +81,26 @@ fn run_cheatsheet(conn: &Connection, project: Option<&str>) -> Result<()> {
             } else {
                 &sc.context.overview
             };
-            println!("- [{}] {} (importance: {:.1})", cat, overview, sc.context.importance);
+            println!(
+                "- [{}] {} (importance: {:.1}) `{}`",
+                cat, overview, sc.context.importance, sc.context.id
+            );
         }
         println!();
     }
 
-    // Working state from last session
-    if let Some(session) = hierarchy::get_latest_session(conn, project)? {
-        if !session.working_state.is_empty() {
-            println!("## Working State\n");
-            println!("{}", session.working_state);
-            println!();
+    // Handoff from the last agent, then who is working right now.
+    if let Some(proj) = project {
+        // Same block as the main context output: relative age, stale note.
+        if let Some(h) = hierarchy::get_latest_session(conn, Some(proj))? {
+            print!("{}", format::handoff_block(&h));
         }
-        if !session.summary.is_empty() {
-            println!("## Last Session\n");
-            println!("- **Agent**: {}", session.agent);
-            println!("- **Status**: {}", session.status);
-            if !session.intent.is_empty() {
-                println!("- **Intent**: {}", session.intent);
+        let active = session::list_active_for_project(conn, proj, hierarchy::ACTIVE_SESSION_LIMIT)?;
+        if !active.is_empty() {
+            println!("## Active Sessions\n");
+            for a in &active {
+                println!("{}", format::active_session_line(a));
             }
-            println!("- **Summary**: {}", session.summary);
             println!();
         }
     }
@@ -114,6 +139,10 @@ fn run_cheatsheet(conn: &Connection, project: Option<&str>) -> Result<()> {
             println!("- {w}");
         }
         println!();
+    }
+
+    if !l1.is_empty() {
+        println!("_{}_", format::CONTEXT_GET_HINT);
     }
 
     Ok(())

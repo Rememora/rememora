@@ -146,7 +146,7 @@ pub fn is_newer(current: &str, latest: &str) -> bool {
 }
 
 fn cache_path() -> PathBuf {
-    if let Ok(p) = std::env::var("REMEMORA_DB") {
+    if let Some(p) = crate::db::env_db_override() {
         if let Some(parent) = Path::new(&p).parent() {
             return parent.join(".update-check");
         }

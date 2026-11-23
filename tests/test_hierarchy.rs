@@ -69,7 +69,7 @@ fn test_full_assembly_to_markdown() {
     let md = rememora::format::context_to_markdown(&assembly);
 
     assert!(md.contains("Rememora Context: testproj"));
-    assert!(md.contains("Memory Map"));
+    assert!(md.contains("## Recent (last 7 days)"));
     assert!(md.contains("Test complete"));
 }
 
@@ -137,14 +137,15 @@ fn test_global_mode_aggregates_across_projects() {
     // Then: at least 4 entries surface (all memory rows from both projects),
     // covering both project URIs.
     assert!(
-        assembly.l0_abstracts.len() >= 4,
+        assembly.memory_count() >= 4,
         "expected aggregated view across projects, got {} entries",
-        assembly.l0_abstracts.len()
+        assembly.memory_count()
     );
 
     let uris: Vec<&str> = assembly
-        .l0_abstracts
+        .recent
         .iter()
+        .chain(assembly.ranked.iter())
         .map(|s| s.context.uri.as_str())
         .collect();
     assert!(uris.iter().any(|u| u.contains("alpha")), "missing alpha");
